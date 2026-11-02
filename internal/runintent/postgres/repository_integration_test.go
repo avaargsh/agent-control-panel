@@ -256,3 +256,47 @@ func TestCompareAndSwapRequiresNewFenceForNewLease(t *testing.T) {
 		t.Fatalf("new lease with reused fence token returned %v, want ErrFenceRegression", err)
 	}
 }
+
+func TestCreateReplayRejectsChangedOwnerMetadataWithSameDigest(t *testing.T) {
+	repository, pool := testRepository(t)
+	ctx := context.Background()
+	original := testIntent(5)
+	created, inserted, err := repository.Create(ctx, original, testEvent(original, 1, 501, eventCreated))
+	if err != nil || !inserted {
+		t.Fatalf("create original: inserted=%v err=%v", inserted, err)
+	}
+
+	cases := []struct {
+		name string
+		mutate func(*runintent.Intent)
+	}{
+		{"project", func(i *runintent.Intent) { i.ProjectID = "project-other" }},
+		{"agent", func(i *runintent.Intent) { i.AgentID = "agent-other" }},
+		{"release", func(i *runintent.Intent) { i.ReleaseID = "release-other" }},
+		{"session", func(i *runintent.Intent) { i.SessionID = "session-other" }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			changed := original
+			changed.ID = fmt.Sprintf("00000000-0000-4000-8000-%012d", 600+len(tc.name))
+			tc.mutate(&changed)
+			_, inserted, err := repository.Create(ctx, changed,
+				testEvent(changed, 1, 700+len(tc.name), eventCreated))
+			if !errors.Is(err, ErrIdempotencyConflict) || inserted {
+				t.Fatalf("changed %s was replayed: inserted=%v err=%v", tc.name, inserted, err)
+			}
+		})
+	}
+
+	// Candidate IDs are not part of the replay fingerprint: a legitimate retry
+	// must return the original durable ID, not the new uncommitted candidate.
+	retry := original
+	retry.ID = "00000000-0000-4000-8000-000000000999"
+	replayed, inserted, err := repository.Create(ctx, retry, testEvent(retry, 1, 999, eventCreated))
+	if err != nil || inserted || replayed.ID != created.ID {
+		t.Fatalf("same-identity retry: inserted=%v replayed=%+v err=%v", inserted, replayed, err)
+	}
+	if got := countOutbox(t, pool, original.ID); got != 1 {
+		t.Fatalf("ownership conflicts or replay emitted %d Outbox events, want 1", got)
+	}
+}
