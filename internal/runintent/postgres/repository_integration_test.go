@@ -357,3 +357,14 @@ func TestMigrationDetectsMissingRelationAfterRecordedInstall(t *testing.T) {
 		t.Fatalf("incomplete recorded schema was accepted: %v", err)
 	}
 }
+
+func TestMigrationDetectsMissingCriticalConstraintAfterRecordedInstall(t *testing.T) {
+	_, pool := testRepository(t)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, "ALTER TABLE run_intents DROP CONSTRAINT run_intents_state_payload_consistency"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Migrate(ctx, pool); !errors.Is(err, ErrSchemaDrift) {
+		t.Fatalf("schema with missing state/payload ownership constraint was accepted: %v", err)
+	}
+}
