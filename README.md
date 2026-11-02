@@ -1,74 +1,72 @@
-# Agent Control Panel
+# Agent Control Plane
 
-Agent Infrastructure Control Plane for self-hosted, Kubernetes-first agent workloads.
+Go-based Agent Infrastructure Control Plane and management API for self-hosted, Kubernetes-first Agent workloads.
 
-> **Product boundary:** Agent Control Plane owns desired state, identity, governance, federation and lifecycle. Agent Runtime owns execution semantics. Sandbox and compute providers own the execution substrate.
+> The repository name is `agent-control-panel`; the service is the **Agent Control Plane**. It is not the web console, Agent Runtime, or an Agent Framework.
 
-## Product intent
+## Product boundary
 
-Build an API-first control plane to deploy, govern, observe and recover agent workloads across execution environments. The platform composes mature open-source systems instead of reimplementing workflow engines, sandbox runtimes, IAM, policy engines or GPU schedulers.
+This repository owns Tenant/Project scope (initially), Agent identity, immutable AgentBundle and AgentRelease, canonical Session identity, RunIntent, desired configuration, release governance, federation bindings, and a read-only execution projection. It dispatches RunIntent to Agent Runtime and reconciles the dispatch receipt.
 
-The initial Golden Path is:
+It does **not** own executed Run/Task/Attempt/Checkpoint lifecycle, Temporal history, Agent reasoning, protected actions, provider operation journals, compute allocations, or actual Kubernetes/Sandbox resources.
 
-`AgentBundle → AgentRelease → Agent Identity → Session → Run Intent → Workflow Adapter → Sandbox Provider → Execution → Evidence`
+## Authority map
 
-This path must demonstrate stable identity, recoverable Session/Run state, safe reconciliation, authorization, credential revocation and linked audit evidence.
-
-## Core domain resources
-
-| Resource | Authority |
+| Domain fact | Authority |
 |---|---|
-| Agent | Logical agent identity and desired configuration |
-| AgentBundle | Versioned declarative agent package and runtime requirements |
-| AgentRelease | Release intent, rollout and release governance |
-| Session | Canonical user/agent conversation-work identity across Runs |
-| Run | One execution attempt with durable lifecycle identity |
-| FederationBinding | Binding to a remote control plane/provider |
-| CredentialBinding | References to external credential authorities; never raw secret material |
-| ContextProjectionPolicy | Rules for selecting/projecting context into an execution |
-| Evidence | Immutable references and attestations for lifecycle and execution outcomes |
+| Tenant / Project, Agent / Bundle / Release | Agent Control Plane |
+| SessionIdentity, RunIntent | Agent Control Plane |
+| Run / Task / RunAttempt / execution lifecycle | Agent Runtime |
+| Durable workflow history / native Activity attempts | Temporal |
+| DecisionRecord / invocation ledger and result | agent-decision |
+| Action / ActionHash / Approval / Permit / Action Operation | EngageGuard |
+| ComputeProvider / Pool / Workload / Allocation / Compute Operation | compute-control-panel |
+| Kueue admission / queue state | Kueue |
+| Pod placement and actual Pod / Job state | Kubernetes and provider |
+| Actual sandbox isolation and lifecycle | selected Sandbox Provider |
 
-The Control Plane owns logical Agent/Session/Run identity and desired state. It does not duplicate workflow history, worker scheduling, step retries, checkpoints or sandbox internals.
+A Run shown by this API is a **read-only projection** from Agent Runtime. The canonical `run_id` is generated and owned by Runtime. The Control Plane's `run_intent_id` is not a Run ID.
 
-## Responsibility boundaries
+## Golden Path
 
-- **Agent Control Plane:** domain resources, desired state, lifecycle coordination, authorization delegation, release governance, federation and evidence links.
-- **Agent Runtime / workflow engine (Temporal or compatible):** durable execution, step semantics, retries, waits, checkpoints and worker orchestration.
-- **Sandbox Provider (OpenKruise Agents, OpenSandbox, etc.):** isolated execution environment lifecycle, filesystem/runtime and sandbox-level network enforcement.
-- **Compute Control Plane (`compute-control-panel` / `gpu-compute-platform`):** cluster/provider inventory, compute allocation and accelerator lifecycle.
-- **Identity / secrets / policy:** integrate Keycloak or an OIDC provider, OpenBao/Kubernetes Secret, and mature policy systems (OPA/Casbin/Cedar) through adapters.
-- **`agent-control-panel` UI:** operator and developer UX only; no separate authority or lifecycle source of truth.
+`AgentBundle → AgentRelease → Session → RunIntent → Agent Runtime → Temporal → Decision Core → optional framework adapter`
 
-## Architecture principles
+Protected effects use a separate path:
 
-1. API-first, Kubernetes-first, self-hosted.
-2. Reconcile desired state; persist identity and lifecycle state independently from runtime processes.
-3. Explicitly separate AgentIdentity, SessionIdentity and WorkloadIdentity.
-4. Treat provider operations as asynchronous, idempotent and recoverable; unknown outcomes remain unknown until reconciled.
-5. Evidence links outcomes to the exact release, run, provider operation and observation.
-6. Reuse Temporal, OpenKruise Agents, Kueue/KAI/Volcano, Keycloak/OpenBao and existing gateways through narrow adapters.
-7. Keep secrets out of Agent manifests, prompts, sandbox metadata and logs.
-8. Keep UI, Runtime and Compute Control Plane separate deployable/repository boundaries.
+`ActionProposal → EngageGuard → Trusted Executor → Operation Receipt → Evidence`
 
-## Initial implementation sequence
+Compute is requested through Compute Control Plane; a Decision plugin never creates compute resources.
 
-- **P0 — Contract and Golden Path:** resource/API contracts; AgentBundle → Release → Session → Run; persistence; Run state machine; workflow adapter contract; Sandbox Provider SPI; restart recovery and idempotent reconciliation.
-- **P0 — Identity and authorization:** identity separation; scoped authorization; credential binding/revocation; audit correlation.
-- **P0 — Evidence:** immutable references for release/run/provider operation and verification outcome.
-- **P1 — OpenKruise Agents adapter:** SandboxClaim/Set lifecycle, warm pool, pause/resume, network policy and credential injection references.
-- **P1 — Federation and multi-cluster:** explicit provider bindings and canonical IDs.
-- **P1 — UI:** operate the API contracts, with no duplicate business authority.
-- **P2 — GPU workloads:** integrate with Compute Control Plane and mature queue/scheduler providers.
+## Architecture invariants
 
-## Non-goals
+1. One authoritative writer per business fact; no cross-service database writes.
+2. Each service owns its PostgreSQL database and migrations.
+3. Domain mutation and Outbox row commit in one local transaction; consumers commit Inbox dedupe and projection atomically.
+4. APIs and events are versioned; same idempotency key + same canonical request digest returns the same record; a different digest returns 409.
+5. Desired state and observed state are distinct; stale aggregate versions are not applied.
+6. Ambiguous remote outcomes remain UNKNOWN and are reconciled before retry.
+7. Temporal owns durable orchestration; Agent Framework owns only a bounded reasoning turn.
+8. EngageGuard owns protected-action authorization and Action Operation Journal; Compute owns provider operation journal.
+9. Secrets never enter AgentBundle, plugin payloads, logs, traces or evidence.
 
-This project does not implement a new Agent framework, model serving stack, durable workflow engine, sandbox runtime, MCP gateway, enterprise IAM, policy language or GPU scheduler. It does not treat a model response or workflow history as authorization evidence.
+## Architecture and contract references (proposed)
 
-## Development status
-
-This repository is the rewrite target. The architecture contract and P0 Golden Path should be established before broad feature porting. Legacy functionality is not presumed to be part of the new public contract; migrate only after mapping ownership, invariants and acceptance evidence.
-
-## Documentation
-
-- [Architecture baseline](docs/architecture/BASELINE.md)
+- [Platform baseline](docs/architecture/PLATFORM-BASELINE.md)
+- [Domain ownership](docs/architecture/DOMAIN-OWNERSHIP.md)
+- [Cross-service contracts](docs/architecture/CROSS-SERVICE-CONTRACTS.md)
+- [Identifier lifecycle](docs/architecture/IDENTIFIER-LIFECYCLE.md)
+- [ADR-001: Domain authority](docs/architecture/ADR-001-domain-authority.md)
+- [ADR-002: Temporal and Agent Framework boundary](docs/architecture/ADR-002-temporal-agent-framework.md)
+- [ADR-003: Identity, idempotency and retry ownership](docs/architecture/ADR-003-IDENTITY-AND-RETRY-OWNERSHIP.md)
+- [ADR-004: Compute and Sandbox boundary](docs/architecture/ADR-004-COMPUTE-AND-SANDBOX-BOUNDARY.md)
 - [P0 Golden Path](docs/roadmap/P0-GOLDEN-PATH.md)
+- [Architecture review disposition](docs/architecture/REVIEW-DISPOSITION-2026-11-02.md)
+- [Implementation roadmap](docs/roadmap/IMPLEMENTATION-ROADMAP.md)
+- [Agent Decision Go Core API candidate](https://github.com/avaargsh/agent-decision/blob/bbdf45e415b310b421932977ca415419772dcaaa/api/openapi.yaml) — service-owned source, blocked pending [agent-decision#9](https://github.com/avaargsh/agent-decision/issues/9).
+- [Cross-repository protocol authority proposal](https://github.com/avaargsh/agent-control-panel/blob/governance/platform-v0.3/docs/governance/ADR-0001-PROTOCOL-AUTHORITY.md) — proposed only; not ratified.
+  
+The ACP-local `contracts/agent-decision/v0.1/` schemas and `contracts/engageguard/action-hash/v0.1/` vectors are retained as historical compatibility snapshots. They are not normative service contracts and must not be used to freeze a wire format or ActionHash preimage before the owning services approve the source contract.
+
+## Status
+
+This is a greenfield implementation. Architecture documents are proposals until independently reviewed. A smoke test or green unit-test workflow alone does not establish production readiness.
