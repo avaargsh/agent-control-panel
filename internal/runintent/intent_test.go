@@ -2,32 +2,129 @@ package runintent
 
 import (
     "errors"
+    "strings"
     "testing"
+    "time"
 )
+
 func fixture() Intent {
-    return Intent{ID:"run-intent-1",TenantID:"tenant-1",SessionID:"session-1",
-      ReleaseID:"release-1",WorkflowID:"run/run-intent-1",Version:1,Status:Pending}
+    return Intent{
+        ID: "intent-1", TenantID: "tenant-1", PrincipalID: "svc-runtime",
+        ProjectID: "project-1", AgentID: "agent-1", ReleaseID: "release-1",
+        SessionID: "session-1", IdempotencyKey: "client-key-1",
+        RequestDigest: "sha256:" + strings.Repeat("a", 64),
+        Version: 1, Status: Pending,
+    }
 }
-func TestTransitionsAndUnknownRecovery(t *testing.T) {
-    i:=fixture()
-    if _,err:=i.Advance(0,Dispatching,false); !errors.Is(err,ErrStaleVersion) {t.Fatalf("stale: %v",err)}
-    if _,err:=i.Advance(1,Dispatched,true); !errors.Is(err,ErrTransition) {t.Fatalf("skipped dispatch: %v",err)}
-    i,_=i.Advance(1,Dispatching,false)
-    i,_=i.Advance(2,Unknown,false)
-    if _,err:=i.Advance(3,Dispatching,false); !errors.Is(err,ErrTransition) {t.Fatalf("blind retry: %v",err)}
-    if _,err:=i.Advance(3,Dispatched,false); !errors.Is(err,ErrTransition) {t.Fatalf("unverified: %v",err)}
-    var err error
-    i,err=i.Advance(3,Dispatched,true)
-    if err!=nil||i.Version!=4 {t.Fatalf("verified dispatch: %+v %v",i,err)}
-    i,err=i.Advance(4,CancelRequested,false)
-    if err!=nil {t.Fatal(err)}
-    if _,err=i.Advance(5,Pending,false); !errors.Is(err,ErrTransition) {t.Fatalf("reopened: %v",err)}
+
+func TestDispatchAcceptanceUsesRuntimeOwnedRunIdentity(t *testing.T) {
+    now := time.Unix(100, 0).UTC()
+    intent, err := fixture().ClaimDispatch(1, "dispatcher-1", now, 10*time.Second)
+    if err != nil { t.Fatal(err) }
+    if intent.Status != Dispatching || intent.FenceToken != 1 || intent.Version != 2 {
+        t.Fatalf("unexpected claim: %+v", intent)
+    }
+
+    accepted, err := intent.RecordDispatchOutcome(2, "dispatcher-1", 1, now.Add(time.Second), DispatchOutcome{
+        RunIntentID: intent.ID, RequestDigest: intent.RequestDigest, Kind: DispatchAccepted,
+        RunID: "runtime-run-1", WorkflowID: "run/runtime-run-1",
+    })
+    if err != nil { t.Fatal(err) }
+    if accepted.Status != Accepted || accepted.RunID != "runtime-run-1" ||
+        accepted.WorkflowID != "run/runtime-run-1" || accepted.Version != 3 {
+        t.Fatalf("runtime receipt not projected: %+v", accepted)
+    }
+    if accepted.LeaseOwner != "" || !accepted.LeaseExpiresAt.IsZero() {
+        t.Fatalf("lease not cleared: %+v", accepted)
+    }
 }
-func TestIdentityRequired(t *testing.T) {
-    i:=fixture()
-    i.TenantID=""
-    if !errors.Is(i.Validate(),ErrInvalid) {t.Fatal("missing tenant accepted")}
-    i=fixture()
-    i.Status="RUNNING"
-    if !errors.Is(i.Validate(),ErrInvalid) {t.Fatal("runtime state accepted")}
+
+func TestUnknownMustReconcileBeforeSameKeyRetry(t *testing.T) {
+    now := time.Unix(200, 0).UTC()
+    intent, _ := fixture().ClaimDispatch(1, "dispatcher-1", now, time.Minute)
+    intent, err := intent.RecordDispatchOutcome(2, "dispatcher-1", 1, now.Add(time.Second), DispatchOutcome{
+        RunIntentID: intent.ID, RequestDigest: intent.RequestDigest, Kind: DispatchAmbiguous,
+    })
+    if err != nil || intent.Status != Unknown { t.Fatalf("ambiguous ACK: %+v %v", intent, err) }
+    if _, err := intent.ClaimDispatch(3, "dispatcher-2", now.Add(2*time.Second), time.Minute); !errors.Is(err, ErrTransition) {
+        t.Fatalf("UNKNOWN was blindly dispatched: %v", err)
+    }
+
+    intent, err = intent.BeginReconciliation(3, "reconciler-1", now.Add(2*time.Second), time.Minute)
+    if err != nil || intent.Status != Reconciling { t.Fatalf("begin reconcile: %+v %v", intent, err) }
+    intent, err = intent.ApplyReconciliationResult(4, "reconciler-1", intent.FenceToken, now.Add(3*time.Second), ReconciliationResult{
+        RunIntentID: intent.ID, RequestDigest: intent.RequestDigest, Kind: RuntimeNotFoundFinal,
+    })
+    if err != nil || intent.Status != Pending { t.Fatalf("authoritative not-found: %+v %v", intent, err) }
+    if intent.IdempotencyKey != "client-key-1" || intent.RequestDigest != "sha256:"+strings.Repeat("a",64) {
+        t.Fatal("retry changed idempotency identity")
+    }
+    intent, err = intent.ClaimDispatch(intent.Version, "dispatcher-2", now.Add(4*time.Second), time.Minute)
+    if err != nil || intent.Status != Dispatching { t.Fatalf("same-key retry: %+v %v", intent, err) }
+}
+
+func TestFoundReconciliationAndConflictingReceipt(t *testing.T) {
+    now := time.Unix(300, 0).UTC()
+    intent, _ := fixture().ClaimDispatch(1, "dispatcher-1", now, time.Minute)
+    intent, _ = intent.RecordDispatchOutcome(2, "dispatcher-1", 1, now.Add(time.Second), DispatchOutcome{
+        RunIntentID: intent.ID, RequestDigest: intent.RequestDigest, Kind: DispatchAmbiguous,
+    })
+    intent, _ = intent.BeginReconciliation(3, "reconciler-1", now.Add(2*time.Second), time.Minute)
+    found, err := intent.ApplyReconciliationResult(4, "reconciler-1", intent.FenceToken, now.Add(3*time.Second), ReconciliationResult{
+        RunIntentID: intent.ID, RequestDigest: intent.RequestDigest, Kind: RuntimeFound,
+        RunID: "runtime-run-2", WorkflowID: "run/runtime-run-2",
+    })
+    if err != nil || found.Status != Accepted { t.Fatalf("found result: %+v %v", found, err) }
+
+    intent, _ = fixture().ClaimDispatch(1, "dispatcher-1", now, time.Minute)
+    mismatch, err := intent.RecordDispatchOutcome(2, "dispatcher-1", 1, now.Add(time.Second), DispatchOutcome{
+        RunIntentID: intent.ID, RequestDigest: "sha256:"+strings.Repeat("b",64),
+        Kind: DispatchAccepted, RunID: "foreign-run", WorkflowID: "run/foreign-run",
+    })
+    if err != nil || mismatch.Status != ManualReview || mismatch.ManualReviewCode != "RUNTIME_RECEIPT_MISMATCH" {
+        t.Fatalf("mismatched receipt not quarantined: %+v %v", mismatch, err)
+    }
+}
+
+func TestLeaseExpiryFencesStaleWorker(t *testing.T) {
+    now := time.Unix(400, 0).UTC()
+    intent, _ := fixture().ClaimDispatch(1, "dispatcher-1", now, time.Second)
+    if _, err := intent.RecordDispatchOutcome(2, "dispatcher-1", 1, now.Add(2*time.Second), DispatchOutcome{
+        RunIntentID: intent.ID, RequestDigest: intent.RequestDigest, Kind: DispatchAccepted,
+        RunID: "late-run", WorkflowID: "run/late-run",
+    }); !errors.Is(err, ErrLeaseExpired) {
+        t.Fatalf("expired worker committed: %v", err)
+    }
+    expired, err := intent.ExpireLease(2, now.Add(2*time.Second))
+    if err != nil || expired.Status != Unknown { t.Fatalf("lease expiry: %+v %v", expired, err) }
+    if _, err := expired.RecordDispatchOutcome(2, "dispatcher-1", 1, now.Add(3*time.Second), DispatchOutcome{
+        RunIntentID: intent.ID, RequestDigest: intent.RequestDigest, Kind: DispatchAccepted,
+        RunID: "late-run", WorkflowID: "run/late-run",
+    }); !errors.Is(err, ErrStaleVersion) {
+        t.Fatalf("stale version accepted: %v", err)
+    }
+}
+
+func TestValidationRejectsRuntimeOwnedStateAndPrematureRunID(t *testing.T) {
+    intent := fixture()
+    intent.TenantID = ""
+    if !errors.Is(intent.Validate(), ErrInvalid) { t.Fatal("missing tenant accepted") }
+    intent = fixture()
+    intent.Status = Status("RUNNING")
+    if !errors.Is(intent.Validate(), ErrInvalid) { t.Fatal("Runtime Run state accepted") }
+    intent = fixture()
+    intent.RunID = "run-1"
+    if !errors.Is(intent.Validate(), ErrInvalid) { t.Fatal("Control Plane accepted a Run ID before Runtime receipt") }
+}
+
+func TestDefinitiveRuntimeRejection(t *testing.T) {
+    now := time.Unix(500, 0).UTC()
+    intent, _ := fixture().ClaimDispatch(1, "dispatcher-1", now, time.Minute)
+    rejected, err := intent.RecordDispatchOutcome(2, "dispatcher-1", 1, now.Add(time.Second), DispatchOutcome{
+        RunIntentID: intent.ID, RequestDigest: intent.RequestDigest, Kind: DispatchRejected,
+        RejectionCode: "RELEASE_NOT_READY",
+    })
+    if err != nil || rejected.Status != Rejected || rejected.RejectionCode != "RELEASE_NOT_READY" {
+        t.Fatalf("rejection: %+v %v", rejected, err)
+    }
 }
