@@ -33,7 +33,7 @@ Open compatibility gate: ACP draft includes an inline-context two-variant Decisi
 
 ## Protected action and Operation identity proposal
 
-Runtime persists one stable Guard submission idempotency key before network I/O. Guard creates and owns operation_id and the Action Operation. Same authenticated tenant + key + canonical request digest must resolve the same operation. Same key with changed digest fails closed. This is **not yet ratified**, since EngageGuard PR #2 currently requires caller-provided operation_id.
+Runtime persists one stable Guard submission idempotency key before network I/O. Guard creates and owns operation_id and the Action Operation. Same authenticated tenant + key + canonical request digest must resolve the same operation. Same key with changed digest fails closed. This is **not yet ratified**, because the current implementation is not yet a trusted, durable Guard admission service. EngageGuard PR #5 proposes caller `ActionSubmission` without `operation_id` and Guard-internal `ActionRequest` after identity resolution, but the PostgreSQL key/operation claim, Permit and UNKNOWN journal remain unimplemented.
 
 Hash is computed by Guard only after trusted normalization. A single versioned domain separator plus full RFC 8785 JCS and cross-language vectors are required. Go json.Marshal alone is not equivalent to RFC 8785 for arbitrary values. No Permit or ActionHash is supplied by an untrusted model/plugin.
 
@@ -70,3 +70,10 @@ Direct Run capacity: Runtime → Compute CP. Sandbox capacity: Runtime → Sandb
 - Cross-tenant, expired identity, revoked binding, duplicate event, gap and restart tests are documented with CI links.
 
 See [PR integration plan](./PR-STACK-AND-GATES.md), [ADR-0001](./ADR-0001-PROTOCOL-AUTHORITY.md) and machine-readable [contract registry](../../governance/contract-registry.v0.3.json).
+
+
+## Guard wire/internal contract split (P0 G03)
+
+A caller submits a bounded untrusted `action-submission.v1` JSON payload plus a stable HTTP `Idempotency-Key`. This external payload does **not** carry operation_id, tenant/subject assertions, policy, ToolBinding or executor audience. Guard must resolve identity and all privileged bindings after authenticated admission; only Guard's internal `ActionRequest` may bind its newly created operation_id.
+
+Governance pins both independently: `guard-action-submission` for caller ingress, `guard-internal-action-request` for trusted internal normalization. Both remain blocked until Guard's PostgreSQL unique claim + exact replay/conflict, domain-separated RFC 8785 JCS, Permit and live lost-ACK/UNKNOWN tests are verified. Branches #4 and #5 are competing sibling proposals, **not** a tested end-to-end implementation.

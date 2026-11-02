@@ -105,11 +105,20 @@
       "issue": "https://github.com/avaargsh/agent-decision/issues/9"
     },
     {
-      "id": "guard-action-request",
+      "id": "guard-action-submission",
+      "repo": "avaargsh/EngageGuard",
+      "path": "docs/contracts/action-submission.v1.schema.json",
+      "commit": "15582a24b1bd22ab16cca9dbbf745696745d1ce6",
+      "version": "action-submission.v1-draft",
+      "state": "blocked",
+      "issue": "https://github.com/avaargsh/EngageGuard/issues/3"
+    },
+    {
+      "id": "guard-internal-action-request",
       "repo": "avaargsh/EngageGuard",
       "path": "docs/contracts/action-request.v1.schema.json",
-      "commit": "2e8bc6187a3975aa9ae8dc635343c048ebd665ef",
-      "version": "action-request.v1-draft",
+      "commit": "15582a24b1bd22ab16cca9dbbf745696745d1ce6",
+      "version": "guard-internal.v1-draft",
       "state": "blocked",
       "issue": "https://github.com/avaargsh/EngageGuard/issues/3"
     },

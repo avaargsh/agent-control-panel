@@ -49,3 +49,8 @@ The observation at `governance/pr-topology.v0.3.json` records current PR numbers
 - Optional live check: `GH_GOVERNANCE_READ_TOKEN=<read-only-token> python scripts/audit_pr_topology.py --live`. An access/permission failure is an error, not an empty list. The separate token is required for private repositories.
 - A SHA change, added/closed PR or missing parent will generate a **drift error**. The governance PR #4 is self-modifying: its head SHA may change as this same audit file is edited; only its existence is checked for live head drift.
 - The CI workflow does not yet enforce cross-repository branch protections, so this is a human-reviewed audit; no action is auto-merged/closed.
+
+
+## Guard contract authority correction
+
+External Runtime→Guard ingress must use **ActionSubmission v1** from EngageGuard PR #5 candidate; the operation_id-bearing `ActionRequest` is a Guard-internal resolved record and cannot be sent by Runtime. The v0.3 registry pins these as distinct blocked contracts. Guard #4/#5 are sibling changes sharing a parent branch; do not merge both independently. Keep #4's validation improvements only after diff/review against #5. The database claim, hash, Permit and reconciliation remain G03 blockers.

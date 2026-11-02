@@ -78,10 +78,16 @@ REQUIRED_CONTRACTS = {
         "plugin.v0.1-legacy",
         "blocked",
     ),
-    "guard-action-request": (
+    "guard-action-submission": (
+        "avaargsh/EngageGuard",
+        "docs/contracts/action-submission.v1.schema.json",
+        "action-submission.v1-draft",
+        "blocked",
+    ),
+    "guard-internal-action-request": (
         "avaargsh/EngageGuard",
         "docs/contracts/action-request.v1.schema.json",
-        "action-request.v1-draft",
+        "guard-internal.v1-draft",
         "blocked",
     ),
     "compute-workload-http": (
