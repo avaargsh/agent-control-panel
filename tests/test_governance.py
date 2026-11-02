@@ -24,6 +24,25 @@ class GovernanceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "multiple canonical writers"):
             validate_registry(broken)
 
+    def test_request_id_creator_is_not_record_authority(self):
+        self.assertTrue(validate_registry(REGISTRY))
+        identities = {x["id"]: x for x in REGISTRY["issued_request_ids"]}
+        self.assertEqual(identities["invocation_id"]["created_by"], "avaargsh/agent-runtime")
+        self.assertEqual(identities["invocation_id"]["durable_index_owner"], "avaargsh/agent-decision")
+        self.assertEqual(identities["guard_submission_key"]["durable_index_owner"], "avaargsh/EngageGuard")
+
+    def test_request_id_cannot_be_double_owned(self):
+        broken = copy.deepcopy(REGISTRY)
+        broken["domain_ownership"][1]["identifiers"].append("invocation_id")
+        with self.assertRaisesRegex(ValueError, "request ID duplicated"):
+            validate_registry(broken)
+
+    def test_request_id_requires_durable_index_owner(self):
+        broken = copy.deepcopy(REGISTRY)
+        broken["issued_request_ids"][0]["durable_index_owner"] = "unknown/owner"
+        with self.assertRaisesRegex(ValueError, "durable index owner"):
+            validate_registry(broken)
+
     def test_contract_cannot_be_silently_accepted(self):
         broken = copy.deepcopy(REGISTRY)
         broken["contracts"][0]["state"] = "accepted"

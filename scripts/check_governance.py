@@ -45,6 +45,19 @@ def validate_registry(registry):
             if identifier in identifiers:
                 raise ValueError("identifier has multiple canonical writers: " + identifier)
             identifiers.add(identifier)
+    requests = registry.get("issued_request_ids")
+    if not isinstance(requests, list) or not requests:
+        raise ValueError("request ID issuance matrix is required")
+    request_ids = set()
+    for request_id in requests:
+        name = request_id["id"]
+        if name in identifiers or name in request_ids:
+            raise ValueError("request ID duplicated as authority-owned identifier")
+        request_ids.add(name)
+        if (request_id["created_by"] not in owners or
+                request_id["durable_index_owner"] not in owners or
+                not request_id.get("meaning")):
+            raise ValueError("request ID creator and durable index owner must be declared")
     contract_ids = set()
     for contract in contracts:
         if contract["id"] in contract_ids:

@@ -22,9 +22,7 @@
       "identifiers": [
         "run_id",
         "workflow_id",
-        "run_attempt_id",
-        "invocation_id",
-        "guard_submission_key"
+        "run_attempt_id"
       ]
     },
     {
@@ -175,6 +173,20 @@
         "avaargsh/agent-runtime",
         "avaargsh/agent-decision"
       ]
+    }
+  ],
+  "issued_request_ids": [
+    {
+      "id": "invocation_id",
+      "created_by": "avaargsh/agent-runtime",
+      "durable_index_owner": "avaargsh/agent-decision",
+      "meaning": "stable Decision/adapter invocation across Runtime Activity retry"
+    },
+    {
+      "id": "guard_submission_key",
+      "created_by": "avaargsh/agent-runtime",
+      "durable_index_owner": "avaargsh/EngageGuard",
+      "meaning": "stable HTTP Guard Idempotency-Key; Guard creates operation_id"
     }
   ]
 }

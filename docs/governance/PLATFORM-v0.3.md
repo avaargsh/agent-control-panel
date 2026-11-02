@@ -39,6 +39,12 @@ Hash is computed by Guard only after trusted normalization. A single versioned d
 
 UNKNOWN, RECONCILING and MANUAL_REVIEW must not lead to a second external effect. Guard owns protected-action reconciliation; Compute owns provider mutation reconciliation. A successful provider HTTP acknowledgement does not prove exact-resource deletion, receipt verification, or exactly-once execution.
 
+
+
+## Identifier creation is not record authority
+
+The Runtime **creates** invocation_id for a logical Decision Turn and guard_submission_key before protected-action HTTP submission. However, Decision **owns** the durable invocation ledger and exact result, while EngageGuard **owns** the idempotency index and server-generated operation_id. These are caller-issued request identities, not Runtime-owned foreign database records. See the manifest's issued_request_ids section. Retried requests MUST use the original ID and canonical request digest; a changed digest conflicts.
+
 ## Compute and sandbox
 
 Direct Run capacity: Runtime → Compute CP. Sandbox capacity: Runtime → SandboxProvider Claim → Compute CP (no duplicate Workload). Compute CP controls provider/pool choice and Workload/Allocation; Kueue controls admission/quota and Kubernetes controls Pod placement. Provider/native UID remains external authority for resource existence and delete finality.
