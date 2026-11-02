@@ -101,7 +101,7 @@ func (r *Repository) Create(ctx context.Context, intent runintent.Intent, event 
 	))
 	if errors.Is(err, pgx.ErrNoRows) {
 		existing, lookupErr := scanIntent(tx.QueryRow(ctx,
-			"SELECT "+selectIntentColumns+" FROM run_intents WHERE tenant_id = $1 AND principal_id = $2 AND operation = $3 AND idempotency_key = $4",
+			"SELECT " + selectIntentColumns + " FROM run_intents WHERE tenant_id = $1 AND principal_id = $2 AND operation = $3 AND idempotency_key = $4",
 			intent.TenantID, intent.PrincipalID, operationCreate, intent.IdempotencyKey,
 		))
 		if lookupErr != nil {
@@ -131,7 +131,7 @@ func (r *Repository) Get(ctx context.Context, tenantID, id string) (runintent.In
 		return runintent.Intent{}, errors.New("postgres run intent repository is not configured")
 	}
 	intent, err := scanIntent(r.pool.QueryRow(ctx,
-		"SELECT "+selectIntentColumns+" FROM run_intents WHERE tenant_id = $1 AND id = $2::uuid",
+		"SELECT " + selectIntentColumns + " FROM run_intents WHERE tenant_id = $1 AND id = $2::uuid",
 		tenantID, id,
 	))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -171,7 +171,7 @@ func (r *Repository) CompareAndSwap(ctx context.Context, tenantID, id string, ex
 	defer func() { _ = tx.Rollback(context.Background()) }()
 
 	current, err := scanIntent(tx.QueryRow(ctx,
-		"SELECT "+selectIntentColumns+" FROM run_intents WHERE tenant_id = $1 AND id = $2::uuid FOR UPDATE",
+		"SELECT " + selectIntentColumns + " FROM run_intents WHERE tenant_id = $1 AND id = $2::uuid FOR UPDATE",
 		tenantID, id,
 	))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -206,7 +206,7 @@ func (r *Repository) CompareAndSwap(ctx context.Context, tenantID, id string, ex
 		"UPDATE run_intents SET status = $3, version = $4, fence_token = $5, lease_owner = $6, " +
 			"lease_expires_at = $7, runtime_run_id = $8, workflow_id = $9, rejection_code = $10, " +
 			"manual_review_code = $11, updated_at = now() " +
-			"WHERE id = $1::uuid AND tenant_id = $2 AND version = $12 RETURNING "+selectIntentColumns,
+			"WHERE id = $1::uuid AND tenant_id = $2 AND version = $12 RETURNING " + selectIntentColumns,
 		id, tenantID, string(next.Status), int64(next.Version), int64(next.FenceToken),
 		nullableString(next.LeaseOwner), nullableTime(next.LeaseExpiresAt),
 		nullableString(next.RunID), nullableString(next.WorkflowID),
@@ -249,9 +249,9 @@ func validateEvent(event Event, intent runintent.Intent, requiredType string) er
 
 func insertEvent(ctx context.Context, tx pgx.Tx, event Event) error {
 	_, err := tx.Exec(ctx,
-		"INSERT INTO outbox_events ("+
-			"event_id, producer, event_type, schema_version, tenant_id, aggregate_type, aggregate_id, "+
-			"aggregate_version, occurred_at, correlation_id, causation_id, traceparent, payload"+
+		"INSERT INTO outbox_events (" +
+			"event_id, producer, event_type, schema_version, tenant_id, aggregate_type, aggregate_id, " +
+			"aggregate_version, occurred_at, correlation_id, causation_id, traceparent, payload" +
 			") VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb)",
 		event.ID, event.Producer, event.Type, event.SchemaVersion, event.TenantID,
 		event.AggregateType, event.AggregateID, int64(event.AggregateVersion),
