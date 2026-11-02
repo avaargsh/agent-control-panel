@@ -16,7 +16,7 @@ Status: **Proposed candidate; cross-service protocol gates remain blocked.** Rea
 | `invocation_id` | Agent Runtime | agent-decision owns invocation ledger/result | Stable across retries of one logical Decision Turn |
 | `proposal_id` | agent-decision | agent-decision | Stable in the persisted/replayed invocation result |
 | `guard_submission_key` (HTTP `Idempotency-Key`) | Agent Runtime | EngageGuard idempotency index | Created once per ActionProposal; reused on every submission/retry |
-| `operation_id` | EngageGuard | EngageGuard Action Operation | Server-generated on first accepted submission; returned to Runtime; never supplied by Runtime |
+| `operation_id` | EngageGuard (proposed; G03 blocked) | EngageGuard Action Operation | Intended server-generated identifier; current ActionRequest draft conflicts, so creation semantics are not ratified |
 | `action_hash`, `permit_id` | EngageGuard | EngageGuard | Hash after trusted canonicalization; Permit bound to exact action/operation/audience |
 | `executor_attempt_id` | Trusted executor / EngageGuard | EngageGuard Receipt | One concrete executor attempt; not a Run or Temporal attempt |
 | `workload_id`, `allocation_id` | Compute Control Plane | Compute Control Plane | Stable logical compute resources |
@@ -78,7 +78,7 @@ Internal Compute controller operations use Compute workload identity and its dom
 - Control Plane: unique tenant/principal/idempotency key; persist canonical request digest.
 - Runtime: UNIQUE(`run_intent_id`), UNIQUE(`run_id`), UNIQUE(`workflow_id`).
 - Decision: UNIQUE(`invocation_id`); persist request digest and exact result.
-- EngageGuard: UNIQUE(tenant_id, guard_submission_key); unique server-generated operation_id; immutable canonical ActionHash once claimed.
+- EngageGuard (proposed, G03 blocked): UNIQUE(tenant_id, guard_submission_key); unique operation_id; immutable ActionHash once its canonical preimage is ratified.
 - Compute: UNIQUE(`compute_operation_id`); generation/version fencing.
 - Evidence: immutable digest plus producer identity and schema version.
 
