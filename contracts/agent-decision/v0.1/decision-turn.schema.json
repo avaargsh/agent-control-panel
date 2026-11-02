@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/avaargsh/agent-control-panel/blob/main/contracts/agent-decision/v0.1/decision-turn.schema.json",
+  "$id": "urn:avaargsh:agent-control-panel:compat-snapshot:decision-turn:v0.1",
   "title": "Agent Decision Turn Request v0.1",
-  "description": "Canonical language-neutral request from Agent Runtime to a managed Agent Decision plugin.",
+  "description": "Non-normative historical compatibility snapshot only; Agent Decision Core owns the canonical wire contract. This file must not be treated as a public API schema.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -22,16 +22,53 @@
     "trace_context"
   ],
   "properties": {
-    "protocol_version": { "const": "v0.1" },
-    "invocation_id": { "type": "string", "minLength": 1, "maxLength": 256 },
-    "tenant_id": { "type": "string", "minLength": 1, "maxLength": 256 },
-    "agent_id": { "type": "string", "minLength": 1, "maxLength": 256 },
-    "bundle_digest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
-    "release_id": { "type": "string", "minLength": 1, "maxLength": 256 },
-    "session_id": { "type": "string", "minLength": 1, "maxLength": 256 },
-    "run_id": { "type": "string", "minLength": 1, "maxLength": 256 },
-    "turn_id": { "type": "string", "minLength": 1, "maxLength": 256 },
-    "user_input": { "type": "string", "minLength": 1, "maxLength": 32768 },
+    "protocol_version": {
+      "const": "v0.1"
+    },
+    "invocation_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "tenant_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "agent_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "bundle_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "release_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "session_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "turn_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "user_input": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32768
+    },
     "user_input_ref": {
       "type": "string",
       "minLength": 1,
@@ -41,27 +78,55 @@
     "context_projection": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["projection_id", "digest", "items"],
+      "required": [
+        "projection_id",
+        "digest",
+        "items"
+      ],
       "properties": {
-        "projection_id": { "type": "string", "minLength": 1, "maxLength": 256 },
-        "digest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "projection_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
         "items": {
           "type": "array",
           "maxItems": 128,
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["content", "source_refs"],
+            "required": [
+              "content",
+              "source_refs"
+            ],
             "properties": {
-              "content": { "type": "string", "minLength": 1, "maxLength": 32768 },
+              "content": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 32768
+              },
               "source_refs": {
                 "type": "array",
                 "maxItems": 32,
-                "items": { "type": "string", "minLength": 1, "maxLength": 512 },
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                },
                 "uniqueItems": true
               },
-              "label": { "type": "string", "maxLength": 256 },
-              "media_type": { "type": "string", "maxLength": 128 }
+              "label": {
+                "type": "string",
+                "maxLength": 256
+              },
+              "media_type": {
+                "type": "string",
+                "maxLength": 128
+              }
             }
           }
         }
@@ -80,24 +145,43 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["capability_id", "capability_version"],
+        "required": [
+          "capability_id",
+          "capability_version"
+        ],
         "properties": {
-          "capability_id": { "type": "string", "minLength": 1, "maxLength": 256 },
-          "capability_version": { "type": "string", "minLength": 1, "maxLength": 128 }
+          "capability_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "capability_version": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
         }
       }
     },
-    "deadline": { "type": "string", "format": "date-time" },
+    "deadline": {
+      "type": "string",
+      "format": "date-time"
+    },
     "trace_context": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["traceparent"],
+      "required": [
+        "traceparent"
+      ],
       "properties": {
         "traceparent": {
           "type": "string",
           "pattern": "^[0-9a-f]{2}-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$"
         },
-        "tracestate": { "type": "string", "maxLength": 512 }
+        "tracestate": {
+          "type": "string",
+          "maxLength": 512
+        }
       }
     }
   }
