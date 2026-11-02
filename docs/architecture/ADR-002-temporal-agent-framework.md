@@ -2,11 +2,11 @@
 
 ## Status
 
-Proposed. This ADR is normative for the Runtime / Decision boundary once the v0.1 contracts are frozen.
+Proposed v0.2. Normative for the Runtime / Decision boundary once the shared v0.1 plugin schemas are frozen.
 
 ## Decision
 
-Use Temporal for durable workflow orchestration and a managed Python/TypeScript Agent Framework plugin for bounded reasoning turns. Runtime is the sole owner of platform Run lifecycle. A framework invocation returns exactly one v0.1 discriminated result: `final_response`, `action_proposals`, `needs_input` or `decision_error`. It does not execute privileged tools.
+Use Temporal for durable workflow orchestration and a managed Python/TypeScript Agent Framework plugin for bounded reasoning turns. Runtime is the sole owner of platform Run lifecycle. A framework invocation returns exactly one v0.1 result: `final_response` or `action_proposals`. It does not execute privileged tools.
 
 Protected effects are executed separately through EngageGuard and a trusted enforcement point.
 
@@ -28,7 +28,7 @@ The canonical wire schemas are:
 
 Runtime creates one `invocation_id` per logical Decision Turn. Temporal Activity retries reuse the same ID and identical canonical request. Decision stores the request digest and exact response; same ID/same digest replays, same ID/different digest conflicts. The plugin cannot fetch opaque source references or use them as arbitrary network URLs; Runtime supplies the already-authorized projection inline.
 
-The plugin's `allowed_capabilities` constrain proposal generation only. They do not grant execution permission. Every ActionProposal is untrusted and is revalidated by EngageGuard at execution time.
+The plugin's `allowed_capabilities` constrain proposal generation only. They do not grant execution permission. Every ActionProposal is untrusted and is revalidated by EngageGuard at execution time. Clarification is represented as a FinalResponse in v0.1; new response variants require a versioned schema change. Transport errors use the platform error envelope.
 
 ## Retry ownership
 
@@ -38,8 +38,8 @@ The plugin's `allowed_capabilities` constrain proposal generation only. They do 
 4. Compute Control Plane owns Compute Operation idempotency and provider reconciliation.
 5. Runtime never generates a new invocation/operation ID merely because an Activity was retried.
 6. An Activity may repeat a request with the same stable ID. It must not create a new logical side effect while the owning service reports UNKNOWN.
-7. Retryable Decision errors may be retried by Temporal within the bounded policy. Non-retryable protocol/schema/security errors fail closed.
-8. A protected action timeout is not a normal retry signal. Runtime queries EngageGuard using the same operation ID; only EngageGuard's reconciled state can authorize continuation.
+7. Retryable transport failures may be retried within the bounded Temporal policy. Protocol/schema/security failures are non-retryable and fail closed.
+8. A protected action timeout is not a normal retry signal. Runtime queries EngageGuard using the same Action operation ID; only EngageGuard's reconciled state can authorize continuation.
 
 ## Prohibited overlap
 
