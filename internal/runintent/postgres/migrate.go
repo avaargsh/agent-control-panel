@@ -177,28 +177,47 @@ func verifyRunIntentSchema(ctx context.Context, tx pgx.Tx) error {
 		"inbox_event_tenant_identity",
 		"inbox_applied_consistency",
 		"inbox_aggregate_claims_pkey",
-		"inbox_aggregate_claims_event_id_key",
+		"inbox_aggregate_claims_consumer_name_event_id_key",
 		"inbox_aggregate_claims_consumer_name_event_id_tenant_id_fkey",
 		"inbox_cursors_pkey",
 	}
-	var found int
-	if err := tx.QueryRow(ctx, `
-		SELECT count(*)
-		FROM pg_constraint
-		WHERE conname = ANY($1::text[])
-		  AND convalidated
-		  AND conrelid IN (
-			to_regclass('run_intents'),
-			to_regclass('outbox_events'),
-			to_regclass('inbox_events'),
-			to_regclass('inbox_aggregate_claims'),
-			to_regclass('inbox_cursors')
-		  )
-	`, requiredConstraints).Scan(&found); err != nil {
+	rows, err := tx.Query(ctx, `
+		SELECT expected.constraint_name
+		FROM unnest($1::text[]) AS expected(constraint_name)
+		WHERE NOT EXISTS (
+			SELECT 1
+			FROM pg_constraint actual
+			WHERE actual.conname = expected.constraint_name
+			  AND actual.convalidated
+			  AND actual.conrelid IN (
+				to_regclass('run_intents'),
+				to_regclass('outbox_events'),
+				to_regclass('inbox_events'),
+				to_regclass('inbox_aggregate_claims'),
+				to_regclass('inbox_cursors')
+			  )
+		)
+		ORDER BY expected.constraint_name
+	`, requiredConstraints)
+	if err != nil {
 		return fmt.Errorf("verify RunIntent schema constraints: %w", err)
 	}
-	if found != len(requiredConstraints) {
-		return ErrSchemaDrift
+	var missing []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan missing RunIntent schema constraint: %w", err)
+		}
+		missing = append(missing, name)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("iterate missing RunIntent schema constraints: %w", err)
+	}
+	rows.Close()
+	if len(missing) > 0 {
+		return fmt.Errorf("%w: missing or unvalidated constraints: %s", ErrSchemaDrift, strings.Join(missing, ", "))
 	}
 	return nil
 }
