@@ -90,7 +90,7 @@
       "id": "decision-core-http",
       "repo": "avaargsh/agent-decision",
       "path": "api/openapi.yaml",
-      "commit": "bbdf45e415b310b421932977ca415419772dcaaa",
+      "commit": "f6c3ee783fccfa132867b450cc432a9ff7392c66",
       "version": "core.v1-draft",
       "state": "candidate",
       "issue": "https://github.com/avaargsh/agent-decision/issues/9"
