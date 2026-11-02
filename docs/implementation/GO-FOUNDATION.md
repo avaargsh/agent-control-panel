@@ -17,7 +17,7 @@ Status: **non-production foundation; P0 golden path not yet complete**.
 
 Agent Control Plane owns RunIntent and its dispatch projection. Agent Runtime owns `run_id`, `workflow_id`, `run_attempt_id` and the executed Run lifecycle. Temporal owns durable workflow history and native Activity attempts.
 
-The current domain transitions are pure functions, **not durable compare-and-swap**. PostgreSQL must later atomically persist the version/fencing transition, idempotency record and Outbox row. Runtime receipts are accepted only after the adapter authenticates the Runtime workload identity; typed structs are not a substitute for transport authentication.
+The current domain transitions are pure functions, **not durable compare-and-swap**. The initial PostgreSQL schema now exists in `migrations/0001_run_intents_outbox_inbox.sql`; a Go repository must still atomically persist version/fencing transitions, idempotency records and Outbox rows. Runtime receipts are accepted only after the adapter authenticates the Runtime workload identity; typed structs are not a substitute for transport authentication.
 
 There are deliberately **no mutating HTTP endpoints** until persistent idempotency, authorization, transactional outbox and evidence acceptance are integrated. Readiness currently covers process admission only, not future database/Runtime health.
 
