@@ -29,7 +29,7 @@ A Run shown by this API is a **read-only projection** from Agent Runtime. The ca
 
 ## Golden Path
 
-`AgentBundle → AgentRelease → Session → RunIntent → Agent Runtime → Temporal → Decision Plugin`
+`AgentBundle → AgentRelease → Session → RunIntent → Agent Runtime → Temporal → Decision Core → optional framework adapter`
 
 Protected effects use a separate path:
 
