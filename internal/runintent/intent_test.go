@@ -105,6 +105,47 @@ func TestLeaseExpiryFencesStaleWorker(t *testing.T) {
     }
 }
 
+func TestAcceptedValidationRequiresCanonicalRuntimeIdentity(t *testing.T) {
+    intent := fixture()
+    intent.Status = Accepted
+    intent.RunID = "run-1"
+    intent.WorkflowID = "agent-run/v1/different-run"
+    if !errors.Is(intent.Validate(), ErrInvalid) {
+        t.Fatalf("mismatched Runtime identity accepted: %+v", intent)
+    }
+}
+
+func TestLeaseExpiryAdvancesFenceAndRejectsExpiredToken(t *testing.T) {
+    now := time.Unix(700, 0).UTC()
+    intent, err := fixture().ClaimDispatch(1, "dispatcher-1", now, time.Second)
+    if err != nil { t.Fatal(err) }
+    expired, err := intent.ExpireLease(intent.Version, now.Add(2*time.Second))
+    if err != nil { t.Fatal(err) }
+    if expired.FenceToken != intent.FenceToken+1 {
+        t.Fatalf("fencing token did not advance on lease expiry: before=%d after=%d", intent.FenceToken, expired.FenceToken)
+    }
+
+    next, err := expired.BeginReconciliation(expired.Version, "reconciler-2", now.Add(3*time.Second), time.Minute)
+    if err != nil { t.Fatal(err) }
+    if next.FenceToken <= intent.FenceToken {
+        t.Fatalf("new lease did not receive a newer fencing token: old=%d new=%d", intent.FenceToken, next.FenceToken)
+    }
+    _, err = next.ApplyReconciliationResult(next.Version, "reconciler-2", intent.FenceToken, now.Add(4*time.Second), ReconciliationResult{
+        TenantID: next.TenantID, RunIntentID: next.ID, RequestDigest: next.RequestDigest, Kind: RuntimeIndeterminate,
+    })
+    if !errors.Is(err, ErrStaleLease) {
+        t.Fatalf("expired lease token was accepted by newer lease: %v", err)
+    }
+}
+
+func TestOpaqueIdentifiersRejectControlWhitespace(t *testing.T) {
+    for _, value := range []string{"tenant\tbad", "tenant\rbad", "tenant\nbad", "tenant\x00bad"} {
+        if validOpaqueID(value) {
+            t.Errorf("control whitespace accepted in opaque ID %q", value)
+        }
+    }
+}
+
 func TestValidationRejectsRuntimeOwnedStateAndPrematureRunID(t *testing.T) {
     intent := fixture()
     intent.TenantID = ""
