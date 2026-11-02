@@ -1,45 +1,53 @@
-# Domain Ownership
+# Domain and Identifier Ownership
 
-A domain fact has exactly one authoritative writer. Consumers may keep projections, caches or references, but cannot mutate the producer's fact or claim ownership of its lifecycle.
+Status: Proposed v0.2 — implementation gate
 
-| Domain fact | Authoritative writer | Read model consumers / notes |
+## Authoritative writers
+
+| Domain fact | Authoritative writer | Notes / read-only consumers |
 |---|---|---|
-| Tenant / Project (initial platform scope) | agent-control-panel | all services; authenticated principal and ownership are still verified at every boundary |
-| Agent / AgentBundle / AgentRelease | agent-control-panel | runtime, decision, console |
-| AgentIdentity / SessionIdentity | agent-control-panel | runtime, EngageGuard |
-| RunIntent and client submission idempotency | agent-control-panel | runtime |
-| Run / Task / RunAttempt / execution lifecycle projection | agent-runtime | agent-control-panel, console |
-| Temporal Workflow history, timers and native Activity attempts | Temporal | runtime queries/projectors; Runtime defines stable Workflow ID mapping |
-| DecisionRecord / invocation request digest and replay result / proposal | agent-decision | runtime, audit |
-| Action / AuthorizationDecision / Risk / Approval / Permit / Action Operation Journal / Receipt | EngageGuard | runtime, audit, console |
-| ComputeProvider / Pool / Workload / Allocation / Compute Operation Journal | compute-control-panel | runtime, console |
-| Provider-native resource identity and actual state | selected provider / Kubernetes / Kueue | compute-control-panel observes and projects |
-| Actual Sandbox lifecycle and isolation | selected Sandbox Provider | runtime observes through provider adapter |
-| Context Projection policy | agent-control-panel | runtime enforces when constructing the bounded projection |
-| Concrete Context Projection generated for one invocation | agent-runtime | decision consumes the supplied bounded projection; source references are provenance only |
-| Workload identity issuance / signing keys | external OIDC or workload identity provider | each service verifies authenticated workload identity |
-| Evidence payload and digest | service that produces the evidence | other services keep immutable references / indexes; Control Plane may index but is not a second writer |
+| Tenant / Project | Agent Control Plane | Initial platform scope; services validate scoped references |
+| Agent / AgentBundle / AgentRelease | Agent Control Plane | Bundle digest is immutable |
+| AgentIdentity / SessionIdentity | Agent Control Plane | Session survives multiple Runs |
+| RunIntent | Agent Control Plane | Request to start a Run; not an execution |
+| Run / Task / Attempt / execution lifecycle | Agent Runtime | Agent Control Plane may keep a read-only projection |
+| Temporal Workflow history / replay | Temporal | Runtime owns workflow mapping and code |
+| DecisionRecord / framework invocation | agent-decision | Replaceable bounded plugin |
+| Action / ActionHash / risk / approval / Permit / OperationJournal | EngageGuard | Trusted executor performs protected effects |
+| ComputeProvider / ComputePool / ComputeProfile / Workload / Allocation / ComputeOperation | compute-control-panel | Compute domain only |
+| Kueue queue and admission state | Kueue | Admission and quota enforcement, not Pod placement |
+| Pod / Job / node placement / device allocation state | Kubernetes scheduler, device plugins / DRA, provider | Compute stores observations, not a second authority |
+| Actual sandbox lifecycle and isolation | selected Sandbox Provider | Compute capacity is a separate allocation concern |
 
 ## Canonical identifier ownership
 
-- Control Plane creates `run_intent_id`.
-- Runtime creates and owns `run_id`, `run_attempt_id`, and the deterministic `workflow_id` mapping.
-- Decision owns `invocation_id` records and `proposal_id` values; Runtime supplies stable invocation identity across retries.
-- Runtime assigns `action_operation_id` (wire field `operation_id`) once per accepted proposal; EngageGuard owns its immutable Action Operation record and computes `action_hash`.
-- EngageGuard / trusted executor owns `executor_attempt_id` in the Receipt.
-- Compute Control Plane creates and owns `compute_operation_id` and `allocation_id`.
-- Each evidence producer calculates its own `evidence_digest`.
+| Identifier | Created / owned by | Meaning |
+|---|---|---|
+| tenant_id, project_id | Agent Control Plane | Scope |
+| agent_id, bundle_digest, release_id | Agent Control Plane | Agent definition and release |
+| session_id | Agent Control Plane | Stable logical conversation/work identity |
+| run_intent_id | Agent Control Plane | Idempotent request to start a Run |
+| run_id | Agent Runtime | Canonical executed Run identity |
+| workflow_id | Agent Runtime | Stable Temporal mapping derived from run_id |
+| attempt_id | Agent Runtime | One execution attempt; never reused |
+| invocation_id, turn_id | agent-decision / invocation contract | Bounded framework execution |
+| action_hash, permit_id, action operation_id | EngageGuard | Protected action and its effect journal |
+| workload_id, allocation_id, compute operation_id | compute-control-panel | Compute intent and provider operation |
+| provider_id | compute-control-panel | Registered provider identity |
+| provider_resource_id / UID | Provider / Kubernetes | Provider-native reference, never a platform ID |
+| event_id | Event producer | One immutable event envelope |
+| correlation_id | Originating request / gateway | End-to-end request correlation |
+| evidence_digest | Evidence producer | Content integrity reference |
 
-See [Identifier Lifecycle](IDENTIFIER-LIFECYCLE.md) for constraints and retry semantics.
+Identifiers are opaque across service boundaries. A foreign ID is a reference, not permission and not ownership. Authorization is derived from verified identity context, never caller-supplied tenant, actor, project or workload fields.
 
-## Rules
+## Cross-domain rules
 
-1. No cross-service direct database writes and no shared writable schema.
-2. A read model is not a second authority; corrections are appended as new evidence rather than silently rewriting another service's history.
-3. Runtime owns Run lifecycle but never independently retries a side effect whose Action Operation is UNKNOWN in EngageGuard.
-4. EngageGuard owns the authorization/action journal; Compute owns provider resource operations and actual-state reconciliation. Their records are linked, not merged.
-5. EngageGuard authorizes Agent-originated protected compute requests at the boundary. Compute controller maintenance uses its own service identity and policy.
-6. Agent Control Plane stores logical Session identity, not MCP transport session state or framework memory.
-7. Provider-native IDs are references, never canonical platform IDs.
-8. No service trusts caller-supplied tenant, subject, actor or workload fields without binding them to authenticated identity and persisted ownership.
-9. Evidence digest authority remains with the producer; a central index must not rewrite evidence or claim to verify content it has not independently checked.
+- No cross-service direct database writes. Each service owns its PostgreSQL schema and migrations.
+- Read models may be duplicated but must identify their source and observed version.
+- RunIntent acceptance means Runtime accepted the request; it does not mean the Run is Running or Succeeded.
+- Agent Runtime owns Run lifecycle; Temporal owns durable workflow history; neither moves Action/Permit/OperationJournal authority out of EngageGuard.
+- Runtime does not independently retry an external effect whose operation is owned by EngageGuard.
+- Compute Control Plane owns provider mutation journal and allocation reconciliation. It does not own Agent, Session or Run lifecycle.
+- Sandbox Provider owns sandbox lifecycle; Compute Control Plane supplies capacity/workload allocation when requested. Do not create the same sandbox resource independently in both systems.
+- Kubernetes/Kueue/provider state is observed through adapters; no second scheduler or provider authority is introduced.
