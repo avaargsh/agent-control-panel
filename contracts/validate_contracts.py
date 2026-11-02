@@ -57,6 +57,10 @@ def main() -> None:
     expect_invalid(request_validator, extra_field, "unexpected request field")
 
     vectors = load_json(ACTION_HASH / "workspace-write-vectors.json")
+    if vectors.get("canonicalization") != "RFC 8785 JCS" or vectors.get("algorithm") != "SHA-256":
+        raise SystemExit("ActionHash vector metadata mismatch")
+    if vectors.get("domain_separator") != "engageguard/action-hash/v1\\x00":
+        raise SystemExit("ActionHash domain separator mismatch")
     domain = vectors["domain_separator"].encode("utf-8")
     for vector in vectors["vectors"]:
         # The fixed v0.1 ActionHash object has ASCII keys and string values.
