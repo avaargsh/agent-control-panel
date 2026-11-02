@@ -270,7 +270,7 @@ func TestCreateReplayRejectsChangedOwnerMetadataWithSameDigest(t *testing.T) {
 	}
 
 	cases := []struct {
-		name string
+		name   string
 		mutate func(*runintent.Intent)
 	}{
 		{"project", func(i *runintent.Intent) { i.ProjectID = "project-other" }},
