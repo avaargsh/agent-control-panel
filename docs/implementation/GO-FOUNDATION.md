@@ -34,8 +34,9 @@ curl http://127.0.0.1:8080/api/v1/meta
 ## Next P0 slice
 
 1. OpenAPI DTOs for Bundle/Release/Session/RunIntent and tenant scope.
-2. PostgreSQL migrations, atomic idempotency and transactionally coupled Outbox.
+2. Migration runner plus Go PostgreSQL repository: atomic idempotency claim, RunIntent + Outbox transaction, version/fence CAS.
 3. Authenticated Runtime StartRun / InspectRunIntent client and durable dispatch leases.
-4. Restart, lost-ACK, duplicate-start, tenant authorization and event-gap integration tests.
+4. Outbox publisher and Inbox consumer with duplicate/gap recovery.
+5. Restart, lost-ACK, duplicate-start, tenant authorization and event-gap integration tests.
 
 No production-readiness claim is made by this slice.
