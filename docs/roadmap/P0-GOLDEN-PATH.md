@@ -1,88 +1,61 @@
-# P0 Golden Path — Cross-Service Acceptance Contract
+# P0 Golden Path — Acceptance Contract
 
-Status: **implementation gate**  
-Target: Open Agent Infrastructure v0.1
+Status: implementation gate
 
 ## Outcome
 
-A clean deployment accepts a versioned AgentBundle, creates an AgentRelease and stable Agent/Session/RunIntent identities, starts exactly one logical Runtime Run through Temporal, invokes a schema-conformant bounded Decision plugin, routes protected proposals through EngageGuard, and records verified evidence. Compute allocation is a separate service-owned flow with its own Workload, Allocation and provider operation identity.
+A clean deployment accepts an immutable AgentBundle, creates an AgentRelease and stable Agent/Session/RunIntent identities, dispatches the RunIntent idempotently to Agent Runtime, and records the Runtime-created Run reference. Runtime/Temporal executes the Run. Protected effects are authorized and journaled by EngageGuard. Compute is requested through Compute Control Plane. Duplicate delivery and process restart do not create duplicate logical Runs or blind external side effects.
 
-## Ownership invariants
+## Canonical flow
 
-- Control Plane owns Agent/Bundle/Release/SessionIdentity/RunIntent and desired state. It does not own Run/Task/Attempt execution lifecycle.
-- Runtime owns Run/Task/RunAttempt and the stable Workflow ID mapping.
-- Temporal owns durable Workflow history, timers, replay and native Activity attempts.
-- Decision owns invocation records, exact result replay and DecisionRecord.
-- EngageGuard owns ActionHash, authorization, approval, Permit, Action Operation Journal and Receipt.
-- Compute Control Plane owns Workload, Allocation, Compute Operation Journal and provider observations.
-- Kubernetes/Kueue/provider own actual admission, scheduling and resource execution.
+1. Submit AgentBundle; validate schema and compute immutable content digest.
+2. Create AgentRelease referencing exact bundle digest and release intent.
+3. Resolve AgentIdentity, tenant/project scope and authorization from verified principal.
+4. Create Session and RunIntent. Persist client idempotency key and canonical request digest.
+5. In one transaction, persist RunIntent and its Outbox event.
+6. Dispatcher claims RunIntent using a lease and fencing token; call Runtime `StartRun` with the same `run_intent_id` and digest on every retry.
+7. Runtime's unique idempotency record is authoritative. Runtime creates `run_id` and deterministic `workflow_id`; Control Plane never generates either.
+8. A matching Runtime receipt moves RunIntent to ACCEPTED. A lost/ambiguous ACK moves it to UNKNOWN; query Runtime by RunIntent ID and digest. An authoritative final not-found may retry the exact same request/key. A mismatch goes to MANUAL_REVIEW.
+9. Temporal owns durable workflow history, retries, waits, signals, cancellation and replay. Runtime owns Run/Task/Attempt state and maps workflow outcomes to Run lifecycle.
+10. Decision plugin receives one bounded invocation and returns FinalResponse or typed ActionProposal. It has no direct privileged credentials or execution authority.
+11. ActionProposal is canonicalized and authorized by EngageGuard. ActionHash, Permit and Operation Journal belong to EngageGuard; trusted executor performs the side effect.
+12. When compute is required, Runtime requests a Workload using originating Run ID and immutable requirements. Compute Control Plane owns provider selection, Workload, Allocation and provider operation journal. Kueue admits; Kubernetes schedules.
+13. Runtime records workflow outcome; Control Plane updates only its read-only Run projection. Evidence links exact release, intent, runtime Run, action/compute operations and provider observations.
 
-## Golden Path A — ordinary Run
+## State ownership
 
-1. Client submits AgentBundle; Control Plane validates schema and stores immutable digest.
-2. Control Plane creates AgentRelease referencing the exact bundle digest.
-3. Control Plane validates tenant/Agent/Session scope and authorization.
-4. Control Plane accepts RunIntent with a client idempotency key and atomically persists the intent + outbox event.
-5. Runtime consumes the RunIntent and atomically creates one `run_id` for that `run_intent_id`. A duplicate event or StartRun request returns the same Run.
-6. Runtime derives `workflow_id = "agent-run/v1/" + run_id` and starts/inspects that exact Temporal Workflow ID.
-7. Temporal Workflow invokes a bounded Decision Activity with the canonical v0.1 request schema and stable `invocation_id`.
-8. Decision validates the request and returns exactly one canonical response variant. Same invocation ID and request digest replays the exact result.
-9. Runtime validates the response, updates its Run projection and emits status/evidence references. Control Plane consumes a versioned event and updates only its RunIntent/read projection.
+- RunIntent state: Agent Control Plane.
+- Run / Task / Attempt lifecycle: Agent Runtime.
+- Temporal workflow history: Temporal.
+- Decision invocation: agent-decision.
+- Action / Permit / operation ambiguity: EngageGuard.
+- Workload / Allocation / compute provider operation: Compute Control Plane.
+- Actual admission, Pod placement and provider resources: Kueue / Kubernetes / provider.
 
-## Golden Path B — protected action
+## RunIntent dispatch state machine
 
-1. Decision returns an untrusted ActionProposal; it cannot execute tools or claim authorization.
-2. Runtime persists the accepted proposal and assigns one stable `action_operation_id` before first submission.
-3. Runtime submits the action to EngageGuard with authenticated workload identity.
-4. EngageGuard resolves trusted subject/tenant/capability binding, canonicalizes the action using RFC 8785 JCS and calculates ActionHash.
-5. Policy returns ALLOW, DENY or REQUIRE_APPROVAL. Approval never overrides DENY and is bound to the exact ActionHash.
-6. EngageGuard issues a one-time, short-lived, audience- and operation-bound Permit only after all required checks pass.
-7. Trusted enforcement point validates Permit, ActionHash, binding, expiry and one-time claim before the side effect.
-8. EngageGuard records the Operation Journal and verified Receipt. Receipt includes the same ActionHash and `executor_attempt_id`.
-9. Runtime records the Receipt and advances the Run only from verified operation evidence.
+```text
+PENDING → DISPATCHING → ACCEPTED | REJECTED | UNKNOWN
+UNKNOWN → RECONCILING → ACCEPTED | REJECTED | PENDING | MANUAL_REVIEW
+```
 
-## Golden Path C — compute allocation
+PENDING after reconciliation means Runtime's authoritative idempotency registry confirmed no Run was created; retry the same RunIntent ID and request digest. It does not mean mint a new intent. Cancellation is a Runtime command, not a terminal RunIntent state.
 
-1. An Agent-originated compute request is authorized by EngageGuard at the action boundary; internal controller operations use Compute service identity and policy.
-2. Compute Control Plane validates the caller/delegated authorization and creates a Workload plus distinct `compute_operation_id`.
-3. Compute persists desired state, operation record and outbox atomically.
-4. Reconciler creates the Kubernetes Job/Workload through the selected adapter.
-5. Kueue owns admission/queue semantics; Kubernetes/provider owns actual scheduling and execution.
-6. Compute records Allocation and provider observations with generation/version fencing.
-7. Delete is not final on API ACK alone; exact-generation provider absence must be observed before Allocation release is terminal.
-8. EngageGuard Action Operation and Compute Operation remain separate records linked by references.
+## Required tests
 
-## State and identity requirements
-
-- Control Plane RunIntent status is dispatch coordination only: `PENDING → DISPATCHING → DISPATCHED | UNKNOWN | CANCEL_REQUESTED`.
-- Runtime Run lifecycle is `PENDING → RUNNING ↔ WAITING → SUCCEEDED | FAILED | CANCELLED`, subject to validated transitions and evidence. A provider/action UNKNOWN is not silently converted into Run FAILED.
-- Runtime creates `run_id` once per `run_intent_id`; Runtime derives one stable Workflow ID. No service generates a second Workflow ID for the same Run.
-- Runtime, Temporal, executor and provider attempts are separate namespaces.
-- `action_operation_id` and `compute_operation_id` are distinct. Each is stable across retries and unique in its owning service.
-- No cross-service direct database writes or shared writable schemas.
-
-## Failure and recovery acceptance
-
-- Duplicate client submission with same idempotency key/payload returns the same RunIntent.
-- Same key with a different payload returns 409.
-- Duplicate RunIntent delivery maps to the same Run and Workflow ID.
-- Lost Workflow start ACK becomes UNKNOWN; Runtime inspects the exact Workflow ID before any new start decision.
-- Same Decision invocation ID + same request digest replays the exact result; changed digest conflicts.
-- Duplicate Action submission with same operation ID returns existing status/Receipt; changed canonical action conflicts.
-- Lost action ACK remains UNKNOWN until EngageGuard reconciles the exact operation; Runtime does not replay the side effect.
-- Duplicate/out-of-order events do not reapply projections; aggregate-version gaps are durably deferred and recovered.
-- Stale provider generation cannot overwrite current state.
-- Compute delete is not complete until exact-generation absence is observed.
-- Restart API, Runtime worker, Decision plugin and reconciler during critical windows; persisted state resumes without duplicate logical Run or blind external replay.
-- Tenant isolation, revoked workload identity, secret hygiene, Permit replay, concurrent claim and path/symlink attacks are tested.
-
-## Out of scope for P0
-
-- UI feature completeness and multi-region federation.
-- Custom Agent framework, workflow engine, sandbox runtime, IAM, policy language or GPU scheduler.
-- Broad legacy code port without ownership map and regression evidence.
-- Production-readiness claims without real PostgreSQL, Temporal and Kubernetes/Kueue integration evidence.
+- Same tenant/principal/key/digest returns one intent; same key with different digest returns 409.
+- Outbox atomicity and publisher duplicate delivery.
+- Inbox dedupe, aggregate-version duplicate and version-gap handling.
+- RunIntent state transition, lease expiry, stale fencing token and concurrent dispatch.
+- Runtime duplicate StartRun with same key/digest returns the same Run ID.
+- Lost ACK → UNKNOWN → RECONCILING → found / authoritative not-found / mismatch.
+- Runtime rejects same idempotency key with a different digest.
+- Temporal start uses stable Runtime-generated workflow ID and duplicate-start policy.
+- Protected action retry is owned by EngageGuard, not Runtime/Temporal.
+- Tenant/project boundary and secret-hygiene tests.
+- Fresh-process restart at each critical window; inspect persisted state and evidence.
+- Read projection cannot write Runtime-owned Run lifecycle.
 
 ## Exit gate
 
-P0 passes only when all three Golden Paths and the failure/recovery matrix pass in a clean environment with fresh CI and integration evidence. Unit tests, documentation or a happy-path demo alone are insufficient.
+P0 passes only when persistence, authorization, outbox/inbox, dispatch recovery and failure-mode tests run in a clean checkout. A health endpoint or pure state-machine unit test is not a Golden Path.
