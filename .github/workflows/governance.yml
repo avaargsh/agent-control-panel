@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - "governance/**"
+      - "scripts/audit_pr_topology.py"
+      - "tests/test_pr_topology.py"
       - "scripts/check_governance.py"
       - "tests/test_governance.py"
       - ".github/workflows/governance.yml"
