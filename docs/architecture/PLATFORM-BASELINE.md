@@ -26,9 +26,9 @@ A repository name ending in `panel` does not imply UI ownership. `agent-control-
 ## Identifier ownership
 
 - Agent Control Plane: tenant_id, project_id, agent_id, bundle_digest, release_id, session_id, run_intent_id.
-- Agent Runtime: run_id, workflow_id, run_attempt_id; Runtime also assigns invocation_id and Action operation_id before dispatch.
-- agent-decision: invocation ledger/result and proposal_id.
-- EngageGuard: Action operation record, action_hash, permit_id, executor_attempt_id.
+- Agent Runtime: run_id, workflow_id, run_attempt_id; Runtime creates invocation_id and guard_submission_key for requests to their owning services.
+- agent-decision: DecisionRecord, invocation ledger/result and proposal_id; it owns the durable invocation record, not Runtime.
+- EngageGuard: Action operation record and server-owned operation_id (candidate, blocked pending G03), action_hash, permit_id and executor_attempt_id.
 - Compute Control Plane: workload_id, allocation_id, compute_operation_id.
 - Temporal: native Workflow/Activity attempt metadata.
 - Provider / Kubernetes: provider_resource_id and UID.
@@ -43,11 +43,11 @@ Each service owns its PostgreSQL database and schema. Domain mutation plus Outbo
 
 ## Execution boundaries
 
-Temporal Workflow code is deterministic orchestration only. Activities perform I/O. Runtime owns the Run lifecycle and invokes a bounded Decision plugin. The canonical Decision v0.1 schemas define a strict request and a two-outcome response union: FinalResponse or ActionProposals. The plugin has no privileged credentials. EngageGuard authorizes and journals each protected effect; the trusted executor performs it. Runtime/Temporal do not retry that effect independently.
+Temporal Workflow code is deterministic orchestration only. Activities perform I/O. Runtime owns the Run lifecycle and invokes the service-owned Decision interface. There is currently no ratified canonical Decision v0.1 schema in this repository: the local schema copies are blocked compatibility snapshots because the Go Core and framework adapter drafts differ. The plugin has no privileged credentials. EngageGuard authorizes and journals each protected effect; the trusted executor performs it. Runtime/Temporal do not retry that effect independently.
 
-## ActionHash
+## ActionHash — blocked pending service-owner ratification
 
-EngageGuard computes ActionHash only after trusted action normalization. It uses RFC 8785 JCS and the versioned domain separator `engageguard/action-hash/v1\\0`; SHA-256 output is 64 lowercase hexadecimal characters. Approval, Permit, executor claim and Receipt bind the same Action operation ID and hash. Cross-language vectors are stored at `contracts/engageguard/action-hash/v0.1/workspace-write-vectors.json`.
+EngageGuard owns ActionHash and must compute it after trusted action normalization. The canonicalization algorithm, exact domain separator/preimage and cross-language vectors remain unresolved under G03. The local ACP vector file is a historical comparison fixture, not the authoritative contract. Do not treat any copied value or locally inferred serialization as a security boundary. See [EngageGuard#3](https://github.com/avaargsh/EngageGuard/issues/3) and [ACP#3](https://github.com/avaargsh/agent-control-panel/issues/3).
 
 ## Compute and sandbox boundaries
 
@@ -59,7 +59,7 @@ Begin with one API process and one reconciler/worker process per Go service, sha
 
 ## Build order
 
-1. Freeze domain, identifier, event, Decision schema, ActionHash and idempotency contracts.
+1. Ratify domain and identifier ownership plus service-owned event, Decision, Guard ActionHash and idempotency contracts; keep unresolved G01–G05 blocked.
 2. Go service bootstrap, config, health, telemetry, shutdown and PostgreSQL migrations.
 3. Transactional idempotency + Outbox/Inbox with aggregate version recovery.
 4. Agent RunIntent dispatch and Compute Workload vertical slices with lease/fencing.
