@@ -60,6 +60,7 @@ Compute is requested through Compute Control Plane; a Decision plugin never crea
 - [ADR-003: Identity, idempotency and retry ownership](docs/architecture/ADR-003-IDENTITY-AND-RETRY-OWNERSHIP.md)
 - [ADR-004: Compute and Sandbox boundary](docs/architecture/ADR-004-COMPUTE-AND-SANDBOX-BOUNDARY.md)
 - [P0 Golden Path](docs/roadmap/P0-GOLDEN-PATH.md)
+- [Architecture review disposition](docs/architecture/REVIEW-DISPOSITION-2026-11-02.md)
 - [Implementation roadmap](docs/roadmap/IMPLEMENTATION-ROADMAP.md)
 - [Decision Turn request schema](contracts/agent-decision/v0.1/decision-turn.schema.json)
 - [Decision result schema](contracts/agent-decision/v0.1/decision-result.schema.json)
