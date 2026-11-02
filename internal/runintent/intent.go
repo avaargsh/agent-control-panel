@@ -42,6 +42,7 @@ const (
 // DispatchOutcome is produced by the authenticated Runtime adapter. A
 // caller-supplied boolean is deliberately not accepted as verification.
 type DispatchOutcome struct {
+    TenantID      string
     RunIntentID   string
     RequestDigest string
     Kind          DispatchOutcomeKind
@@ -54,6 +55,7 @@ type DispatchOutcome struct {
 // by RunIntentID + RequestDigest. NOT_FOUND_FINAL must come from its durable
 // idempotency registry, not from an eventually-consistent workflow listing.
 type ReconciliationResult struct {
+    TenantID      string
     RunIntentID   string
     RequestDigest string
     Kind          ReconciliationKind
@@ -72,6 +74,16 @@ var (
     ErrLeaseExpired  = errors.New("run intent lease expired")
     ErrLeaseActive   = errors.New("run intent lease is still active")
 )
+
+// validRuntimeIdentity checks the Runtime-generated identity mapping without
+// making the Control Plane an identifier creator.
+func validRuntimeIdentity(runID, workflowID string) bool {
+	if runID == "" || runID != strings.TrimSpace(runID) || len(runID) > 256 ||
+		strings.ContainsAny(runID, "/?#") {
+		return false
+	}
+	return workflowID == "agent-run/v1/"+runID
+}
 
 type Intent struct {
     ID             string
@@ -211,13 +223,13 @@ func (i Intent) RecordDispatchOutcome(expectedVersion uint64, owner string, toke
     if i.Status != Dispatching { return i, ErrTransition }
     if err := i.checkLease(owner, token, now); err != nil { return i, err }
 
-    if outcome.RunIntentID != i.ID || outcome.RequestDigest != i.RequestDigest {
+    if outcome.TenantID != i.TenantID || outcome.RunIntentID != i.ID || outcome.RequestDigest != i.RequestDigest {
         return i.manualReview("RUNTIME_RECEIPT_MISMATCH"), nil
     }
 
     switch outcome.Kind {
     case DispatchAccepted:
-        if outcome.RunID == "" || outcome.WorkflowID == "" || outcome.RejectionCode != "" {
+        if !validRuntimeIdentity(outcome.RunID, outcome.WorkflowID) || outcome.RejectionCode != "" {
             return i.manualReview("INVALID_RUNTIME_ACCEPTANCE"), nil
         }
         i.Status = Accepted
@@ -277,13 +289,13 @@ func (i Intent) ApplyReconciliationResult(expectedVersion uint64, owner string, 
     if i.Status != Reconciling { return i, ErrTransition }
     if err := i.checkLease(owner, token, now); err != nil { return i, err }
 
-    if result.RunIntentID != i.ID || result.RequestDigest != i.RequestDigest {
+    if result.TenantID != i.TenantID || result.RunIntentID != i.ID || result.RequestDigest != i.RequestDigest {
         return i.manualReview("RUNTIME_RECONCILIATION_MISMATCH"), nil
     }
 
     switch result.Kind {
     case RuntimeFound:
-        if result.RunID == "" || result.WorkflowID == "" || result.RejectionCode != "" {
+        if !validRuntimeIdentity(result.RunID, result.WorkflowID) || result.RejectionCode != "" {
             return i.manualReview("INVALID_RUNTIME_FOUND_RESULT"), nil
         }
         i.Status = Accepted
