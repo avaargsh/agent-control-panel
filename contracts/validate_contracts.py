@@ -63,14 +63,18 @@ def main() -> None:
         raise SystemExit("ActionHash domain separator mismatch")
     domain = vectors["domain_separator"].encode("utf-8")
     for vector in vectors["vectors"]:
-        # The fixed v0.1 ActionHash object has ASCII keys and string values.
-        # Sorted compact UTF-8 JSON therefore matches its RFC 8785 JCS bytes.
-        canonical = json.dumps(
-            vector["action"], sort_keys=True, separators=(",", ":"), ensure_ascii=False
-        )
+        # Use an RFC 8785 implementation rather than approximating JCS with
+        # json.dumps (notably, string escaping must match ECMAScript exactly).
+        import rfc8785
+
+        canonical_bytes = rfc8785.dumps(vector["action"])
+        canonical = canonical_bytes.decode("utf-8")
         if canonical != vector["canonical_json"]:
-            raise SystemExit(f"{vector['name']}: canonical JSON mismatch")
-        digest = hashlib.sha256(domain + canonical.encode("utf-8")).hexdigest()
+            raise SystemExit(
+                f"{vector['name']}: canonical JSON mismatch: "
+                f"actual={canonical!r} expected={vector['canonical_json']!r}"
+            )
+        digest = hashlib.sha256(domain + canonical_bytes).hexdigest()
         if digest != vector["action_hash"]:
             raise SystemExit(f"{vector['name']}: ActionHash mismatch")
 
