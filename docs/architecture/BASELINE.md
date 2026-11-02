@@ -1,135 +1,52 @@
-# Architecture Baseline — Agent Control Plane Rewrite
+> **SUPERSEDED — HISTORICAL SNAPSHOT ONLY**
+>
+> This document records an earlier Agent Control Plane proposal. It is retained for decision history and must not be used to implement current service ownership, Run lifecycle, Workflow or Sandbox contracts.
+>
+> The normative architecture is now:
+>
+> - [Platform Baseline](PLATFORM-BASELINE.md)
+> - [Domain Ownership](DOMAIN-OWNERSHIP.md)
+> - [Cross-Service Contracts](CROSS-SERVICE-CONTRACTS.md)
+> - [Identifier Lifecycle](IDENTIFIER-LIFECYCLE.md)
+> - [ADR-002: Temporal and Agent Framework boundary](ADR-002-temporal-agent-framework.md)
+> - [Current P0 Golden Path](../roadmap/P0-GOLDEN-PATH.md)
+>
+> **Known historical conflicts:** this snapshot assigns Run/Run state and portions of workflow dispatch to the Control Plane. Those responsibilities have moved to `agent-runtime`; Temporal owns durable workflow history. Compute resource intent and Allocation belong to `compute-control-panel`. The old component model and state descriptions below are non-normative.
+>
+> Do not copy code, state machines or API contracts from this historical snapshot into new implementations without an explicit ADR approved against the current baseline.
 
-Status: **proposal baseline for implementation**  
-Date: 2026-11-02  
+---
+
+# Historical Architecture Baseline — Agent Control Plane Rewrite
+
+Original status: proposal baseline for implementation  
+Original date: 2026-11-02  
 Target: `avaargsh/agent-control-panel`
 
-## 1. Product shape
+The content below is preserved only to explain earlier design decisions. It is not current architecture authority.
 
-The product is a thin Agent Infrastructure Control Plane. It exposes a stable API and reconciles declared Agent intent into external execution systems. It is Kubernetes-first but does not require all Agent execution providers to be Kubernetes-native.
+## 1. Historical product shape
 
-The central contract is:
+The product was described as a thin Agent Infrastructure Control Plane exposing a stable API and reconciling declared Agent intent into external execution systems.
 
-- **Control Plane authority:** Agent identity, desired state, release intent, Session/Run identity, policy bindings, lifecycle coordination and evidence references.
-- **Runtime authority:** actual execution plan semantics, workflow history, task/step scheduling, retry policy, wait/approval continuation and checkpoint details.
-- **Provider authority:** external resource state and side effects; the Control Plane tracks references and reconciles observed state.
+The historical central contract described Control Plane authority as Agent identity, desired state, release intent, Session/Run identity, policy bindings, lifecycle coordination and evidence references; Runtime authority as execution plan semantics, workflow history, task/step scheduling, retry policy, wait/approval continuation and checkpoint details; Provider authority as external resource state and side effects.
 
-## 2. Component model
+## 2. Historical component model
 
-```mermaid
-flowchart TB
-  Clients[CLI / SDK / API clients] --> API[Agent Control Plane API]
-  UI[agent-control-panel UI] --> API
-  API --> Domain[Domain Services + AuthZ]
-  Domain --> Store[(PostgreSQL: control-plane state)]
-  Domain --> Outbox[(Transactional Outbox)]
-  Outbox --> Reconciler[Lifecycle Reconciler]
-  Reconciler --> Workflow[Workflow Adapter]
-  Workflow --> Temporal[Temporal / durable workflow provider]
-  Reconciler --> Sandbox[Sandbox Provider SPI]
-  Sandbox --> Kruise[OpenKruise Agents]
-  Sandbox --> Other[Other Sandbox providers]
-  Kruise --> K8s[Kubernetes API]
-  Reconciler --> Compute[Compute Control Plane API]
-  Domain --> Identity[OIDC / Keycloak adapter]
-  Domain --> Secrets[OpenBao / Kubernetes Secret references]
-  Domain --> Evidence[Evidence & Audit Store]
-```
+The earlier component model included a Control Plane reconciler calling Workflow and Sandbox adapters directly. Current implementation must instead follow the Runtime and Compute service boundaries in the normative documents.
 
-Initial deployable modules should be kept coarse: API/domain service, reconciler, adapter interfaces and UI. Split deployables only when scaling or security isolation evidence requires it.
+## 3. Historical domain model
 
-## 3. Domain model and identity
+The earlier proposal included Agent, AgentBundle, AgentRelease, Session, FederationBinding, CredentialBinding, ContextProjectionPolicy and Evidence. The current domain ownership and identifier documents supersede all historical ownership assumptions.
 
-### Core objects
+## 4. Historical reconciliation notes
 
-- `Agent`: stable logical identity, owner/tenant scope and desired configuration reference.
-- `AgentBundle`: immutable content-addressed package; declares runtime, tools, context inputs, policies and resource requirements by reference.
-- `AgentRelease`: immutable bundle digest plus release intent; status records rollout/reconciliation progress.
-- `Session`: stable logical work/conversation identity that survives multiple Runs and runtime restarts.
-- `Run`: a durable execution instance under a Session; lifecycle states: `Pending → Running → Waiting → Succeeded | Failed | Cancelled`.
-- `FederationBinding`: maps a local provider identity to a remote control plane/provider and its trust constraints.
-- `CredentialBinding`: secret/provider reference with scope, target and revocation semantics; secret bytes are never persisted in domain objects.
-- `ContextProjectionPolicy`: declares allowed context sources, projection limits and provenance rules.
-- `Evidence`: immutable reference to source event, artifact digest, provider operation and verification outcome.
+The earlier proposal correctly distinguished desired from observed state, acknowledgement from verified outcome, and retryable from ambiguous outcomes. Those principles remain valid, but the owning services and operation identities are defined by the current contracts.
 
-### Identity separation
+## 5. Historical external integrations
 
-- `AgentIdentity`: durable logical identity, independent from AgentRelease and runtime instance.
-- `SessionIdentity`: stable identity across Runs; owned by the Control Plane.
-- `RunIdentity`: durable unique execution identity, never reused after retry or recovery.
-- `WorkloadIdentity`: short-lived identity issued/bound to a specific runtime or Sandbox; revocable and scoped.
-- `ProviderResourceIdentity`: provider-native identity recorded as a mapping, not promoted to canonical Agent identity.
+Temporal, Sandbox providers, Compute, OIDC and secret stores were identified as integrations. Their current contracts and authoritative boundaries are defined in [Platform Baseline](PLATFORM-BASELINE.md).
 
-A Sandbox UID, Pod name, workflow ID or credential identifier must not become the canonical Session identity.
+## 6. Historical open decisions
 
-## 4. State ownership and reconciliation
-
-The API write path validates and persists desired state and an outbox event atomically. Reconciliation is asynchronous and idempotent. Every provider request carries a stable operation ID and desired-state generation.
-
-The reconciler must distinguish:
-
-- desired state from observed state;
-- logical Run state from workflow-provider execution state;
-- provider acknowledgement from verified outcome;
-- retryable errors from ambiguous/unknown side-effect outcomes.
-
-On process restart, reconciliation resumes from durable records. An ambiguous provider operation is queried/reconciled before another side effect is attempted. Do not infer success solely from a timeout-free API response or from the target resource coincidentally matching desired state.
-
-## 5. Run lifecycle contract
-
-`Pending`: persisted Run intent; prerequisites and authorization are checked.  
-`Running`: workflow/provider has accepted execution and Run is active.  
-`Waiting`: execution is suspended on approval, input, timer or external event.  
-`Succeeded`: terminal state backed by accepted completion evidence.  
-`Failed`: terminal state with structured error and evidence references.  
-`Cancelled`: cancellation intent reconciled with execution provider; terminal only after provider state is confirmed or cancellation outcome is explicitly represented as unknown.
-
-State transitions are validated centrally. Terminal states are immutable except for appended correction/verification evidence; never mutate history to erase an earlier outcome.
-
-## 6. External integrations
-
-### Workflow
-
-Temporal is the preferred durable execution engine integration. The Control Plane stores canonical Session/Run identity and workflow references. Workflow history, activities, retries and continuation semantics remain owned by Temporal. A provider adapter maps Run intents and reports state/events without duplicating execution internals.
-
-### Sandbox
-
-Define a provider-neutral `SandboxProvider` interface for provision/claim, inspect, pause, resume, release, credential/context binding and operation reconciliation. OpenKruise Agents is a preferred Kubernetes implementation for warm pools, lifecycle, auto-pause/resume, SandboxUpdateOps and traffic controls. Provider-specific CRDs remain inside the adapter.
-
-### Compute
-
-Compute integration is via `compute-control-panel` API and provider SPI. Agent Control Plane expresses resource requirements and references; Compute Control Plane owns GPU inventory, allocation, queue/scheduler and infrastructure provisioning.
-
-### Identity, secrets, policy
-
-OIDC/Keycloak handles human authentication. Authorization is scoped and delegated; use a mature policy engine adapter. OpenBao/Kubernetes Secrets stores secret material. CredentialBindings only reference identities and paths, and must support revocation and auditable resolution.
-
-## 7. Security boundaries
-
-- AuthN for human/API caller is separate from AgentIdentity and WorkloadIdentity.
-- Workload credentials are short-lived, audience-bound and least-privilege where provider support exists.
-- Raw credentials must not appear in AgentBundle, AgentRelease, Session/Run payloads, logs, traces, Events or Evidence.
-- Sandbox egress policy and MCP tool ACL are enforced by Sandbox Provider / gateway; Control Plane records intended policy bindings and audit links.
-- Cross-tenant references are denied by default and validated on every read/write and provider binding.
-- Audit records correlate actor, tenant, Agent, release digest, Session, Run, provider operation and evidence digest.
-
-## 8. Persistence and APIs
-
-PostgreSQL is the initial authoritative store for Control Plane domain state, idempotency keys, outbox and audit metadata. Evidence payloads may live in content-addressed object storage; database records retain digest and URI.
-
-API shape should be resource-oriented and versioned (`/api/v1`). Public API schemas and provider SPI contracts need compatibility tests. Kubernetes CRDs can be an optional declarative interface later; they must map to the same domain authority and not create a second independent source of truth.
-
-## 9. Non-goals
-
-Do not implement a proprietary workflow engine, Agent framework, sandbox runtime, MCP gateway, IAM system, policy language, GPU scheduler or model serving stack. Do not couple the domain model to E2B or OpenKruise-specific API shapes.
-
-## 10. Open decisions requiring design records
-
-1. API implementation language/framework and domain module boundaries.
-2. Event model: transactional outbox plus durable event stream choice.
-3. Run idempotency and ambiguous provider outcome reconciliation schema.
-4. Tenant model and authorization policy vocabulary.
-5. Evidence canonicalization, signing and retention model.
-6. Whether Kubernetes CRDs are a first-class API surface in v1 or an adapter.
-
-These decisions must be recorded before implementation hardens the interfaces.
+The old proposal listed language/framework, event model, Run idempotency, tenant authorization, evidence canonicalization and Kubernetes CRD decisions as open. These are superseded by the current Go service baseline and the current cross-service contracts; any remaining unresolved item must be recorded in the current roadmap or a new ADR.
