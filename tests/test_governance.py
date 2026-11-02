@@ -77,6 +77,45 @@ class GovernanceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "duplicate registry JSON key"):
             json.loads('{"version":"a","version":"b"}', object_pairs_hook=unique_object)
 
+    def test_required_authoritative_domain_cannot_be_removed(self):
+        broken = copy.deepcopy(REGISTRY)
+        broken["domain_ownership"] = [
+            domain for domain in broken["domain_ownership"] if domain["id"] != "run-execution"
+        ]
+        with self.assertRaisesRegex(ValueError, "missing required authoritative domain"):
+            validate_registry(broken)
+
+    def test_required_service_contract_cannot_be_removed(self):
+        broken = copy.deepcopy(REGISTRY)
+        broken["contracts"] = [
+            contract for contract in broken["contracts"] if contract["id"] != "decision-core-http"
+        ]
+        with self.assertRaisesRegex(ValueError, "missing required service contract"):
+            validate_registry(broken)
+
+    def test_required_merge_gate_cannot_be_removed(self):
+        broken = copy.deepcopy(REGISTRY)
+        broken["merge_gates"] = [
+            gate for gate in broken["merge_gates"] if gate["id"] != "G02"
+        ]
+        with self.assertRaisesRegex(ValueError, "missing required merge gate"):
+            validate_registry(broken)
+
+    def test_merge_gate_cannot_be_reassigned_to_another_valid_owner(self):
+        broken = copy.deepcopy(REGISTRY)
+        broken["merge_gates"][0]["owners"] = [
+            "avaargsh/agent-control-panel",
+            "avaargsh/EngageGuard",
+        ]
+        with self.assertRaisesRegex(ValueError, "merge gate authoritative owners mismatch"):
+            validate_registry(broken)
+
+    def test_request_id_cannot_be_reassigned_to_another_valid_owner(self):
+        broken = copy.deepcopy(REGISTRY)
+        broken["issued_request_ids"][0]["durable_index_owner"] = "avaargsh/agent-control-panel"
+        with self.assertRaisesRegex(ValueError, "request ID ownership mismatch"):
+            validate_registry(broken)
+
 
 if __name__ == "__main__":
     unittest.main()
