@@ -108,7 +108,7 @@
       "id": "guard-action-request",
       "repo": "avaargsh/EngageGuard",
       "path": "docs/contracts/action-request.v1.schema.json",
-      "commit": "aace8181e7bebc796f3fc249072240feb67f311e",
+      "commit": "2e8bc6187a3975aa9ae8dc635343c048ebd665ef",
       "version": "action-request.v1-draft",
       "state": "blocked",
       "issue": "https://github.com/avaargsh/EngageGuard/issues/3"
