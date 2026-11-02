@@ -30,9 +30,9 @@ Expired publish leases return to retryable state. Never mark an event PUBLISHED 
 - A gap remains RECEIVED/deferred. Do not advance the cursor.
 - Unknown breaking schema versions are quarantined.
 
-## Explicit implementation gaps
+## Repository implementation foundation
 
-## Repository implementation (PR #5 — still Draft)
+### Implemented behavior (PR #5 — still Draft)
 
 The Go repository foundation now provides:
 - `Repository.Create`: tenant/principal-scoped idempotency claim, RunIntent insert and `agent.run-intent.created` Outbox append in one transaction.
