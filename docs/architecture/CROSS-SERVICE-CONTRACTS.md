@@ -60,7 +60,7 @@ Required fields are validated at the consumer boundary. `causation_id` may be om
 
 ## Candidate identifier ownership (cross-service ratification pending)
 
-See [Identifier Lifecycle](IDENTIFIER-LIFECYCLE.md) for the canonical creator, owner and retry rules.
+See [Identifier Lifecycle](IDENTIFIER-LIFECYCLE.md) for the proposed creator, owner and retry rules; cross-service ratification remains pending.
 
 - Control Plane: `run_intent_id`.
 - Runtime: `run_id`, `workflow_id`, `run_attempt_id`; Runtime proposes to generate `invocation_id` and `guard_submission_key` before calling their owning services; EngageGuard owns the Action Operation and proposed `operation_id` (creation semantics remain blocked by G03).
