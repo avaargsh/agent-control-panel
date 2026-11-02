@@ -8,11 +8,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/avaargsh/agent-control-panel/internal/runintent"
+	"github.com/avaargsh/agent-control-panel/migrations"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -316,8 +318,13 @@ func TestMigrationHistoryChecksumAndSchemaDrift(t *testing.T) {
 	if version != 1 || name != "0001_run_intents_outbox_inbox.sql" || len(checksum) != 64 {
 		t.Fatalf("unexpected migration record: version=%d name=%q checksum=%q", version, name, checksum)
 	}
-	if _, err := hex.DecodeString(checksum); err != nil {
-		t.Fatalf("migration checksum is not hex: %v", err)
+	source, err := migrations.FS.ReadFile("0001_run_intents_outbox_inbox.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantChecksum := fmt.Sprintf("%x", sha256.Sum256(source))
+	if checksum != wantChecksum {
+		t.Fatalf("migration checksum=%s want=%s", checksum, wantChecksum)
 	}
 	if _, err := pool.Exec(ctx,
 		"UPDATE schema_migrations SET checksum=$1 WHERE version=1",
