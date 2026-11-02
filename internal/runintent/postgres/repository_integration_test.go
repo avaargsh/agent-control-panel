@@ -2,6 +2,8 @@ package postgres
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -298,5 +300,54 @@ func TestCreateReplayRejectsChangedOwnerMetadataWithSameDigest(t *testing.T) {
 	}
 	if got := countOutbox(t, pool, original.ID); got != 1 {
 		t.Fatalf("ownership conflicts or replay emitted %d Outbox events, want 1", got)
+	}
+}
+
+func TestMigrationHistoryChecksumAndSchemaDrift(t *testing.T) {
+	_, pool := testRepository(t)
+	ctx := context.Background()
+	var version int64
+	var name, checksum string
+	if err := pool.QueryRow(ctx,
+		"SELECT version, name, checksum FROM schema_migrations WHERE version=1",
+	).Scan(&version, &name, &checksum); err != nil {
+		t.Fatalf("read migration history: %v", err)
+	}
+	if version != 1 || name != "0001_run_intents_outbox_inbox.sql" || len(checksum) != 64 {
+		t.Fatalf("unexpected migration record: version=%d name=%q checksum=%q", version, name, checksum)
+	}
+	if _, err := hex.DecodeString(checksum); err != nil {
+		t.Fatalf("migration checksum is not hex: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		"UPDATE schema_migrations SET checksum=$1 WHERE version=1",
+		strings.Repeat("0", 64),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := Migrate(ctx, pool); !errors.Is(err, ErrSchemaDrift) {
+		t.Fatalf("changed migration checksum accepted: %v", err)
+	}
+}
+
+func TestMigrationRejectsUnversionedExistingSchema(t *testing.T) {
+	_, pool := testRepository(t)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, "DROP TABLE schema_migrations"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Migrate(ctx, pool); !errors.Is(err, ErrUnversionedSchema) {
+		t.Fatalf("unversioned schema was silently adopted: %v", err)
+	}
+}
+
+func TestMigrationDetectsMissingRelationAfterRecordedInstall(t *testing.T) {
+	_, pool := testRepository(t)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, "DROP TABLE inbox_cursors"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Migrate(ctx, pool); !errors.Is(err, ErrSchemaDrift) {
+		t.Fatalf("incomplete recorded schema was accepted: %v", err)
 	}
 }
