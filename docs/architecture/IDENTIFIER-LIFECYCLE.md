@@ -1,8 +1,8 @@
 # Cross-Service Identifier Lifecycle — v0.2
 
-Status: Proposed implementation contract. Read with [ADR-003](ADR-003-IDENTITY-AND-RETRY-OWNERSHIP.md) and [Cross-Service Contracts](CROSS-SERVICE-CONTRACTS.md).
+Status: **Proposed candidate; cross-service protocol gates remain blocked.** Read with [ADR-003](ADR-003-IDENTITY-AND-RETRY-OWNERSHIP.md) and [Cross-Service Contracts](CROSS-SERVICE-CONTRACTS.md). G03 Action operation identity and ActionHash details are not ratified.
 
-## Canonical identifiers and owners
+## Candidate identifier creators and owners
 
 | Identifier | Created by | Authoritative owner | Stability |
 |---|---|---|---|
@@ -60,10 +60,10 @@ The Runtime-generated `run_id` must be globally unique (UUIDv7 or another collis
 
 1. Decision returns an untrusted ActionProposal. It does not choose an authorization result, Permit, operation ID or ActionHash.
 2. Runtime persists the accepted proposal and assigns one `guard_submission_key` before first EngageGuard submission.
-3. Runtime reuses the same operation ID and semantically identical request on every retry.
+3. Runtime reuses the same `guard_submission_key` and semantically identical request on every retry. The `operation_id` wire contract remains blocked until EngageGuard/Runtime resolve whether it is client-issued or server-generated.
 4. EngageGuard derives subject/tenant/workload from authenticated context, resolves trusted capability binding, validates and normalizes the action, then computes ActionHash.
-5. Hash preimage is UTF-8 bytes `engageguard/canonical-action:v1\\0` followed by RFC 8785 JCS canonical JSON bytes. SHA-256 is encoded as 64 lowercase hexadecimal characters. Go `json.Marshal` alone is not the cross-language contract.
-6. Shared Go/Python/TypeScript golden vectors are stored at `contracts/engageguard/action-hash/v0.1/workspace-write-vectors.json`.
+5. The exact ActionHash domain separator and preimage are unresolved across current drafts; no value in this repository is normative until EngageGuard and Runtime ratify one versioned contract (G03).
+6. The ACP-local `contracts/engageguard/action-hash/v0.1/workspace-write-vectors.json` remains a historical comparison fixture only; it must not be used as a production authorization contract.
 7. EngageGuard binds AuthorizationDecision, Approval, one-time Permit, Action Operation Journal and Receipt to the same operation ID and hash.
 8. Reusing an Action operation ID with a different canonical action/hash is a conflict and fails closed. Runtime records only a verified Receipt.
 
