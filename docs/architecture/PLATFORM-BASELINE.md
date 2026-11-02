@@ -14,7 +14,8 @@ A self-hosted, Kubernetes-first platform to publish versioned Agents, execute du
 | Agent Control Plane | agent-control-panel | Tenant/Project, Agent, Bundle, Release, SessionIdentity, RunIntent and desired state |
 | Runtime | agent-runtime | Run, Task, RunAttempt, execution lifecycle and Runtime ↔ Temporal mapping |
 | Durable orchestration | Temporal | Workflow history, replay, timers, durable waits and native Activity attempts |
-| Decision plugin | agent-decision | DecisionRecord, invocation ledger/result, bounded model reasoning and proposals |
+| Decision Core | agent-decision (Go service) | DecisionRecord, invocation ledger/result and decision API |
+| Reasoning adapter | agent-decision (separate versioned interface) | Bounded framework-backed reasoning; no second Decision ledger or protected-effect authority |
 | Action governance | EngageGuard | Action, ActionHash, risk, approval, Permit, protected-action Operation Journal and Receipt |
 | Compute | compute-control-panel | ComputeProvider, Pool, Profile, Workload, Allocation and Compute Operation Journal |
 | Admission | Kueue | Queue and admission/quota state |
