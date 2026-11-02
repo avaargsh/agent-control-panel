@@ -58,7 +58,7 @@ CREATE TABLE outbox_events (
  published_at timestamptz,
  last_error_code text,
  created_at timestamptz NOT NULL DEFAULT now(),
- CONSTRAINT outbox_aggregate_version_unique UNIQUE (producer,aggregate_type,aggregate_id,aggregate_version),
+ CONSTRAINT outbox_aggregate_version_unique UNIQUE (producer,tenant_id,aggregate_type,aggregate_id,aggregate_version),
  CONSTRAINT outbox_lease_consistency CHECK (
   (delivery_state = 'PUBLISHING' AND lease_owner IS NOT NULL AND lease_owner <> '' AND lease_expires_at IS NOT NULL)
   OR (delivery_state <> 'PUBLISHING' AND lease_owner IS NULL AND lease_expires_at IS NULL)
@@ -77,6 +77,7 @@ CREATE TABLE inbox_events (
  producer text NOT NULL CHECK (producer <> ''),
  event_type text NOT NULL CHECK (event_type <> ''),
  schema_version integer NOT NULL CHECK (schema_version > 0),
+ tenant_id text NOT NULL CHECK (tenant_id <> '' AND tenant_id = btrim(tenant_id)),
  aggregate_type text NOT NULL CHECK (aggregate_type <> ''),
  aggregate_id text NOT NULL CHECK (aggregate_id <> ''),
  aggregate_version bigint NOT NULL CHECK (aggregate_version > 0),
@@ -86,30 +87,34 @@ CREATE TABLE inbox_events (
  applied_at timestamptz,
  error_code text,
  PRIMARY KEY (consumer_name,event_id),
+ CONSTRAINT inbox_event_tenant_identity UNIQUE (consumer_name,event_id,tenant_id),
  CONSTRAINT inbox_applied_consistency CHECK (
   (state = 'APPLIED' AND applied_at IS NOT NULL AND error_code IS NULL)
   OR (state <> 'APPLIED' AND applied_at IS NULL)
  )
 );
-CREATE INDEX inbox_deferred_events ON inbox_events (consumer_name,aggregate_type,aggregate_id,aggregate_version) WHERE state = 'RECEIVED';
+CREATE INDEX inbox_deferred_events ON inbox_events (consumer_name,tenant_id,aggregate_type,aggregate_id,aggregate_version) WHERE state = 'RECEIVED';
 
 CREATE TABLE inbox_aggregate_claims (
  consumer_name text NOT NULL,
+ tenant_id text NOT NULL CHECK (tenant_id <> '' AND tenant_id = btrim(tenant_id)),
  aggregate_type text NOT NULL,
  aggregate_id text NOT NULL,
  aggregate_version bigint NOT NULL CHECK (aggregate_version > 0),
  event_id uuid NOT NULL,
  claimed_at timestamptz NOT NULL DEFAULT now(),
- PRIMARY KEY (consumer_name,aggregate_type,aggregate_id,aggregate_version),
+ PRIMARY KEY (consumer_name,tenant_id,aggregate_type,aggregate_id,aggregate_version),
  UNIQUE (consumer_name,event_id),
- FOREIGN KEY (consumer_name,event_id) REFERENCES inbox_events (consumer_name,event_id)
+ FOREIGN KEY (consumer_name,event_id,tenant_id)
+     REFERENCES inbox_events (consumer_name,event_id,tenant_id)
 );
 CREATE TABLE inbox_cursors (
  consumer_name text NOT NULL,
+ tenant_id text NOT NULL CHECK (tenant_id <> '' AND tenant_id = btrim(tenant_id)),
  aggregate_type text NOT NULL,
  aggregate_id text NOT NULL,
  last_applied_version bigint NOT NULL DEFAULT 0 CHECK (last_applied_version >= 0),
  updated_at timestamptz NOT NULL DEFAULT now(),
- PRIMARY KEY (consumer_name,aggregate_type,aggregate_id)
+ PRIMARY KEY (consumer_name,tenant_id,aggregate_type,aggregate_id)
 );
 COMMIT;
