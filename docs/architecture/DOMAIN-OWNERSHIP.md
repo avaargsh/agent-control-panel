@@ -1,6 +1,6 @@
 # Domain and Identifier Ownership
 
-Status: Proposed v0.2 — implementation gate
+Status: Proposed v0.2 — implementation gate; Decision and Guard wire contracts remain blocked (G02/G03).
 
 ## Authoritative writers
 
@@ -12,14 +12,15 @@ Status: Proposed v0.2 — implementation gate
 | RunIntent | Agent Control Plane | Idempotent request to start a Run; not an execution |
 | Run / Task / RunAttempt / execution lifecycle | Agent Runtime | Agent Control Plane may keep a read-only projection |
 | Temporal Workflow history / replay / native Activity attempts | Temporal | Runtime owns Workflow ID mapping and workflow code |
-| DecisionRecord / invocation ledger and exact result / proposal | agent-decision | Runtime creates stable invocation_id; Decision owns the record |
+| DecisionRecord / invocation ledger and exact result | agent-decision Go Core | Runtime creates stable invocation_id; Decision owns the record |
+| Bounded framework reasoning | separately versioned agent-decision adapter | Adapter has no second Decision ledger or protected-effect authority; wire contract pending agent-decision #9 |
 | Action / ActionHash / risk / approval / Permit / Action Operation Journal / Receipt | EngageGuard | Trusted executor performs protected effects |
 | ComputeProvider / ComputePool / ComputeProfile / Workload / Allocation / ComputeOperation | compute-control-panel | Compute domain only |
 | Kueue queue and admission state | Kueue | Admission and quota enforcement, not Pod placement |
 | Pod / Job / node placement / device allocation state | Kubernetes scheduler, device plugins / DRA, provider | Compute stores observations, not a second authority |
 | Actual sandbox lifecycle and isolation | selected Sandbox Provider | Compute capacity is a separate allocation concern |
 
-## Canonical identifier ownership
+## Candidate identifier ownership
 
 | Identifier | Created by | Authoritative owner | Meaning |
 |---|---|---|---|
@@ -29,9 +30,9 @@ Status: Proposed v0.2 — implementation gate
 | `run_intent_id` | Agent Control Plane | Agent Control Plane | Idempotent request to start a Run |
 | `run_id`, `workflow_id`, `run_attempt_id` | Agent Runtime | Agent Runtime | Canonical execution identity and stable Temporal mapping |
 | Temporal Activity attempt | Temporal | Temporal | Native retry metadata; not a Runtime Attempt ID |
-| `invocation_id` | Agent Runtime | agent-decision | Runtime supplies stable ID; Decision owns ledger/result |
+| `invocation_id` | Agent Runtime | agent-decision | Runtime supplies stable ID; Decision Core owns ledger/result |
 | `proposal_id` | agent-decision | agent-decision | Untrusted proposal identity |
-| Action `operation_id` | Agent Runtime | EngageGuard | Runtime supplies stable ID; EngageGuard owns Action Operation |
+| Action `operation_id` | EngageGuard (proposed; G03 blocked) | EngageGuard | EngageGuard owns Action Operation; current ActionRequest draft conflicts on whether this ID is caller-supplied or server-generated |
 | `action_hash`, `permit_id`, `executor_attempt_id` | EngageGuard / trusted executor | EngageGuard | Canonical action, permit and concrete executor attempt |
 | `workload_id`, `allocation_id`, `compute_operation_id` | Compute Control Plane | Compute Control Plane | Compute intent, allocation and provider mutation |
 | `provider_id` | Compute Control Plane | Compute Control Plane | Registered provider identity |
