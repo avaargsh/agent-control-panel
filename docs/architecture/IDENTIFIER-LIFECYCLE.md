@@ -15,7 +15,8 @@ Status: Proposed implementation contract. Read with [ADR-003](ADR-003-IDENTITY-A
 | `run_attempt_id` | Agent Runtime | Agent Runtime | One durable Runtime attempt; not a Temporal Activity retry |
 | `invocation_id` | Agent Runtime | agent-decision owns invocation ledger/result | Stable across retries of one logical Decision Turn |
 | `proposal_id` | agent-decision | agent-decision | Stable in the persisted/replayed invocation result |
-| `action_operation_id` (wire: `operation_id`) | Agent Runtime | EngageGuard owns Action Operation | Created once when Runtime accepts a proposal; reused on every submission/retry |
+| `guard_submission_key` (HTTP `Idempotency-Key`) | Agent Runtime | EngageGuard idempotency index | Created once per ActionProposal; reused on every submission/retry |
+| `operation_id` | EngageGuard | EngageGuard Action Operation | Server-generated on first accepted submission; returned to Runtime; never supplied by Runtime |
 | `action_hash`, `permit_id` | EngageGuard | EngageGuard | Hash after trusted canonicalization; Permit bound to exact action/operation/audience |
 | `executor_attempt_id` | Trusted executor / EngageGuard | EngageGuard Receipt | One concrete executor attempt; not a Run or Temporal attempt |
 | `workload_id`, `allocation_id` | Compute Control Plane | Compute Control Plane | Stable logical compute resources |
@@ -58,10 +59,10 @@ The Runtime-generated `run_id` must be globally unique (UUIDv7 or another collis
 ## Action operation and hash chain
 
 1. Decision returns an untrusted ActionProposal. It does not choose an authorization result, Permit, operation ID or ActionHash.
-2. Runtime persists the accepted proposal and assigns one `action_operation_id` before first EngageGuard submission.
+2. Runtime persists the accepted proposal and assigns one `guard_submission_key` before first EngageGuard submission.
 3. Runtime reuses the same operation ID and semantically identical request on every retry.
 4. EngageGuard derives subject/tenant/workload from authenticated context, resolves trusted capability binding, validates and normalizes the action, then computes ActionHash.
-5. Hash preimage is UTF-8 bytes `engageguard/action-hash/v1\\0` followed by RFC 8785 JCS canonical JSON bytes. SHA-256 is encoded as 64 lowercase hexadecimal characters. Go `json.Marshal` alone is not the cross-language contract.
+5. Hash preimage is UTF-8 bytes `engageguard/canonical-action:v1\\0` followed by RFC 8785 JCS canonical JSON bytes. SHA-256 is encoded as 64 lowercase hexadecimal characters. Go `json.Marshal` alone is not the cross-language contract.
 6. Shared Go/Python/TypeScript golden vectors are stored at `contracts/engageguard/action-hash/v0.1/workspace-write-vectors.json`.
 7. EngageGuard binds AuthorizationDecision, Approval, one-time Permit, Action Operation Journal and Receipt to the same operation ID and hash.
 8. Reusing an Action operation ID with a different canonical action/hash is a conflict and fails closed. Runtime records only a verified Receipt.
@@ -77,7 +78,7 @@ Internal Compute controller operations use Compute workload identity and its dom
 - Control Plane: unique tenant/principal/idempotency key; persist canonical request digest.
 - Runtime: UNIQUE(`run_intent_id`), UNIQUE(`run_id`), UNIQUE(`workflow_id`).
 - Decision: UNIQUE(`invocation_id`); persist request digest and exact result.
-- EngageGuard: UNIQUE(Action `operation_id`); immutable canonical ActionHash once claimed.
+- EngageGuard: UNIQUE(tenant_id, guard_submission_key); unique server-generated operation_id; immutable canonical ActionHash once claimed.
 - Compute: UNIQUE(`compute_operation_id`); generation/version fencing.
 - Evidence: immutable digest plus producer identity and schema version.
 

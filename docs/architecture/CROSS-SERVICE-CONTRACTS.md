@@ -95,7 +95,7 @@ Required fields are validated at the consumer boundary. `causation_id` may be om
 See [Identifier Lifecycle](IDENTIFIER-LIFECYCLE.md) for the canonical creator, owner and retry rules.
 
 - Control Plane: `run_intent_id`.
-- Runtime: `run_id`, `workflow_id`, `run_attempt_id`; Runtime generates `invocation_id` and `action_operation_id` before calling their owning services.
+- Runtime: `run_id`, `workflow_id`, `run_attempt_id`; Runtime generates `invocation_id` and `guard_submission_key` before calling their owning services; EngageGuard generates and returns `operation_id`.
 - Decision: DecisionRecord, invocation ledger/result and `proposal_id`.
 - EngageGuard: Action Operation record (wire field `operation_id`), `action_hash`, `permit_id`, `executor_attempt_id`.
 - Compute Control Plane: `workload_id`, `allocation_id`, `compute_operation_id`.
@@ -103,14 +103,14 @@ See [Identifier Lifecycle](IDENTIFIER-LIFECYCLE.md) for the canonical creator, o
 - Provider: provider-native resource IDs/UIDs.
 - Evidence producer: `evidence_digest` for its own immutable payload.
 
-Do not reuse Action `operation_id` for a Compute provider mutation. Do not use one generic `attempt_id` for Runtime, Temporal and executor attempts.
+Do not reuse Guard `operation_id` for a Compute provider mutation. Do not use one generic `attempt_id` for Runtime, Temporal and executor attempts.
 
 ## Action authorization and execution
 
 ```text
 Decision ActionProposal
   -> Runtime persists accepted proposal
-  -> Runtime assigns stable action_operation_id (wire: operation_id)
+  -> Runtime sends stable guard_submission_key (HTTP Idempotency-Key); EngageGuard generates operation_id
   -> EngageGuard authenticates caller and resolves trusted binding
   -> EngageGuard validates and canonicalizes action
   -> EngageGuard computes action_hash
@@ -124,14 +124,14 @@ Decision ActionProposal
 
 - Runtime reuses the same operation ID and semantically identical request on every retry.
 - EngageGuard computes ActionHash only after trusted normalization; plugin-supplied hashes are rejected/ignored.
-- Canonicalization is RFC 8785 JCS. Exact preimage: UTF-8 bytes `engageguard/action-hash/v1\\0` followed by JCS canonical JSON bytes. SHA-256 digest is 64 lowercase hexadecimal characters. Plain Go `json.Marshal` is not the cross-language contract.
+- Canonicalization is RFC 8785 JCS. Exact preimage: UTF-8 bytes `engageguard:canonical-action:v1\\0` followed by JCS canonical JSON bytes. SHA-256 digest is 64 lowercase hexadecimal characters. Plain Go `json.Marshal` is not the cross-language contract.
 - Shared vectors: `contracts/engageguard/action-hash/v0.1/workspace-write-vectors.json`.
-- Same Action `operation_id` with a different canonical action/hash returns 409 and fails closed.
+- Same tenant + guard_submission_key + same RequestHash returns the existing Action Operation and operation_id. Same key + different RequestHash returns 409 and fails closed.
 - Approval, Permit, executor claim and Receipt bind the same operation and hash. Receipt uses `executor_attempt_id`, not a generic `attempt_id`.
 
 ## Compute and Sandbox boundary
 
-An Agent-originated protected compute request is authorized at the EngageGuard action boundary. Compute Control Plane validates the delegated authorization at its API enforcement point, then creates and owns its own `compute_operation_id`, Workload, Allocation and provider journal. Action and Compute operations are linked by references/correlation only.
+An Agent-originated protected compute request is authorized at the EngageGuard action boundary. Compute Control Plane validates the delegated authorization at its API enforcement point, then creates and owns its own `compute_operation_id`, Workload, Allocation and provider journal. Guard operation_id and Compute compute_operation_id are linked by references/correlation only.
 
 Internal Compute reconciler/provider operations use Compute service identity and its domain authorization policy. EngageGuard does not become a second writer for Kubernetes, Kueue or provider observations. SandboxProvider owns sandbox lifecycle and isolation; it may request capacity through Compute but must not create a duplicate Workload/Allocation for the same resource.
 

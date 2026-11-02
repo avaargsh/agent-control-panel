@@ -15,7 +15,7 @@ The first implementation draft conflated RunIntent with Run identity, assigned a
 - Runtime derives the stable Temporal Workflow ID as `agent-run/v1/{run_id}`; a StartRun retry with the same RunIntent ID/digest returns the same Run.
 - Control Plane stores Runtime identifiers only after a matching receipt and exposes them as a read-only projection.
 - Runtime creates `invocation_id` before calling Decision; Decision owns its invocation ledger and exact result.
-- Runtime assigns Action `operation_id` once when it accepts a proposal; EngageGuard owns the Action Operation record and computes ActionHash.
+- Runtime assigns guard_submission_key (HTTP Idempotency-Key) once when it accepts a proposal; EngageGuard creates operation_id, owns the Action Operation record and computes ActionHash over CanonicalAction.
 - Compute Control Plane creates a distinct `compute_operation_id`; it never reuses Action `operation_id`.
 - Temporal native Activity attempts and EngageGuard `executor_attempt_id` are separate from Runtime `run_attempt_id`.
 - Cancellation is a separate Runtime command, not a RunIntent terminal state.
