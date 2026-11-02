@@ -117,5 +117,27 @@ class GovernanceTests(unittest.TestCase):
             validate_registry(broken)
 
 
+    def test_decision_core_cannot_reuse_legacy_plugin_version(self):
+        broken = copy.deepcopy(REGISTRY)
+        core = next(c for c in broken["contracts"] if c["id"] == "decision-core-http")
+        core["version"] = "plugin.v0.1-legacy"
+        with self.assertRaisesRegex(ValueError, "service contract version mismatch"):
+            validate_registry(broken)
+
+    def test_guard_submission_key_cannot_be_redefined_as_operation_id(self):
+        broken = copy.deepcopy(REGISTRY)
+        key = next(x for x in broken["issued_request_ids"] if x["id"] == "guard_submission_key")
+        key["meaning"] = "Runtime creates operation_id, Guard accepts caller ID"
+        with self.assertRaisesRegex(ValueError, "request ID semantics mismatch"):
+            validate_registry(broken)
+
+    def test_invocation_id_must_remain_stable_across_retries(self):
+        broken = copy.deepcopy(REGISTRY)
+        invocation = next(x for x in broken["issued_request_ids"] if x["id"] == "invocation_id")
+        invocation["meaning"] = "new invocation ID for every Activity retry"
+        with self.assertRaisesRegex(ValueError, "request ID semantics mismatch"):
+            validate_registry(broken)
+
+
 if __name__ == "__main__":
     unittest.main()
