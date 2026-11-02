@@ -57,38 +57,46 @@ REQUIRED_CONTRACTS = {
     "agent-control-run-intent": (
         "avaargsh/agent-control-panel",
         "docs/architecture/ADR-003-IDENTITY-AND-RETRY-OWNERSHIP.md",
+        "v0.2-draft",
         "candidate",
     ),
     "runtime-run-and-workflow": (
         "avaargsh/agent-runtime",
         "docs/architecture/DECISION-INTEGRATION-CONTRACT.md",
+        "v0.1-draft",
         "candidate",
     ),
     "decision-core-http": (
         "avaargsh/agent-decision",
         "api/openapi.yaml",
+        "core.v1-draft",
         "candidate",
     ),
     "framework-plugin-decision-turn": (
         "avaargsh/agent-decision",
         "protocol/v0.1/manifest.json",
+        "plugin.v0.1-legacy",
         "blocked",
     ),
     "guard-action-request": (
         "avaargsh/EngageGuard",
         "docs/contracts/action-request.v1.schema.json",
+        "action-request.v1-draft",
         "blocked",
     ),
     "compute-workload-http": (
         "avaargsh/compute-control-panel",
         "docs/contracts/COMPUTE-WORKLOAD-V1.md",
+        "compute.v1-draft",
         "candidate",
     ),
 }
 
 REQUIRED_REQUEST_IDS = {
-    "invocation_id": ("avaargsh/agent-runtime", "avaargsh/agent-decision"),
-    "guard_submission_key": ("avaargsh/agent-runtime", "avaargsh/EngageGuard"),
+    "invocation_id": ("avaargsh/agent-runtime", "avaargsh/agent-decision",
+                      "stable Decision/adapter invocation across Runtime Activity retry"),
+    "guard_submission_key": ("avaargsh/agent-runtime", "avaargsh/EngageGuard",
+                             "stable HTTP Guard Idempotency-Key; Guard creates operation_id"),
 }
 
 REQUIRED_GATES = {
@@ -179,12 +187,14 @@ def validate_registry(registry):
                 not request_id.get("meaning")):
             raise ValueError("request ID creator and durable index owner must be declared")
 
-    for request_id, (creator, index_owner) in REQUIRED_REQUEST_IDS.items():
+    for request_id, (creator, index_owner, meaning) in REQUIRED_REQUEST_IDS.items():
         actual = request_by_id.get(request_id)
         if actual is None:
             raise ValueError("missing required request ID: " + request_id)
         if actual["created_by"] != creator or actual["durable_index_owner"] != index_owner:
             raise ValueError("request ID ownership mismatch: " + request_id)
+        if actual["meaning"] != meaning:
+            raise ValueError("request ID semantics mismatch: " + request_id)
 
     contract_ids = set()
     contract_by_id = {}
@@ -206,13 +216,15 @@ def validate_registry(registry):
         if not contract["version"]:
             raise ValueError("contract version cannot be blank")
 
-    for contract_id, (expected_repo, expected_path, expected_state) in REQUIRED_CONTRACTS.items():
+    for contract_id, (expected_repo, expected_path, expected_version, expected_state) in REQUIRED_CONTRACTS.items():
         contract = contract_by_id.get(contract_id)
         if contract is None:
             raise ValueError("missing required service contract: " + contract_id)
         if (contract["repo"] != expected_repo or contract["path"] != expected_path or
                 contract["state"] != expected_state):
             raise ValueError("service contract authority or state mismatch: " + contract_id)
+        if contract["version"] != expected_version:
+            raise ValueError("service contract version mismatch: " + contract_id)
 
     gate_ids = set()
     gate_by_id = {}
