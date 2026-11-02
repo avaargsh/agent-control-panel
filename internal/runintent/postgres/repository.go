@@ -153,7 +153,7 @@ func (r *Repository) CompareAndSwap(ctx context.Context, tenantID, id string, ex
 	if err := next.Validate(); err != nil {
 		return runintent.Intent{}, err
 	}
-	if expectedVersion == math.MaxInt64 || expectedVersion == 0 || next.Version != expectedVersion+1 ||
+	if expectedVersion >= uint64(math.MaxInt64) || expectedVersion == 0 || next.Version != expectedVersion+1 ||
 		next.Version > math.MaxInt64 || next.FenceToken > math.MaxInt64 {
 		return runintent.Intent{}, ErrInvalidTransition
 	}
@@ -189,7 +189,13 @@ func (r *Repository) CompareAndSwap(ctx context.Context, tenantID, id string, ex
 	if !allowedTransition(current.Status, next.Status) || next.Version != current.Version+1 {
 		return runintent.Intent{}, ErrInvalidTransition
 	}
-	if next.FenceToken < current.FenceToken {
+	if next.FenceToken < current.FenceToken || current.FenceToken == math.MaxInt64 && next.FenceToken != current.FenceToken ||
+		next.FenceToken-current.FenceToken > 1 {
+		return runintent.Intent{}, ErrFenceRegression
+	}
+	acquiringLease := current.Status == runintent.Pending && next.Status == runintent.Dispatching ||
+		current.Status == runintent.Unknown && next.Status == runintent.Reconciling
+	if acquiringLease && next.FenceToken != current.FenceToken+1 {
 		return runintent.Intent{}, ErrFenceRegression
 	}
 	if event.AggregateVersion != next.Version {
