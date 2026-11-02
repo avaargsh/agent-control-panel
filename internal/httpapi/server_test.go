@@ -22,7 +22,7 @@ func newTestRepository() *testRepository {
 	return &testRepository{runs: map[string]domain.Run{}, idem: map[string]struct{ hash, id string }{}}
 }
 func (m *testRepository) CreateRun(_ context.Context, run domain.Run, key, hash string) (domain.Run, bool, error) {
-	scope := run.TenantID + ":" + key
+	scope := run.TenantID + ":POST:/api/v1/runs:" + key
 	if old, ok := m.idem[scope]; ok {
 		if old.hash != hash {
 			return domain.Run{}, false, domain.ErrIdempotencyConflict
