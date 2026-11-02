@@ -5,13 +5,13 @@ Governance anchor: https://github.com/avaargsh/agent-control-panel/issues/3.
 
 ## Current branch topology (observed 2026-11-02)
 
-| Repo | Open Draft PRs | Role / handling |
+| Repo | Latest observed open Draft PR topology | Governance handling |
 |---|---|---|
-| agent-control-panel | #1 architecture; #2 Go RunIntent foundation (both based on main) | Reconcile architecture before integrating schema/Go foundation |
-| agent-runtime | #1 baseline → #2 Temporal Spike → #3 reliability → #4 PG RunStore | Stacked PR bases; review ancestry and green code before promotion |
-| agent-decision | #8 Go-first Core (main); #3 SRE Core (main) → #7 PG/outbox (base #3); #1 plugin baseline (main) → #2 Python host (base #1) | Choose #8 as candidate Core. Diff and selectively port #3/#7; isolate #1/#2 framework work |
-| EngageGuard | #1 baseline → #2 ActionRequest/Hash | Block contract merge until operation ID and canonical hash fixed |
-| compute-control-panel | #1 baseline; #2 Go/PG foundation (both based on main) | Retain state machine/schema; test real storage and FakeProvider |
+| agent-control-panel | #1 architecture (main), #2 Go RunIntent (main), #5 PostgreSQL RunIntent (base #2), #4 governance (main) | #5 must remain stacked after #2; #1/#4 proposals not silently authoritative |
+| agent-runtime | #1 baseline (main) → #2 Temporal Spike (base #1) → #3 reliability (base #2) → #4 PostgreSQL RunStore (base #3) | Preserve sequential review and ancestry |
+| agent-decision | #8 Go Core (main) → #10 transactional Outbox (base #8). Legacy #1/#2/#3/#7 are no longer in the open-PR snapshot; do not delete their reviewed code without diffing. | Prefer Go Core #8 mainline; #10 as stacked Outbox |
+| EngageGuard | #1 baseline (main) → #2 ActionHash (base #1), with competing siblings #4 and #5 (both based on #2). Prefer #5 as a candidate submission boundary; selectively port relevant #4 validation, do NOT merge both as if sequential. | #4/#5 parallel conflict recorded; no simultaneous independent merge |
+| compute-control-panel | #1 architecture (main); #2 Go/PG/FakeProvider (main) | Keep FakeProvider evidence distinct from provider production approval |
 
 **No PR is declared superseded, approved or merged by this matrix.** No existing branch is closed, rebased or rewritten automatically.
 
@@ -40,3 +40,12 @@ Governance anchor: https://github.com/avaargsh/agent-control-panel/issues/3.
 Every implementation PR must state exact base/head and dependencies, authoritative contract revision, tested source SHA, unit vs integration test coverage, affected domains, P0 threat/failure scenario, migration/rollback, unresolved blockers and explicit non-goals.
 
 The proposal's CI checks a local manifest, not branch protection. Repository branch protection and cross-repo required checks must still be separately configured and verified.
+
+## Observed live PR topology audit
+
+The observation at `governance/pr-topology.v0.3.json` records current PR numbers, full source SHAs, head/base branches, mandatory gates and explicitly unresolved parallel branches. It is **not approval** and does not silently refresh.
+
+- Default CI: `python scripts/audit_pr_topology.py` checks internal lineage, no self-approval, candidate conflict acknowledgement and blocker gates.
+- Optional live check: `GH_GOVERNANCE_READ_TOKEN=<read-only-token> python scripts/audit_pr_topology.py --live`. An access/permission failure is an error, not an empty list. The separate token is required for private repositories.
+- A SHA change, added/closed PR or missing parent will generate a **drift error**. The governance PR #4 is self-modifying: its head SHA may change as this same audit file is edited; only its existence is checked for live head drift.
+- The CI workflow does not yet enforce cross-repository branch protections, so this is a human-reviewed audit; no action is auto-merged/closed.

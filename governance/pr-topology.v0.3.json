@@ -1,0 +1,253 @@
+{
+  "schema_version": "pr-topology/v0.3",
+  "state": "observed-not-approved",
+  "observed_date": "2026-11-02",
+  "root_issue": "https://github.com/avaargsh/agent-control-panel/issues/3",
+  "repositories": [
+    {
+      "repo": "avaargsh/agent-control-panel",
+      "pull_requests": [
+        {
+          "number": 5,
+          "title": "feat: add transactional PostgreSQL RunIntent persistence",
+          "head_branch": "feature/postgres-runintent-store",
+          "base_branch": "feat/go-foundation",
+          "head_sha": "7e87b5ef9067f60f2454a8697e3173c1e265636f",
+          "draft": true,
+          "disposition": "blocked",
+          "gate_ids": [
+            "G01"
+          ]
+        },
+        {
+          "number": 4,
+          "title": "docs(governance): proposed platform v0.3 authority map and cross-repo merge gates",
+          "head_branch": "governance/platform-v0.3",
+          "base_branch": "main",
+          "head_sha": "fe6a93e138ab64f8188f3fde818afce984c60381",
+          "draft": true,
+          "disposition": "blocked",
+          "gate_ids": [
+            "G01",
+            "G02",
+            "G03",
+            "G04",
+            "G05"
+          ],
+          "head_tracking": "exists-only"
+        },
+        {
+          "number": 2,
+          "title": "feat: establish Go service foundation and RunIntent invariants",
+          "head_branch": "feat/go-foundation",
+          "base_branch": "main",
+          "head_sha": "82e3ba2b4ceb874816628dca9d0abe971282c825",
+          "draft": true,
+          "disposition": "blocked",
+          "gate_ids": [
+            "G01"
+          ]
+        },
+        {
+          "number": 1,
+          "title": "docs: establish Open Agent Infrastructure architecture baseline",
+          "head_branch": "feature/platform-foundation",
+          "base_branch": "main",
+          "head_sha": "803bcbea0dc29f336dc325febe5df7328aa9dd20",
+          "draft": true,
+          "disposition": "blocked",
+          "gate_ids": [
+            "G01",
+            "G02",
+            "G03"
+          ]
+        }
+      ]
+    },
+    {
+      "repo": "avaargsh/agent-runtime",
+      "pull_requests": [
+        {
+          "number": 4,
+          "title": "feat: add PostgreSQL RunStore and idempotent StartRun",
+          "head_branch": "feature/postgres-run-store-20261102",
+          "base_branch": "docs/reliability-acceptance-20261102",
+          "head_sha": "676637c951b7c1b87123e55dd3312b3ea9bb54a7",
+          "draft": true,
+          "disposition": "blocked",
+          "gate_ids": [
+            "G01",
+            "G05"
+          ]
+        },
+        {
+          "number": 3,
+          "title": "docs: define runtime reliability acceptance gates",
+          "head_branch": "docs/reliability-acceptance-20261102",
+          "base_branch": "feature/temporal-plugin-spike",
+          "head_sha": "4ee204daba28a51751d83e2a99ed960da968ece2",
+          "draft": true,
+          "disposition": "blocked",
+          "gate_ids": [
+            "G01",
+            "G03",
+            "G05"
+          ]
+        },
+        {
+          "number": 2,
+          "title": "feat: initial Go Temporal workflow invoking bounded Python plugin",
+          "head_branch": "feature/temporal-plugin-spike",
+          "base_branch": "feature/platform-foundation",
+          "head_sha": "60c8a4c13460b8d97da1759186bb0bd640e19172",
+          "draft": true,
+          "disposition": "blocked",
+          "gate_ids": [
+            "G02",
+            "G05"
+          ]
+        },
+        {
+          "number": 1,
+          "title": "feat(runtime): Guard recovery policy and Decision/Temporal integration contract",
+          "head_branch": "feature/platform-foundation",
+          "base_branch": "main",
+          "head_sha": "e2089cfee9bc30478ed4ba1276723244869742a6",
+          "draft": true,
+          "disposition": "blocked",
+          "gate_ids": [
+            "G01",
+            "G02",
+            "G03",
+            "G05"
+          ]
+        }
+      ]
+    },
+    {
+      "repo": "avaargsh/agent-decision",
+      "pull_requests": [
+        {
+          "number": 10,
+          "title": "feat: add transactional Decision outbox and leased dispatcher",
+          "head_branch": "feat/decision-outbox-v1-stacked",
+          "base_branch": "feat/v0.1-decision-core-baseline",
+          "head_sha": "8330487031e414f3ca6dba47badf24089b7ad845",
+          "draft": true,
+          "disposition": "blocked",
+          "gate_ids": [
+            "G02",
+            "G05"
+          ]
+        },
+        {
+          "number": 8,
+          "title": "feat: establish Go-first Decision Core and ledger APIs",
+          "head_branch": "feat/v0.1-decision-core-baseline",
+          "base_branch": "main",
+          "head_sha": "f6c3ee783fccfa132867b450cc432a9ff7392c66",
+          "draft": true,
+          "disposition": "blocked",
+          "gate_ids": [
+            "G02",
+            "G05"
+          ]
+        }
+      ]
+    },
+    {
+      "repo": "avaargsh/EngageGuard",
+      "pull_requests": [
+        {
+          "number": 5,
+          "title": "fix(P0): separate untrusted submission from Guard-owned operation ID",
+          "head_branch": "fix/guard-submission-authority-v1",
+          "base_branch": "feature/action-hash-v0",
+          "head_sha": "15582a24b1bd22ab16cca9dbbf745696745d1ce6",
+          "draft": true,
+          "disposition": "blocked",
+          "gate_ids": [
+            "G03"
+          ]
+        },
+        {
+          "number": 4,
+          "title": "fix(protocol): separate Runtime submission key from Guard-owned operation ID",
+          "head_branch": "feature/guard-submission-v1",
+          "base_branch": "feature/action-hash-v0",
+          "head_sha": "2e8bc6187a3975aa9ae8dc635343c048ebd665ef",
+          "draft": true,
+          "disposition": "blocked",
+          "gate_ids": [
+            "G03"
+          ]
+        },
+        {
+          "number": 2,
+          "title": "feat: bounded Workspace ActionHash and approval binding tests",
+          "head_branch": "feature/action-hash-v0",
+          "base_branch": "feature/platform-foundation",
+          "head_sha": "aace8181e7bebc796f3fc249072240feb67f311e",
+          "draft": true,
+          "disposition": "blocked",
+          "gate_ids": [
+            "G03"
+          ]
+        },
+        {
+          "number": 1,
+          "title": "docs: establish action authorization and trusted execution baseline",
+          "head_branch": "feature/platform-foundation",
+          "base_branch": "main",
+          "head_sha": "baa93e90ff33004a2e0071cf1dd67946480d91c2",
+          "draft": true,
+          "disposition": "blocked",
+          "gate_ids": [
+            "G03"
+          ]
+        }
+      ]
+    },
+    {
+      "repo": "avaargsh/compute-control-panel",
+      "pull_requests": [
+        {
+          "number": 2,
+          "title": "feat: establish Go service foundation and provider operation invariants",
+          "head_branch": "feat/go-foundation",
+          "base_branch": "main",
+          "head_sha": "921c8bf59088e2e3de351518fa65b9ef7b861d03",
+          "draft": true,
+          "disposition": "blocked",
+          "gate_ids": [
+            "G04"
+          ]
+        },
+        {
+          "number": 1,
+          "title": "docs: establish Compute Control Plane baseline",
+          "head_branch": "feature/platform-foundation",
+          "base_branch": "main",
+          "head_sha": "cc2ab75dc95d1c1d5f243868a71659b9486ead2f",
+          "draft": true,
+          "disposition": "blocked",
+          "gate_ids": [
+            "G04"
+          ]
+        }
+      ]
+    }
+  ],
+  "parallel_conflicts": [
+    {
+      "repo": "avaargsh/EngageGuard",
+      "pull_requests": [
+        4,
+        5
+      ],
+      "candidate_pr": 5,
+      "reason": "Both sibling PRs change caller/Guard operation ID boundary; PR #5 has an ActionSubmission type and schema, while #4 contains a competing ingress contract. Selectively port validated improvements, never merge both independently.",
+      "issue": "https://github.com/avaargsh/EngageGuard/issues/3"
+    }
+  ]
+}
