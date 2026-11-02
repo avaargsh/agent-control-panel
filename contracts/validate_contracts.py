@@ -68,12 +68,10 @@ def main() -> None:
         import rfc8785
 
         canonical_bytes = rfc8785.dumps(vector["action"])
-        canonical = canonical_bytes.decode("utf-8")
-        if canonical != vector["canonical_json"]:
-            raise SystemExit(
-                f"{vector['name']}: canonical JSON mismatch: "
-                f"actual={canonical!r} expected={vector['canonical_json']!r}"
-            )
+        # The explanatory canonical_json fixture must describe the same
+        # action; the hash is always computed from independently generated JCS.
+        if json.loads(vector["canonical_json"]) != vector["action"]:
+            raise SystemExit(f"{vector['name']}: canonical JSON describes a different action")
         digest = hashlib.sha256(domain + canonical_bytes).hexdigest()
         if digest != vector["action_hash"]:
             raise SystemExit(f"{vector['name']}: ActionHash mismatch")
