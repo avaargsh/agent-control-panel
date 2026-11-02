@@ -4,29 +4,22 @@ Status: **non-production foundation; P0 golden path not yet complete**.
 
 ## Available
 
-- Go 1.27 module, testable HTTP process, read-header/body timeouts and bounded header size.
-- `GET /livez`, `GET /readyz`, `GET /api/v1/meta`.
-- Readiness goes false when admission is being drained; SIGINT/SIGTERM triggers bounded graceful shutdown.
-- Pure RunIntent status and optimistic version-transition checks.
-- Regression tests for stale versions, no blind UNKNOWN retry, and isolation from Runtime-owned RUNNING state.
-- CI with pinned GitHub Actions, Go vet and race-enabled tests.
+- Go 1.27 module, bounded HTTP process, health/readiness/metadata and graceful shutdown.
+- Pure RunIntent state transitions with optimistic version checks.
+- Dispatch leases with monotonically increasing fencing tokens.
+- Typed Runtime dispatch/reconciliation outcomes; no caller-supplied boolean is accepted as proof.
+- Runtime receipt checks bind tenant, RunIntent ID and canonical request digest.
+- Accepted receipts must carry Runtime-generated `run_id` and the canonical Workflow ID mapping `agent-run/v1/{run_id}`.
+- UNKNOWN can return to PENDING only after Runtime's authoritative idempotency registry reports final not-found for the same RunIntent ID and digest.
+- Regression tests cover stale versions, lease expiry, fencing, mismatched receipts and no blind UNKNOWN retry.
 
 ## Boundaries and caveats
 
-Agent Control Plane owns the RunIntent and identities. Agent Runtime owns
-executed Run/Task/Attempt lifecycle and Temporal workflow history. This
-package does not launch a workflow or enforce permissions.
+Agent Control Plane owns RunIntent and its dispatch projection. Agent Runtime owns `run_id`, `workflow_id`, `run_attempt_id` and the executed Run lifecycle. Temporal owns durable workflow history and native Activity attempts.
 
-`Advance` is a pure domain check, **not a durable CAS**. PostgreSQL will
-need a versioned conditional update and an outbox insert in a single
-transaction. A boolean `providerVerified` is temporary internal input:
-before use by any API or reconciler, replace it with a typed observation
-bound to the exact workflow ID, tenant, and operation ID. Never trust a
-boolean supplied by a caller.
+The current domain transitions are pure functions, **not durable compare-and-swap**. PostgreSQL must later atomically persist the version/fencing transition, idempotency record and Outbox row. Runtime receipts are accepted only after the adapter authenticates the Runtime workload identity; typed structs are not a substitute for transport authentication.
 
-There are deliberately **no mutating endpoints** until persistent
-idempotency, authorization and evidence acceptance are implemented. Readiness
-currently covers process admission only, not future DB/Runtime health.
+There are deliberately **no mutating HTTP endpoints** until persistent idempotency, authorization, transactional outbox and evidence acceptance are integrated. Readiness currently covers process admission only, not future database/Runtime health.
 
 ## Local
 
@@ -36,14 +29,13 @@ go run ./cmd/agent-control-panel
 curl http://127.0.0.1:8080/api/v1/meta
 ```
 
-`LISTEN_ADDR` defaults to loopback. For containers choose
-`LISTEN_ADDR=:8080` behind authenticated ingress/network policy.
+`LISTEN_ADDR` defaults to loopback. For containers choose `LISTEN_ADDR=:8080` behind authenticated ingress/network policy.
 
 ## Next P0 slice
 
 1. OpenAPI DTOs for Bundle/Release/Session/RunIntent and tenant scope.
-2. PostgreSQL migrations, idempotency and transactionally coupled outbox.
-3. Typed WorkflowProvider start/inspect/reconcile contract.
-4. Restart, lost-ACK, duplicate-start and authz integration tests.
+2. PostgreSQL migrations, atomic idempotency and transactionally coupled Outbox.
+3. Authenticated Runtime StartRun / InspectRunIntent client and durable dispatch leases.
+4. Restart, lost-ACK, duplicate-start, tenant authorization and event-gap integration tests.
 
 No production-readiness claim is made by this slice.
