@@ -107,7 +107,7 @@ func (r *Repository) Create(ctx context.Context, intent runintent.Intent, event 
 		if lookupErr != nil {
 			return runintent.Intent{}, false, fmt.Errorf("load idempotency replay: %w", lookupErr)
 		}
-		if existing.RequestDigest != intent.RequestDigest {
+		if existing.RequestDigest != intent.RequestDigest || !sameCreationIdentity(existing, intent) {
 			return runintent.Intent{}, false, ErrIdempotencyConflict
 		}
 		return existing, false, nil
@@ -343,4 +343,20 @@ func nullableTime(value time.Time) any {
 		return nil
 	}
 	return value
+}
+
+func sameCreationIdentity(existing, requested runintent.Intent) bool {
+	// The idempotency uniqueness domain already binds tenant/principal/key.
+	// These ownership dimensions live beside the digest in dedicated columns,
+	// so compare them explicitly before returning an existing resource. The
+	// proposed ID is intentionally excluded: retries may generate a new
+	// candidate ID, but must receive the original committed identity.
+	return existing.TenantID == requested.TenantID &&
+		existing.PrincipalID == requested.PrincipalID &&
+		existing.ProjectID == requested.ProjectID &&
+		existing.AgentID == requested.AgentID &&
+		existing.ReleaseID == requested.ReleaseID &&
+		existing.SessionID == requested.SessionID &&
+		existing.IdempotencyKey == requested.IdempotencyKey &&
+		existing.RequestDigest == requested.RequestDigest
 }
