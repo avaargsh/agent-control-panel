@@ -24,7 +24,7 @@ func newMemoryRepository() *memoryRepository {
 func (m *memoryRepository) CreateRun(_ context.Context, run domain.Run, key, hash string) (domain.Run, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	scope := run.TenantID + ":POST:/runs:" + key
+	scope := run.TenantID + ":POST:/api/v1/runs:" + key
 	if prior, ok := m.idempotency[scope]; ok {
 		if prior.hash != hash {
 			return domain.Run{}, false, domain.ErrIdempotencyConflict
