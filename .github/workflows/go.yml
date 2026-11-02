@@ -1,4 +1,4 @@
-name: Go validation
+name: Go and PostgreSQL validation
 
 on:
   push:
@@ -12,24 +12,24 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     env:
-      PGTEST_DSN: postgres://agentcp:agentcp-ci-password@127.0.0.1:5432/agentcp?sslmode=disable
+      PGTEST_DSN: postgres://postgres:agent-ci@127.0.0.1:5432/postgres?sslmode=disable
     services:
       postgres:
-        image: postgres:17
+        image: postgres:16-alpine
         env:
-          POSTGRES_USER: agentcp
-          POSTGRES_PASSWORD: agentcp-ci-password
-          POSTGRES_DB: agentcp
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: agent-ci
+          POSTGRES_DB: postgres
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U agentcp -d agentcp"
+          --health-cmd "pg_isready -U postgres -d postgres"
           --health-interval 10s
           --health-timeout 5s
-          --health-retries 10
+          --health-retries 5
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6, immutable commit
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6, immutable commit
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6 pinned
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6 pinned
         with:
           go-version: '1.27.3'
           cache: false
@@ -40,11 +40,19 @@ jobs:
             echo "$files"
             exit 1
           fi
-      - name: Verify module graph
+      - name: Verify module graph and checksums
         run: |
           go mod verify
           go mod tidy
           git diff --exit-code -- go.mod go.sum
+      - name: Apply PostgreSQL schema
+        env:
+          PGPASSWORD: agent-ci
+        run: psql --host=127.0.0.1 --username=postgres --dbname=postgres --set=ON_ERROR_STOP=1 --file=migrations/0001_run_intents_outbox_inbox.sql
+      - name: Assert tenant-isolated aggregate claims and cursors
+        env:
+          PGPASSWORD: agent-ci
+        run: psql --host=127.0.0.1 --username=postgres --dbname=postgres --set=ON_ERROR_STOP=1 --file=migrations/tests/0001_tenant_isolation.sql
       - name: Static analysis
         run: go vet ./...
       - name: Race-enabled tests
