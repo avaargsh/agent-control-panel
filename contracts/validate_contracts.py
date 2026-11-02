@@ -1,0 +1,77 @@
+#!/usr/bin/env python3
+"""Validate canonical Decision schemas and cross-language ActionHash vectors."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from pathlib import Path
+
+from jsonschema import Draft202012Validator, FormatChecker
+
+ROOT = Path(__file__).resolve().parent
+DECISION = ROOT / "agent-decision" / "v0.1"
+ACTION_HASH = ROOT / "engageguard" / "action-hash" / "v0.1"
+
+
+def load_json(path: Path):
+    with path.open("r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def expect_valid(validator, payload, label: str) -> None:
+    errors = sorted(validator.iter_errors(payload), key=lambda error: list(error.path))
+    if errors:
+        details = "; ".join(error.message for error in errors)
+        raise SystemExit(f"{label}: expected valid payload: {details}")
+
+
+def expect_invalid(validator, payload, label: str) -> None:
+    if validator.is_valid(payload):
+        raise SystemExit(f"{label}: invalid payload was accepted")
+
+
+def main() -> None:
+    request_schema = load_json(DECISION / "decision-turn.schema.json")
+    result_schema = load_json(DECISION / "decision-result.schema.json")
+    Draft202012Validator.check_schema(request_schema)
+    Draft202012Validator.check_schema(result_schema)
+
+    request_validator = Draft202012Validator(request_schema, format_checker=FormatChecker())
+    result_validator = Draft202012Validator(result_schema, format_checker=FormatChecker())
+
+    request = load_json(DECISION / "examples" / "decision-turn.valid.json")
+    final_response = load_json(DECISION / "examples" / "final-response.valid.json")
+    proposals = load_json(DECISION / "examples" / "action-proposals.valid.json")
+
+    expect_valid(request_validator, request, "DecisionTurn")
+    expect_valid(result_validator, final_response, "FinalResponse")
+    expect_valid(result_validator, proposals, "ActionProposals")
+
+    invalid_kind = dict(final_response, kind="needs_input")
+    expect_invalid(result_validator, invalid_kind, "unknown response discriminator")
+    missing_evidence = dict(final_response)
+    missing_evidence.pop("evidence_refs")
+    expect_invalid(result_validator, missing_evidence, "missing evidence_refs")
+    extra_field = dict(request, provider_token="must-not-be-accepted")
+    expect_invalid(request_validator, extra_field, "unexpected request field")
+
+    vectors = load_json(ACTION_HASH / "workspace-write-vectors.json")
+    domain = vectors["domain_separator"].encode("utf-8")
+    for vector in vectors["vectors"]:
+        # The fixed v0.1 ActionHash object has ASCII keys and string values.
+        # Sorted compact UTF-8 JSON therefore matches its RFC 8785 JCS bytes.
+        canonical = json.dumps(
+            vector["action"], sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        )
+        if canonical != vector["canonical_json"]:
+            raise SystemExit(f"{vector['name']}: canonical JSON mismatch")
+        digest = hashlib.sha256(domain + canonical.encode("utf-8")).hexdigest()
+        if digest != vector["action_hash"]:
+            raise SystemExit(f"{vector['name']}: ActionHash mismatch")
+
+    print("Decision JSON Schemas and ActionHash v0.1 vectors: PASS")
+
+
+if __name__ == "__main__":
+    main()
