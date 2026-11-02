@@ -53,6 +53,9 @@ func testRepository(t *testing.T) (*Repository, *pgxpool.Pool) {
 		_ = admin.Close(context.Background())
 		t.Fatalf("apply PostgreSQL migration: %v", err)
 	}
+	if err := Migrate(ctx, pool); err != nil {
+		t.Fatalf("reapplying initial migration should be safe: %v", err)
+	}
 	t.Cleanup(func() {
 		pool.Close()
 		_, _ = admin.Exec(context.Background(), "DROP SCHEMA "+schema+" CASCADE")
@@ -211,5 +214,40 @@ func TestConcurrentIdempotencyClaimsCreateOneRecordAndEvent(t *testing.T) {
 	}
 	if got := countOutbox(t, pool, intent.ID); got != 1 {
 		t.Fatalf("concurrent idempotency claim created %d Outbox events, want 1", got)
+	}
+}
+
+func TestCompareAndSwapRequiresNewFenceForNewLease(t *testing.T) {
+	repository, _ := testRepository(t)
+	ctx := context.Background()
+	intent := testIntent(5)
+	created, inserted, err := repository.Create(ctx, intent, testEvent(intent, 1, 501, eventCreated))
+	if err != nil || !inserted {
+		t.Fatalf("create: inserted=%v err=%v", inserted, err)
+	}
+	now := time.Now().UTC()
+	dispatching, err := created.ClaimDispatch(created.Version, "dispatcher-1", now, time.Second)
+	if err != nil {
+		t.Fatalf("claim dispatch: %v", err)
+	}
+	unknown, err := dispatching.ExpireLease(dispatching.Version, now.Add(2*time.Second))
+	if err != nil {
+		t.Fatalf("expire dispatch lease: %v", err)
+	}
+	unknown, err = repository.CompareAndSwap(ctx, intent.TenantID, intent.ID, dispatching.Version, unknown,
+		testEvent(unknown, unknown.Version, 502, "agent.run-intent.unknown"))
+	if err != nil {
+		t.Fatalf("persist expired dispatch lease: %v", err)
+	}
+	reconciling, err := unknown.BeginReconciliation(unknown.Version, "reconciler-1", now.Add(3*time.Second), time.Minute)
+	if err != nil {
+		t.Fatalf("begin reconciliation: %v", err)
+	}
+	// A well-formed but stale lease token must not be persisted for a newly
+	// acquired lease, even when the status and version are otherwise valid.
+	reconciling.FenceToken = unknown.FenceToken
+	if _, err := repository.CompareAndSwap(ctx, intent.TenantID, intent.ID, unknown.Version, reconciling,
+		testEvent(reconciling, reconciling.Version, 503, "agent.run-intent.reconciling")); !errors.Is(err, ErrFenceRegression) {
+		t.Fatalf("new lease with reused fence token returned %v, want ErrFenceRegression", err)
 	}
 }
