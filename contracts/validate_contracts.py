@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 
 from jsonschema import Draft202012Validator, FormatChecker
+import rfc8785
 
 ROOT = Path(__file__).resolve().parent
 DECISION = ROOT / "agent-decision" / "v0.1"
@@ -65,8 +66,6 @@ def main() -> None:
     for vector in vectors["vectors"]:
         # Use an RFC 8785 implementation rather than approximating JCS with
         # json.dumps (notably, string escaping must match ECMAScript exactly).
-        import rfc8785
-
         canonical_bytes = rfc8785.dumps(vector["action"])
         # The explanatory canonical_json fixture must describe the same
         # action; the hash is always computed from independently generated JCS.
