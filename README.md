@@ -16,11 +16,11 @@ It does **not** own executed Run/Task/Attempt/Checkpoint lifecycle, Temporal his
 |---|---|
 | Tenant / Project, Agent / Bundle / Release | Agent Control Plane |
 | SessionIdentity, RunIntent | Agent Control Plane |
-| Run / Task / Attempt / execution lifecycle | Agent Runtime |
-| Durable workflow history / replay | Temporal |
-| DecisionRecord / framework invocation | agent-decision |
-| Action / ActionHash / Approval / Permit / OperationJournal | EngageGuard |
-| ComputeProvider / Pool / Workload / Allocation / provider operations | compute-control-panel |
+| Run / Task / RunAttempt / execution lifecycle | Agent Runtime |
+| Durable workflow history / native Activity attempts | Temporal |
+| DecisionRecord / invocation ledger and result | agent-decision |
+| Action / ActionHash / Approval / Permit / Action Operation | EngageGuard |
+| ComputeProvider / Pool / Workload / Allocation / Compute Operation | compute-control-panel |
 | Kueue admission / queue state | Kueue |
 | Pod placement and actual Pod / Job state | Kubernetes and provider |
 | Actual sandbox isolation and lifecycle | selected Sandbox Provider |
@@ -46,25 +46,25 @@ Compute is requested through Compute Control Plane; a Decision plugin never crea
 5. Desired state and observed state are distinct; stale aggregate versions are not applied.
 6. Ambiguous remote outcomes remain UNKNOWN and are reconciled before retry.
 7. Temporal owns durable orchestration; Agent Framework owns only a bounded reasoning turn.
-8. EngageGuard is the only protected-action authorization and operation-journal authority.
+8. EngageGuard owns protected-action authorization and Action Operation Journal; Compute owns provider operation journal.
 9. Secrets never enter AgentBundle, plugin payloads, logs, traces or evidence.
 
-## Deployment shape
-
-Start with one Go API process and one Go reconciler/dispatcher process from shared domain packages. They share this service's PostgreSQL authority, not a second database. Split only for independent scaling or security isolation. Runtime, Decision, EngageGuard, Compute and Sandbox providers remain separate services.
-
-## Non-goals
-
-No proprietary Agent framework, workflow engine, sandbox runtime, MCP/A2A gateway, IAM, policy language, GPU scheduler, shared writable database, or UI business logic in this service.
-
-## Architecture documents
+## Normative architecture documents
 
 - [Platform baseline](docs/architecture/PLATFORM-BASELINE.md)
 - [Domain ownership](docs/architecture/DOMAIN-OWNERSHIP.md)
 - [Cross-service contracts](docs/architecture/CROSS-SERVICE-CONTRACTS.md)
+- [Identifier lifecycle](docs/architecture/IDENTIFIER-LIFECYCLE.md)
 - [ADR-001: Domain authority](docs/architecture/ADR-001-domain-authority.md)
 - [ADR-002: Temporal and Agent Framework boundary](docs/architecture/ADR-002-temporal-agent-framework.md)
 - [ADR-003: Identity, idempotency and retry ownership](docs/architecture/ADR-003-IDENTITY-AND-RETRY-OWNERSHIP.md)
 - [ADR-004: Compute and Sandbox boundary](docs/architecture/ADR-004-COMPUTE-AND-SANDBOX-BOUNDARY.md)
 - [P0 Golden Path](docs/roadmap/P0-GOLDEN-PATH.md)
 - [Implementation roadmap](docs/roadmap/IMPLEMENTATION-ROADMAP.md)
+- [Decision Turn request schema](contracts/agent-decision/v0.1/decision-turn.schema.json)
+- [Decision result schema](contracts/agent-decision/v0.1/decision-result.schema.json)
+- [ActionHash v0.1 cross-language vectors](contracts/engageguard/action-hash/v0.1/workspace-write-vectors.json)
+
+## Status
+
+This is a greenfield implementation. Architecture documents are proposals until independently reviewed. A smoke test or green unit-test workflow alone does not establish production readiness.
