@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/avaargsh/agent-control-panel/blob/main/contracts/agent-decision/v0.1/decision-turn.schema.json",
+  "title": "Agent Decision Turn Request v0.1",
+  "description": "Canonical language-neutral request from Agent Runtime to a managed Agent Decision plugin.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol_version",
+    "invocation_id",
+    "tenant_id",
+    "agent_id",
+    "bundle_digest",
+    "release_id",
+    "session_id",
+    "run_id",
+    "turn_id",
+    "user_input",
+    "context_projection",
+    "allowed_capabilities",
+    "deadline",
+    "trace_context"
+  ],
+  "properties": {
+    "protocol_version": { "const": "v0.1" },
+    "invocation_id": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "tenant_id": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "agent_id": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "bundle_digest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "release_id": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "session_id": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "run_id": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "turn_id": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "user_input": { "type": "string", "minLength": 1, "maxLength": 32768 },
+    "user_input_ref": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "description": "Optional opaque provenance reference; the plugin must not dereference it."
+    },
+    "context_projection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["projection_id", "digest", "items"],
+      "properties": {
+        "projection_id": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "digest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "items": {
+          "type": "array",
+          "maxItems": 128,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["content", "source_refs"],
+            "properties": {
+              "content": { "type": "string", "minLength": 1, "maxLength": 32768 },
+              "source_refs": {
+                "type": "array",
+                "maxItems": 32,
+                "items": { "type": "string", "minLength": 1, "maxLength": 512 },
+                "uniqueItems": true
+              },
+              "label": { "type": "string", "maxLength": 256 },
+              "media_type": { "type": "string", "maxLength": 128 }
+            }
+          }
+        }
+      }
+    },
+    "context_projection_ref": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "description": "Optional opaque provenance reference; the plugin must not dereference it."
+    },
+    "allowed_capabilities": {
+      "type": "array",
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["capability_id", "capability_version"],
+        "properties": {
+          "capability_id": { "type": "string", "minLength": 1, "maxLength": 256 },
+          "capability_version": { "type": "string", "minLength": 1, "maxLength": 128 }
+        }
+      }
+    },
+    "deadline": { "type": "string", "format": "date-time" },
+    "trace_context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["traceparent"],
+      "properties": {
+        "traceparent": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{2}-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$"
+        },
+        "tracestate": { "type": "string", "maxLength": 512 }
+      }
+    }
+  }
+}
