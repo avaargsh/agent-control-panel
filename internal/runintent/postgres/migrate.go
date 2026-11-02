@@ -14,9 +14,9 @@ import (
 )
 
 const (
-	migrationLockID       int64 = 0x41435052554e
+	migrationLockID         int64 = 0x41435052554e
 	initialMigrationVersion int64 = 1
-	initialMigrationName        = "0001_run_intents_outbox_inbox.sql"
+	initialMigrationName          = "0001_run_intents_outbox_inbox.sql"
 )
 
 var (
@@ -91,9 +91,7 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 		rows.Close()
 		return fmt.Errorf("iterate schema migration history: %w", err)
 	}
-	if err := rows.Close(); err != nil {
-		return fmt.Errorf("close schema migration history: %w", err)
-	}
+	rows.Close()
 
 	if appliedVersion {
 		if err := verifyRunIntentSchema(ctx, tx); err != nil {
