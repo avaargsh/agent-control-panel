@@ -1,97 +1,57 @@
 # Implementation Roadmap
 
-## Phase 0 — Contract freeze (blocking gate)
+## Phase 0 — Freeze architecture contracts
 
-- [ ] Freeze domain ownership and canonical identifier lifecycle.
-- [ ] Adopt the canonical Decision Turn and Result JSON Schemas; generate/validate Go, Python and TypeScript fixtures from the same files.
-- [ ] Freeze RunIntent → Run → Workflow ID mapping and Attempt namespaces.
-- [ ] Freeze ActionProposal → action_operation_id → ActionHash → Approval/Permit → Receipt chain.
-- [ ] Freeze Compute Workload / Allocation / compute_operation_id relationship.
-- [ ] Freeze event envelope, aggregate-version gap recovery, inbox states and error/idempotency semantics.
-- [ ] Mark conflicting legacy architecture/P0 documents superseded.
-- [ ] Record any deferred decision explicitly; no consumer may invent a private variant.
+- [ ] Freeze domain ownership and canonical identifier ownership.
+- [ ] Freeze RunIntent → Runtime StartRun / InspectRunIntent handshake.
+- [ ] Freeze Workload v1 API, provider operation journal and observation contract.
+- [ ] Freeze event envelope, aggregate version/gap handling and idempotency digest rules.
+- [ ] Freeze Temporal / Agent Framework / EngageGuard retry ownership.
+- [ ] Freeze Compute / Kueue / Kubernetes / SandboxProvider boundaries.
+- [ ] Remove or mark superseded architecture documents.
 
-**Exit gate:** all five repositories reference the same contract version and pass schema/identifier conformance tests. No implementation may claim full v0.1 conformance while using a private subset.
+## Phase 1 — Go foundations
 
-## Phase 1 — Independent Go service foundations (parallel)
+- [ ] Config validation, API/reconciler process modes, health/readiness and graceful shutdown.
+- [ ] PostgreSQL migrations, transaction boundaries and per-service database ownership.
+- [ ] Idempotency records and canonical request digest.
+- [ ] Transactional Outbox and Inbox with aggregate-version enforcement.
+- [ ] OpenAPI as source of truth; compatibility tests and stable error envelope.
+- [ ] CI: gofmt check (no mutation), go vet, tests, race, dependency/security scanning.
 
-### agent-control-panel
+## Phase 2 — Agent RunIntent vertical slice
 
-- [ ] Go service bootstrap, configuration validation, health/readiness, telemetry and graceful shutdown.
-- [ ] Tenant/project authorization boundary and Agent/Bundle/Release/Session identity models.
-- [ ] PostgreSQL migrations, atomic idempotency claim, optimistic versions and transactional outbox.
-- [ ] RunIntent API and reconciler dispatch contract; no Run/Task/Attempt state machine.
-- [ ] Persist Runtime-assigned `run_id` / `workflow_id` as references after Runtime acceptance.
+- [ ] AgentBundle, AgentRelease, Session and RunIntent API.
+- [ ] Runtime StartRun idempotency keyed by RunIntent ID + digest.
+- [ ] Runtime creates canonical Run ID and deterministic Workflow ID.
+- [ ] Lease/fencing protected dispatcher and UNKNOWN → RECONCILING.
+- [ ] Runtime final-not-found / found / conflict outcomes.
+- [ ] Restart, lost-ACK, duplicate-start, event-gap and tenant-isolation tests.
 
-### agent-runtime
+## Phase 3 — Compute Workload vertical slice
 
-- [ ] Go service bootstrap and PostgreSQL Run metadata/idempotency schema.
-- [ ] Unique mapping from `run_intent_id` to one Runtime-owned `run_id`.
-- [ ] Stable Workflow ID mapping: `agent-run/v1/{run_id}`.
-- [ ] Transactional Run start intent and outbox; duplicate StartRun returns the same Run.
-- [ ] Deterministic Temporal Workflow and Activity boundaries.
+- [ ] Provider / Pool / Profile / Workload / Allocation / Observation schemas.
+- [ ] Durable ComputeOperation journal, stable operation ID and request digest.
+- [ ] Lease owner, expiry and fencing token.
+- [ ] UNKNOWN → RECONCILING → succeeded / retry-same-operation / failed / manual-review.
+- [ ] FakeProvider create/inspect/delete contract tests.
+- [ ] Delete finality by exact provider resource ID/UID.
+- [ ] Stale-generation compensation and restart/fault-injection tests.
 
-### agent-decision
+## Phase 4 — External adapters
 
-- [ ] Python reference plugin validates the canonical v0.1 schemas.
-- [ ] Strict request/response validation and bounded HTTP server.
-- [ ] Durable invocation idempotency: same ID/digest replays exact result; changed digest conflicts.
-- [ ] Mock/deterministic adapter first; framework adapter is a later replaceable implementation.
-- [ ] Shared Go/Python/TypeScript conformance vectors.
-
-### EngageGuard
-
-- [ ] Canonical ActionEnvelope and RFC 8785 JCS ActionHash test vectors.
-- [ ] Authenticated PEP and trusted ToolBinding resolution.
-- [ ] Authorization and action-bound Approval.
-- [ ] One-time audience/operation-bound Permit claim.
-- [ ] Trusted Workspace Executor and root/symlink/TOCTOU confinement.
-- [ ] Action Operation Journal, Receipt and UNKNOWN reconciliation.
-
-### compute-control-panel
-
-- [ ] Go service bootstrap and PostgreSQL schema/migrations.
-- [ ] Workload/Allocation API and stable `compute_operation_id`.
-- [ ] Durable operation leases, generation/version fencing and outbox/inbox.
-- [ ] FakeProvider create/inspect/delete contract suite.
-- [ ] Kubernetes Job + Kueue adapter POC; no custom scheduler.
-
-## Phase 2 — Durable Run vertical slice
-
-- [ ] AgentBundle → AgentRelease → Session → RunIntent.
-- [ ] Runtime accepts RunIntent, atomically creates one Run and stable Workflow ID.
-- [ ] Temporal starts/inspects the same Workflow ID under duplicate requests.
-- [ ] Runtime invokes one bounded Decision Turn using canonical schemas and stable invocation_id.
-- [ ] FinalResponse and NeedsInput map to explicit Runtime outcomes.
-- [ ] Restart, duplicate delivery, lost start ACK, replay and cancellation tests.
-
-## Phase 3 — Secure action vertical slice
-
-- [ ] Decision returns ActionProposal; Runtime persists it and assigns one stable action_operation_id.
-- [ ] EngageGuard canonicalizes and hashes the trusted action.
-- [ ] Approval and Permit bind exact action_hash, operation ID, target, audience and expiry.
-- [ ] Trusted enforcement point claims Permit once and executes.
-- [ ] Receipt binds action hash and executor_attempt_id.
-- [ ] Lost ACK becomes UNKNOWN; Runtime queries the same operation and does not blindly replay.
-- [ ] Adversarial tests: changed arguments, target, binding, policy, path traversal, symlink race and concurrent claim.
-
-## Phase 4 — Compute vertical slice
-
-- [ ] Agent-originated compute request passes EngageGuard authorization.
-- [ ] Compute API creates a distinct Workload and compute_operation_id.
-- [ ] FakeProvider proves create/inspect/delete and UNKNOWN recovery.
-- [ ] Kubernetes Job adapter and Kueue admission integration.
-- [ ] Delete finality requires provider-observed absence for the exact generation.
-- [ ] Crash, stale generation, quota exhaustion and real-cluster POC evidence.
+- [ ] Temporal Workflow/Activity adapter in Runtime (not this Control Plane).
+- [ ] Kubernetes Job adapter and Kueue admission integration in Compute.
+- [ ] Capability-gated device plugins/DRA/provider adapters.
+- [ ] SandboxProvider adapter with no duplicate compute resource ownership.
 
 ## Phase 5 — Platform expansion
 
-- [ ] Managed Python and TypeScript plugin workers.
-- [ ] Framework adapter (LangGraph first; a second adapter proves protocol neutrality).
-- [ ] Sandbox provider POC and secure workspace executor.
+- [ ] Managed Python and TypeScript Decision plugin workers.
+- [ ] Framework adapter (LangGraph first; second adapter proves neutrality).
+- [ ] EngageGuard trusted executor and action-bound credential integration.
 - [ ] Console, gateway, observability, quotas and federation.
-- [ ] DRA/HAMi/MetaX and multi-cluster integration only behind capability gates.
 
 ## Quality gates
 
-No phase passes on a happy-path demo alone. Each phase requires build, tests, API/schema compatibility, security checks and failure-mode evidence. Do not claim exactly-once external effects; use stable identifiers, atomic idempotency, durable journals and reconciliation.
+No phase passes on a happy-path demo alone. Every phase requires build, unit/integration tests, contract tests and failure-mode evidence. Exactly-once external effects are never claimed; use idempotency plus reconciliation.
