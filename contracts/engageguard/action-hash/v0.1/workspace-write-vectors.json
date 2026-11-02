@@ -36,12 +36,12 @@
         "tool_binding_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "policy_version": "policy-v1",
         "audience": "workspace-executor",
-        "workspace_id": "ws<>&/\\\"line\\\\break\\n\u2028tail",
+        "workspace_id": "工作区-東京-<>&/\"quoted\"",
         "relative_path": "docs/report.txt",
         "content_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
       },
-      "canonical_json": "{\"agent_id\":\"agent-1\",\"audience\":\"workspace-executor\",\"capability_id\":\"workspace.write\",\"content_digest\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"operation_id\":\"op-1\",\"policy_version\":\"policy-v1\",\"relative_path\":\"docs/report.txt\",\"schema_version\":\"v0.1\",\"subject_id\":\"user-1\",\"tenant_id\":\"tenant-1\",\"tool_binding_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"ws<>&/\\\"line\\\\break\\n\u2028tail\"}",
-      "action_hash": "411e40272cb19ddc868174ec995f3cda73d41c18451c903d6a75854e02c473a9"
+      "canonical_json": "{\"agent_id\":\"agent-1\",\"audience\":\"workspace-executor\",\"capability_id\":\"workspace.write\",\"content_digest\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"operation_id\":\"op-1\",\"policy_version\":\"policy-v1\",\"relative_path\":\"docs/report.txt\",\"schema_version\":\"v0.1\",\"subject_id\":\"user-1\",\"tenant_id\":\"tenant-1\",\"tool_binding_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"工作区-東京-<>&/\\\"quoted\\\"\"}",
+      "action_hash": "9046c4fdc953d9c03df850fda15b83d42396d566f4fc48bd1497674dca955f80"
     }
   ]
 }
