@@ -11,6 +11,22 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    env:
+      PGTEST_DSN: postgres://agentcp:agentcp-ci-password@127.0.0.1:5432/agentcp?sslmode=disable
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: agentcp
+          POSTGRES_PASSWORD: agentcp-ci-password
+          POSTGRES_DB: agentcp
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U agentcp -d agentcp"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6, immutable commit
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6, immutable commit
