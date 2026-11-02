@@ -109,6 +109,23 @@ type Intent struct {
     ManualReviewCode string
 }
 
+func validOpaqueID(value string) bool {
+    return value != "" && value == strings.TrimSpace(value) &&
+        len(value) <= 256 && !strings.ContainsAny(value, " \\t\\r\\n\\x00")
+}
+
+func validReasonCode(value string) bool {
+    if value == "" || len(value) > 128 || value != strings.TrimSpace(value) {
+        return false
+    }
+    for _, r := range value {
+        if !(r >= 'A' && r <= 'Z') && !(r >= '0' && r <= '9') && r != '_' && r != '-' {
+            return false
+        }
+    }
+    return true
+}
+
 func validDigest(value string) bool {
     if !strings.HasPrefix(value, "sha256:") || len(value) != len("sha256:")+64 {
         return false
@@ -122,14 +139,14 @@ func validDigest(value string) bool {
 }
 
 func (i Intent) Validate() error {
-    if strings.TrimSpace(i.ID) == "" ||
-        strings.TrimSpace(i.TenantID) == "" ||
-        strings.TrimSpace(i.PrincipalID) == "" ||
-        strings.TrimSpace(i.ProjectID) == "" ||
-        strings.TrimSpace(i.AgentID) == "" ||
-        strings.TrimSpace(i.ReleaseID) == "" ||
-        strings.TrimSpace(i.SessionID) == "" ||
-        strings.TrimSpace(i.IdempotencyKey) == "" ||
+    if !validOpaqueID(i.ID) ||
+        !validOpaqueID(i.TenantID) ||
+        !validOpaqueID(i.PrincipalID) ||
+        !validOpaqueID(i.ProjectID) ||
+        !validOpaqueID(i.AgentID) ||
+        !validOpaqueID(i.ReleaseID) ||
+        !validOpaqueID(i.SessionID) ||
+        !validOpaqueID(i.IdempotencyKey) ||
         !validDigest(i.RequestDigest) || i.Version == 0 {
         return ErrInvalid
     }
@@ -149,15 +166,15 @@ func (i Intent) Validate() error {
             return ErrInvalid
         }
     case Accepted:
-        if i.RunID == "" || i.WorkflowID == "" || i.RejectionCode != "" || i.ManualReviewCode != "" {
+        if !validRuntimeIdentity(i.RunID, i.WorkflowID) || i.RejectionCode != "" || i.ManualReviewCode != "" {
             return ErrInvalid
         }
     case Rejected:
-        if i.RejectionCode == "" || i.RunID != "" || i.WorkflowID != "" || i.ManualReviewCode != "" {
+        if !validReasonCode(i.RejectionCode) || i.RunID != "" || i.WorkflowID != "" || i.ManualReviewCode != "" {
             return ErrInvalid
         }
     case ManualReview:
-        if i.ManualReviewCode == "" || i.RunID != "" || i.WorkflowID != "" || i.RejectionCode != "" {
+        if !validReasonCode(i.ManualReviewCode) || i.RunID != "" || i.WorkflowID != "" || i.RejectionCode != "" {
             return ErrInvalid
         }
     default:
@@ -236,7 +253,7 @@ func (i Intent) RecordDispatchOutcome(expectedVersion uint64, owner string, toke
         i.RunID = outcome.RunID
         i.WorkflowID = outcome.WorkflowID
     case DispatchRejected:
-        if outcome.RejectionCode == "" || outcome.RunID != "" || outcome.WorkflowID != "" {
+        if !validReasonCode(outcome.RejectionCode) || outcome.RunID != "" || outcome.WorkflowID != "" {
             return i.manualReview("INVALID_RUNTIME_REJECTION"), nil
         }
         i.Status = Rejected
@@ -312,14 +329,14 @@ func (i Intent) ApplyReconciliationResult(expectedVersion uint64, owner string, 
         }
         i.Status = Unknown
     case RuntimeRejected:
-        if result.RejectionCode == "" || result.RunID != "" || result.WorkflowID != "" {
+        if !validReasonCode(result.RejectionCode) || result.RunID != "" || result.WorkflowID != "" {
             return i.manualReview("INVALID_RUNTIME_REJECTION"), nil
         }
         i.Status = Rejected
         i.RejectionCode = result.RejectionCode
     case RuntimeConflict:
         code := result.ReasonCode
-        if code == "" { code = "RUNTIME_STATE_CONFLICT" }
+        if !validReasonCode(code) { code = "RUNTIME_STATE_CONFLICT" }
         return i.manualReview(code), nil
     default:
         return i, ErrInvalidOutcome
