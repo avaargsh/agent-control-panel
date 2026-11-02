@@ -59,7 +59,7 @@ def main() -> None:
     vectors = load_json(ACTION_HASH / "workspace-write-vectors.json")
     if vectors.get("canonicalization") != "RFC 8785 JCS" or vectors.get("algorithm") != "SHA-256":
         raise SystemExit("ActionHash vector metadata mismatch")
-    if vectors.get("domain_separator") != "engageguard/action-hash/v1\\x00":
+    if vectors.get("domain_separator") != "engageguard/action-hash/v1\x00":
         raise SystemExit("ActionHash domain separator mismatch")
     domain = vectors["domain_separator"].encode("utf-8")
     for vector in vectors["vectors"]:
