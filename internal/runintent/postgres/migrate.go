@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -11,6 +12,11 @@ import (
 )
 
 const migrationLockID int64 = 0x41435052554e
+
+var (
+	ErrSchemaDrift = errors.New("RunIntent schema migration checksum or relation drift")
+	ErrUnversionedSchema = errors.New("RunIntent schema exists without migration history")
+)
 
 // Migrate applies the embedded initial schema once per database. A PostgreSQL
 // advisory lock serializes concurrent service starts; the migration itself is
