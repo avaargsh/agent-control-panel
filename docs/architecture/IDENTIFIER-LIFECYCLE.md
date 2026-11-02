@@ -1,73 +1,84 @@
-# Cross-Service Identifier Lifecycle — v0.1
+# Cross-Service Identifier Lifecycle — v0.2
 
-Status: Proposed contract; freeze together with Cross-Service Contracts v0.1.
+Status: Proposed implementation contract. Read with [ADR-003](ADR-003-IDENTITY-AND-RETRY-OWNERSHIP.md) and [Cross-Service Contracts](CROSS-SERVICE-CONTRACTS.md).
 
 ## Canonical identifiers and owners
 
 | Identifier | Created by | Authoritative owner | Stability |
 |---|---|---|---|
-| `run_intent_id` | agent-control-panel | agent-control-panel | Stable for one accepted client intent |
-| `run_id` | agent-runtime | agent-runtime | Created once per accepted `run_intent_id`; stable across retries/recovery |
-| `workflow_id` | agent-runtime | agent-runtime defines mapping; Temporal owns history | Deterministic from `run_id`; never regenerated per attempt |
-| `run_attempt_id` | agent-runtime | agent-runtime | One durable Runtime execution attempt; not a Temporal Activity retry |
-| `invocation_id` | agent-runtime | agent-decision owns DecisionRecord | Stable across retries of one logical Decision Turn |
+| `tenant_id`, `project_id` | Agent Control Plane | Agent Control Plane | Stable scope identities |
+| `agent_id`, `bundle_digest`, `release_id` | Agent Control Plane | Agent Control Plane | Release binds an immutable bundle digest |
+| `session_id` | Agent Control Plane | Agent Control Plane | Stable across multiple Runs |
+| `run_intent_id` | Agent Control Plane | Agent Control Plane | Stable idempotent request to start one logical Run |
+| `run_id` | Agent Runtime | Agent Runtime | Created once per accepted RunIntent; stable across retries/recovery |
+| `workflow_id` | Agent Runtime | Agent Runtime defines mapping; Temporal owns history | Deterministic from `run_id`; never regenerated per attempt |
+| `run_attempt_id` | Agent Runtime | Agent Runtime | One durable Runtime attempt; not a Temporal Activity retry |
+| `invocation_id` | Agent Runtime | agent-decision owns invocation ledger/result | Stable across retries of one logical Decision Turn |
 | `proposal_id` | agent-decision | agent-decision | Stable in the persisted/replayed invocation result |
-| `action_operation_id` | agent-runtime | EngageGuard owns the Action Operation record | Created once when Runtime accepts a proposal; reused on every submission/retry |
-| `action_hash` | EngageGuard | EngageGuard | Computed after trusted canonicalization; never accepted from the plugin |
-| `executor_attempt_id` | EngageGuard / trusted executor | EngageGuard receipt | One concrete executor attempt; not a Run or Temporal attempt |
-| `compute_operation_id` | compute-control-panel | compute-control-panel | Stable for one provider mutation intent |
-| `allocation_id` | compute-control-panel | compute-control-panel | Stable logical Allocation identity |
-| `provider_resource_id` | Provider | Provider; stored as a reference by Compute | Provider-native and non-canonical |
+| `action_operation_id` (wire: `operation_id`) | Agent Runtime | EngageGuard owns Action Operation | Created once when Runtime accepts a proposal; reused on every submission/retry |
+| `action_hash`, `permit_id` | EngageGuard | EngageGuard | Hash after trusted canonicalization; Permit bound to exact action/operation/audience |
+| `executor_attempt_id` | Trusted executor / EngageGuard | EngageGuard Receipt | One concrete executor attempt; not a Run or Temporal attempt |
+| `workload_id`, `allocation_id` | Compute Control Plane | Compute Control Plane | Stable logical compute resources |
+| `compute_operation_id` | Compute Control Plane | Compute Control Plane | Stable for one provider mutation intent |
+| `provider_resource_id` / UID | Provider / Kubernetes | Provider / Kubernetes | Native reference, never canonical platform identity |
+| `event_id` | Event producer | Event producer | Immutable event envelope identity |
+| `correlation_id` | Request origin / gateway | Request origin | End-to-end correlation, not authorization |
 | `evidence_digest` | Evidence producer | Producing service | Digest of that producer's immutable evidence payload |
 
 ## Run and Workflow identity
 
-1. The Control Plane creates and owns `run_intent_id` when it accepts an idempotent RunIntent.
-2. Runtime consumes the RunIntent and creates `run_id` in the same local transaction as its unique mapping from `run_intent_id` to `run_id`.
-3. A duplicate delivery or StartRun request for the same `run_intent_id` returns the existing `run_id`; it must not create a second logical Run.
-4. Runtime derives the sole Temporal Workflow ID using:
+1. Control Plane creates `run_intent_id` and stores tenant/principal-scoped idempotency key plus canonical request digest.
+2. Runtime consumes the RunIntent and creates `run_id` in the same local transaction as its unique mapping from `run_intent_id` + request digest.
+3. Duplicate delivery or StartRun with the same intent/digest returns the existing `run_id`; a different digest for the same intent conflicts.
+4. Runtime derives the only Temporal Workflow ID using:
 
    ```text
    workflow_id = "agent-run/v1/" + run_id
    ```
 
-5. Control Plane stores the returned `run_id` and `workflow_id` as references/projection fields. It does not independently generate either value.
-6. Runtime must use Temporal's explicit Workflow ID conflict/reuse policy. A duplicate start must inspect/return the existing execution, never silently choose a new Workflow ID.
+5. Control Plane stores Runtime's matching `run_id` and `workflow_id` only after validating the receipt's `run_intent_id`, digest, tenant and identifiers.
+6. Runtime uses Temporal's explicit Workflow ID conflict/reuse policy. Duplicate start inspects/returns the existing execution; it never silently chooses a new Workflow ID.
 
-The `run_id` is globally unique (UUIDv7 or another collision-resistant opaque identifier). Tenant authorization is always derived from authenticated identity and persisted ownership, never from the identifier or caller-supplied tenant field.
+The Runtime-generated `run_id` must be globally unique (UUIDv7 or another collision-resistant opaque ID). Tenant authorization comes from verified identity and persisted ownership, never from the ID or caller-supplied tenant field.
 
 ## Attempt namespaces
 
-- `run_attempt_id`: Runtime-owned durable attempt record. It changes only when Runtime deliberately creates a new business execution attempt under the Run policy.
-- Temporal Workflow/Activity attempt counters: Temporal-native execution metadata. Do not serialize these as the platform `attempt_id`.
-- `executor_attempt_id`: identifies a concrete EngageGuard trusted-executor attempt and appears in the Receipt.
-- Provider mutation retries are represented by the same `compute_operation_id` plus provider observation/version; they do not create a new logical Allocation.
+- `run_attempt_id`: Runtime-owned durable execution attempt. It changes only when Runtime deliberately creates a new business attempt under Run policy.
+- Temporal Workflow/Activity attempt counters: Temporal-native metadata; do not serialize them as `run_attempt_id`.
+- `executor_attempt_id`: concrete EngageGuard trusted-executor attempt, included in Receipt.
+- Provider mutation retries retain the same `compute_operation_id` and generation; they do not create a new logical Allocation.
+
+## Decision invocation
+
+1. Runtime assigns `invocation_id` before the first Decision request and reuses it across Temporal Activity retries.
+2. Decision owns the invocation ledger, request digest and exact result.
+3. Same invocation ID + same digest replays the exact result; same ID + different digest conflicts.
+4. `proposal_id` is created by Decision and is stable in the persisted result. It is not an operation ID and conveys no authorization.
 
 ## Action operation and hash chain
 
-1. Decision returns an untrusted `ActionProposal` with a stable `proposal_id`; it does not choose an authorization result, Permit, `operation_id`, or `action_hash`.
-2. Runtime persists the accepted proposal and assigns one `action_operation_id` before the first EngageGuard submission.
-3. Runtime sends the same `action_operation_id` and semantically identical proposal on every retry.
-4. EngageGuard derives subject/tenant/workload identity from authenticated context, resolves trusted capability binding, validates and normalizes the action, then computes `action_hash`.
-5. Hash preimage uses RFC 8785 JSON Canonicalization Scheme (JCS), UTF-8, a versioned domain separator, and SHA-256. The digest is 64 lowercase hexadecimal characters. Go `json.Marshal` output alone is not the cross-language canonicalization contract.
-6. EngageGuard binds AuthorizationDecision, Approval, one-time Permit, Operation Journal and Receipt to the same `action_operation_id` and `action_hash`.
-7. Reuse of one `action_operation_id` with a different canonical action/hash is a conflict and must fail closed.
-8. Runtime records the verified Receipt; it never treats a plugin proposal or HTTP acknowledgement as proof of execution.
+1. Decision returns an untrusted ActionProposal. It does not choose an authorization result, Permit, operation ID or ActionHash.
+2. Runtime persists the accepted proposal and assigns one `action_operation_id` before first EngageGuard submission.
+3. Runtime reuses the same operation ID and semantically identical request on every retry.
+4. EngageGuard derives subject/tenant/workload from authenticated context, resolves trusted capability binding, validates and normalizes the action, then computes ActionHash.
+5. Hash preimage is UTF-8 bytes `engageguard/action-hash/v1\\0` followed by RFC 8785 JCS canonical JSON bytes. SHA-256 is encoded as 64 lowercase hexadecimal characters. Go `json.Marshal` alone is not the cross-language contract.
+6. Shared Go/Python/TypeScript golden vectors are stored at `contracts/engageguard/action-hash/v0.1/workspace-write-vectors.json`.
+7. EngageGuard binds AuthorizationDecision, Approval, one-time Permit, Action Operation Journal and Receipt to the same operation ID and hash.
+8. Reusing an Action operation ID with a different canonical action/hash is a conflict and fails closed. Runtime records only a verified Receipt.
 
 ## Compute operation namespace
 
-A protected Agent request to create compute capacity is authorized by EngageGuard at the action boundary. The Compute Control Plane then owns its own `compute_operation_id`, Workload, Allocation and provider reconciliation. The action operation and compute operation are linked by references/correlation, never by sharing one identifier or one state machine.
+An Agent-originated protected compute request is authorized by EngageGuard at the action boundary. Compute Control Plane creates a distinct `compute_operation_id` and owns Workload, Allocation, provider operation journal and provider reconciliation. Action and Compute operations are linked by references/correlation, never by sharing one ID or state machine.
 
-The Compute Control Plane is the enforcement point for its provider operations. EngageGuard authorizes an Agent-originated request; it does not become a second writer for Kubernetes/Kueue/provider state. Internal controller maintenance operations use Compute service identity and Compute's own authorization policy.
+Internal Compute controller operations use Compute workload identity and its domain authorization policy. Compute remains authoritative for Kubernetes/Kueue/provider observations.
 
-## Required database constraints
+## Required local database constraints
 
-At minimum, the owning service enforces:
-
+- Control Plane: unique tenant/principal/idempotency key; persist canonical request digest.
 - Runtime: UNIQUE(`run_intent_id`), UNIQUE(`run_id`), UNIQUE(`workflow_id`).
-- Decision: UNIQUE(`invocation_id`); persist request digest and exact result for replay.
-- EngageGuard: UNIQUE(`action_operation_id`); immutable canonical action digest once claimed.
-- Compute: UNIQUE(`compute_operation_id`); generation/version fencing for provider mutations.
-- Evidence: immutable content digest plus producer identity and schema version.
+- Decision: UNIQUE(`invocation_id`); persist request digest and exact result.
+- EngageGuard: UNIQUE(Action `operation_id`); immutable canonical ActionHash once claimed.
+- Compute: UNIQUE(`compute_operation_id`); generation/version fencing.
+- Evidence: immutable digest plus producer identity and schema version.
 
-These are local constraints in the owning service database; no cross-service database transaction is implied.
+These are local constraints in each owning service; no cross-service database transaction is implied.
