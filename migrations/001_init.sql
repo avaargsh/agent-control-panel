@@ -47,9 +47,12 @@ CREATE TABLE IF NOT EXISTS outbox_events (
     created_at        TIMESTAMPTZ NOT NULL,
     published_at      TIMESTAMPTZ,
     attempts          INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    lease_until       TIMESTAMPTZ,
+    lease_token       TEXT,
     last_error        TEXT,
     UNIQUE (aggregate_type, aggregate_id, aggregate_version)
 );
-CREATE INDEX IF NOT EXISTS outbox_unpublished_idx ON outbox_events (created_at) WHERE published_at IS NULL;
+CREATE INDEX IF NOT EXISTS outbox_unpublished_idx ON outbox_events (next_attempt_at, created_at) WHERE published_at IS NULL;
 
 COMMIT;
