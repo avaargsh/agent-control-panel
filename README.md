@@ -50,25 +50,37 @@ The Control Plane owns logical Agent/Session/Run identity and desired state. It 
 7. Keep secrets out of Agent manifests, prompts, sandbox metadata and logs.
 8. Keep UI, Runtime and Compute Control Plane separate deployable/repository boundaries.
 
-## Initial implementation sequence
+## Implementation status
 
-- **P0 — Contract and Golden Path:** resource/API contracts; AgentBundle → Release → Session → Run; persistence; Run state machine; workflow adapter contract; Sandbox Provider SPI; restart recovery and idempotent reconciliation.
-- **P0 — Identity and authorization:** identity separation; scoped authorization; credential binding/revocation; audit correlation.
-- **P0 — Evidence:** immutable references for release/run/provider operation and verification outcome.
-- **P1 — OpenKruise Agents adapter:** SandboxClaim/Set lifecycle, warm pool, pause/resume, network policy and credential injection references.
-- **P1 — Federation and multi-cluster:** explicit provider bindings and canonical IDs.
-- **P1 — UI:** operate the API contracts, with no duplicate business authority.
-- **P2 — GPU workloads:** integrate with Compute Control Plane and mature queue/scheduler providers.
+### Implemented: P0 Run Core
+
+- PostgreSQL-backed Session and Run persistence.
+- Tenant-scoped Run retrieval.
+- Run state machine with optimistic version checks.
+- Atomic idempotency-key claim and request-hash conflict detection.
+- Transactional outbox append for Run creation and state transitions.
+- HTTP API for Run create/get/transition with strict JSON decoding and uniform errors.
+- Loopback-only HTTP binding while authentication middleware is absent.
+
+### Not implemented yet
+
+Outbox publisher/consumer, workflow adapter, Sandbox Provider adapter, authentication/authorization, AgentBundle and AgentRelease APIs, federation, Context Projection, Evidence verification and operator UI.
+
+## Local development
+
+Requirements: Go 1.23+, PostgreSQL 14+ and `psql`. Run `go mod tidy` once after cloning to resolve the pinned PostgreSQL driver and produce `go.sum`.
+
+```bash
+export DATABASE_URL='postgres://postgres:postgres@127.0.0.1:5432/agent_control?sslmode=disable'
+make migrate
+make test
+LISTEN_ADDR=127.0.0.1:8080 make run
+```
+
+The binary intentionally refuses non-loopback listen addresses until authenticated tenant identity and authorization middleware are implemented. `X-Tenant-ID` is currently a local-development tenant context only, not an authentication mechanism.
+
+See [HTTP API v1](docs/api/HTTP-API.md), [Architecture Baseline](docs/architecture/BASELINE.md), [Runtime ADR](docs/architecture/decisions/0001-runtime-stack.md) and [P0 Golden Path](docs/roadmap/P0-GOLDEN-PATH.md).
 
 ## Non-goals
 
 This project does not implement a new Agent framework, model serving stack, durable workflow engine, sandbox runtime, MCP gateway, enterprise IAM, policy language or GPU scheduler. It does not treat a model response or workflow history as authorization evidence.
-
-## Development status
-
-This repository is the rewrite target. The architecture contract and P0 Golden Path should be established before broad feature porting. Legacy functionality is not presumed to be part of the new public contract; migrate only after mapping ownership, invariants and acceptance evidence.
-
-## Documentation
-
-- [Architecture baseline](docs/architecture/BASELINE.md)
-- [P0 Golden Path](docs/roadmap/P0-GOLDEN-PATH.md)
