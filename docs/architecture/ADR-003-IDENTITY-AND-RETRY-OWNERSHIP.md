@@ -1,6 +1,6 @@
 # ADR-003: Canonical Identity, Idempotency and Retry Ownership
 
-Status: Proposed v0.2
+Status: Proposed v0.2; cross-service wire details remain blocked pending owner ratification (G02/G03).
 
 ## Context
 
@@ -15,7 +15,7 @@ The first implementation draft conflated RunIntent with Run identity, assigned a
 - Runtime derives the stable Temporal Workflow ID as `agent-run/v1/{run_id}`; a StartRun retry with the same RunIntent ID/digest returns the same Run.
 - Control Plane stores Runtime identifiers only after a matching receipt and exposes them as a read-only projection.
 - Runtime creates `invocation_id` before calling Decision; Decision owns its invocation ledger and exact result.
-- Runtime assigns guard_submission_key (HTTP Idempotency-Key) once when it accepts a proposal; EngageGuard creates operation_id, owns the Action Operation record and computes ActionHash over CanonicalAction.
+- Runtime persists one stable guard_submission_key (HTTP Idempotency-Key) when it accepts a proposal. EngageGuard owns the Action Operation, operation_id and ActionHash. Server-generated operation_id is the proposed direction, but the current ActionRequest draft conflicts; creation semantics and the ActionHash preimage remain blocked under EngageGuard #3.
 - Compute Control Plane creates a distinct `compute_operation_id`; it never reuses Action `operation_id`.
 - Temporal native Activity attempts and EngageGuard `executor_attempt_id` are separate from Runtime `run_attempt_id`.
 - Cancellation is a separate Runtime command, not a RunIntent terminal state.
@@ -41,11 +41,11 @@ UNKNOWN → RECONCILING → ACCEPTED | REJECTED | PENDING | MANUAL_REVIEW
 
 - Temporal owns durable workflow orchestration and Activity retry for operations that are safe/idempotent.
 - Runtime owns Run/Task/RunAttempt lifecycle and Temporal integration.
-- agent-decision owns bounded framework invocation; v0.1 returns FinalResponse or ActionProposal only.
+- agent-decision Go Core owns DecisionRecord and the durable decision ledger. Python/TypeScript framework adapters are separate bounded reasoning interfaces; exact Core and adapter wire versions remain blocked pending agent-decision #9.
 - EngageGuard owns ActionHash, approval, Permit, protected-action Operation Journal and effect reconciliation.
 - Compute Control Plane owns compute provider operation journal and provider reconciliation.
 - A caller may retry an API request only with the same idempotency key and canonical digest. No two services independently retry the same side effect.
-- A Temporal Activity may repeat a Decision request with the same invocation_id; Decision must replay the exact result. It may repeat an EngageGuard/Compute request only with the same owning operation ID and payload digest.
+- A Temporal Activity may repeat a Decision request with the same invocation_id and digest; Decision must replay the exact result. For Guard, Runtime reuses the same guard_submission_key and payload digest; EngageGuard owns the Action Operation ID. For Compute, retries retain the same compute_operation_id and payload digest.
 
 ## Consequences
 
