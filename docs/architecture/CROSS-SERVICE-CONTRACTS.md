@@ -1,58 +1,26 @@
 # Cross-Service Contracts — v0.2
 
-Status: Proposed; freeze before service-to-service implementation.
+Status: **PROPOSED / BLOCKED**. Service-owned protocol sources and cross-repository signoff are required before service-to-service implementation.
 
 ## Contract ownership
 
-- This repository owns the platform-wide event envelope, identifier namespaces, idempotency/error semantics and compatibility rules.
-- Each service owns its OpenAPI document, event payload schemas and database schema.
-- The Decision plugin wire payload is defined only by the canonical v0.1 JSON Schemas in this repository. Runtime and Python/TypeScript plugins must validate against the same files and shared vectors; do not maintain private protocol forks.
+- This repository may define cross-service envelope and compatibility guidance, but each service owns its public OpenAPI document, event payload schema and database schema.
+- ACP stores immutable source references and consumer-side compatibility evidence; it does not publish a second copy of another service's normative protocol.
 - A service may keep internal fields, but cannot redefine a foreign identifier or write another service's domain facts.
+- Cross-service protocol ownership and compatibility remain proposed until the relevant service owners ratify them under [ACP issue #3](https://github.com/avaargsh/agent-control-panel/issues/3).
 
-## Agent Decision Plugin Protocol v0.1
+## Decision protocols (BLOCKED — ACP-local copies are not normative)
 
-Canonical schemas:
+The platform has two distinct candidate interfaces owned by `agent-decision`:
 
-- `contracts/agent-decision/v0.1/decision-turn.schema.json`
-- `contracts/agent-decision/v0.1/decision-result.schema.json`
+- The Go Decision Core owns the DecisionRecord API and durable decision ledger. Its service-owned OpenAPI candidate is pinned at [agent-decision commit bbdf45e](https://github.com/avaargsh/agent-decision/blob/bbdf45e415b310b421932977ca415419772dcaaa/api/openapi.yaml).
+- Python/TypeScript framework adapters are a separate, bounded reasoning interface. They must not create a second DecisionRecord ledger or be treated as wire-compatible with the Go Core.
 
-Transport: HTTP JSON `POST /api/v1/decision-turns`. gRPC/streaming is deferred until measured throughput or streaming requirements justify another transport.
+The candidate protocols are currently incompatible. The ACP-local files under `contracts/agent-decision/v0.1/` are historical compatibility snapshots only. They must not be treated as the canonical Decision API, copied as a service-owned protocol, or used to freeze an endpoint, payload union, limits or error envelope. The legacy plugin source is explicitly blocked in the governance registry.
 
-### Request
+**Implementation gate:** [agent-decision#9](https://github.com/avaargsh/agent-decision/issues/9) and [ACP#3](https://github.com/avaargsh/agent-control-panel/issues/3). Until the Decision and Runtime owners ratify one versioned Core contract and a separately versioned adapter contract, clients must not assume the ACP-local schemas represent either interface.
 
-The required fields are defined by the request schema: `protocol_version`, stable `invocation_id`, tenant/Agent/Bundle/Release/Session/Run/Turn identity, resolved `user_input`, bounded `context_projection`, exact `allowed_capabilities` ID/version pairs, absolute `deadline` and W3C `trace_context`.
-
-Runtime resolves authorization and context before invoking the plugin. Projected content is supplied inline. Source references are opaque provenance identifiers only; plugins must not dereference them or use them as network URLs. `tenant_id` in the body is context, not proof of identity; the plugin must bind it to the authenticated Runtime workload identity.
-
-### Response
-
-The v0.1 union has exactly two variants, discriminated by `kind`:
-
-- `final_response`: text, optional structured output and evidence references.
-- `action_proposals`: one or more typed proposals with capability ID/version, arguments, target reference and rationale reference.
-
-A proposal is untrusted input. It does not assert authorization, approval, Permit issuance or successful execution. The plugin must never return ActionHash, Permit material, bearer credentials, provider secrets or claims that a protected effect has already occurred.
-
-Clarification requests are expressed as a FinalResponse for v0.1; a separate NeedsInput variant requires a versioned protocol extension. Transport/service errors use the platform error envelope and are not a third Decision result variant.
-
-### Invocation identity, idempotency and retry
-
-- Runtime generates `invocation_id` once for a logical Decision Turn and reuses it for every Temporal Activity retry.
-- Decision owns the invocation ledger and persists canonical request digest plus the exact result.
-- Same `invocation_id` + same digest replays the exact stored result.
-- Same `invocation_id` + different digest returns HTTP 409; never recompute silently.
-- Result retention must outlive the maximum workflow retry, replay and event redelivery window.
-- The current Go/Python smoke implementation is a deliberately smaller test profile, not full v0.1 conformance until it consumes these schemas and shared fixtures.
-
-### Transport and limits
-
-- Maximum request body: 1 MiB; maximum response body: 256 KiB.
-- Context projection: at most 128 items; capabilities: at most 64; proposals: at most 16.
-- Enforce absolute deadline and cancellation. A Temporal Activity timeout does not replace the request deadline.
-- Production traffic requires authenticated workload identity and an authenticated encrypted channel (mTLS or equivalent). Plain HTTP is loopback-only for local development.
-- Plugins have no provider credentials, Permit tokens, privileged network egress or direct privileged tool execution.
-- HTTP 200 carries a schema-valid Decision result. HTTP 400/413/415/422 indicate invalid request; 409 indicates invocation idempotency conflict; 429/5xx indicate service/transport failure. Error bodies use the platform error envelope.
-- Runtime validates content type, response size, schema, protocol version and matching `invocation_id`; unknown variants fail closed.
+Decision invocation semantics remain a candidate ownership rule: Runtime creates one stable `invocation_id` for a logical turn; Decision owns the durable invocation ledger and exact result; retries reuse the same ID and canonical request digest. This does not freeze the HTTP request or response schema.
 
 ## Event envelope
 
@@ -105,29 +73,17 @@ See [Identifier Lifecycle](IDENTIFIER-LIFECYCLE.md) for the canonical creator, o
 
 Do not reuse Guard `operation_id` for a Compute provider mutation. Do not use one generic `attempt_id` for Runtime, Temporal and executor attempts.
 
-## Action authorization and execution
+## Protected action identity and ActionHash (BLOCKED — G03)
 
-```text
-Decision ActionProposal
-  -> Runtime persists accepted proposal
-  -> Runtime sends stable guard_submission_key (HTTP Idempotency-Key); EngageGuard generates operation_id
-  -> EngageGuard authenticates caller and resolves trusted binding
-  -> EngageGuard validates and canonicalizes action
-  -> EngageGuard computes action_hash
-  -> policy decision / approval bound to action_hash
-  -> one-time audience- and operation-bound Permit
-  -> trusted enforcement point verifies Permit + action_hash
-  -> external effect
-  -> EngageGuard Operation Journal reconciliation + verified Receipt
-  -> Runtime records Receipt against Run
-```
+The intended ownership boundary is:
 
-- Runtime reuses the same operation ID and semantically identical request on every retry.
-- EngageGuard computes ActionHash only after trusted normalization; plugin-supplied hashes are rejected/ignored.
-- Canonicalization is RFC 8785 JCS. Exact preimage: UTF-8 bytes `engageguard:canonical-action:v1\\0` followed by JCS canonical JSON bytes. SHA-256 digest is 64 lowercase hexadecimal characters. Plain Go `json.Marshal` is not the cross-language contract.
-- Shared vectors: `contracts/engageguard/action-hash/v0.1/workspace-write-vectors.json`.
-- Same tenant + guard_submission_key + same RequestHash returns the existing Action Operation and operation_id. Same key + different RequestHash returns 409 and fails closed.
-- Approval, Permit, executor claim and Receipt bind the same operation and hash. Receipt uses `executor_attempt_id`, not a generic `attempt_id`.
+- Runtime persists one stable `guard_submission_key` and reuses it as the HTTP `Idempotency-Key` for retries.
+- EngageGuard owns the protected-action record, ActionHash, approval, Permit, Operation Journal and verified Receipt.
+- The current EngageGuard ActionRequest draft and the ACP proposal disagree on whether `operation_id` is caller-supplied or generated by EngageGuard. The intended server-owned identity must not be implemented as an accepted wire contract until EngageGuard and Runtime ratify it.
+
+The ActionHash preimage/domain separator is also unresolved. The ACP-local vector file and architecture drafts currently contain divergent domain-separator spellings. The local `contracts/engageguard/action-hash/v0.1/workspace-write-vectors.json` is therefore a comparison fixture only, not a normative source. Do not use its value, plain `json.Marshal`, or another local guess to authorize or verify protected actions.
+
+**Implementation gate:** [EngageGuard#3](https://github.com/avaargsh/EngageGuard/issues/3) and [ACP#3](https://github.com/avaargsh/agent-control-panel/issues/3). The owning services must publish one versioned ActionRequest contract, trusted normalization rules, RFC 8785 JCS preimage and shared Go/Python/TypeScript vectors before clients or trusted executors rely on them.
 
 ## Compute and Sandbox boundary
 
