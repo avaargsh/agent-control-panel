@@ -31,7 +31,7 @@ func TestDispatchAcceptanceUsesRuntimeOwnedRunIdentity(t *testing.T) {
     })
     if err != nil { t.Fatal(err) }
     if accepted.Status != Accepted || accepted.RunID != "runtime-run-1" ||
-        accepted.WorkflowID != "run/runtime-run-1" || accepted.Version != 3 {
+        accepted.WorkflowID != "agent-run/v1/runtime-run-1" || accepted.Version != 3 {
         t.Fatalf("runtime receipt not projected: %+v", accepted)
     }
     if accepted.LeaseOwner != "" || !accepted.LeaseExpiresAt.IsZero() {
@@ -78,7 +78,7 @@ func TestFoundReconciliationAndConflictingReceipt(t *testing.T) {
 
     intent, _ = fixture().ClaimDispatch(1, "dispatcher-1", now, time.Minute)
     mismatch, err := intent.RecordDispatchOutcome(2, "dispatcher-1", 1, now.Add(time.Second), DispatchOutcome{
-        TenantID: intent.TenantID, TenantID: intent.TenantID, RunIntentID: intent.ID, RequestDigest: "sha256:"+strings.Repeat("b",64),
+        TenantID: intent.TenantID, RunIntentID: intent.ID, RequestDigest: "sha256:"+strings.Repeat("b",64),
         Kind: DispatchAccepted, RunID: "foreign-run", WorkflowID: "agent-run/v1/foreign-run",
     })
     if err != nil || mismatch.Status != ManualReview || mismatch.ManualReviewCode != "RUNTIME_RECEIPT_MISMATCH" {
