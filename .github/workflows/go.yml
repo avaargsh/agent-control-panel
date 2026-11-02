@@ -11,6 +11,8 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    env:
+      PGTEST_DSN: postgres://postgres:agent-ci@127.0.0.1:5432/postgres?sslmode=disable
     services:
       postgres:
         image: postgres:16-alpine
@@ -38,8 +40,11 @@ jobs:
             echo "$files"
             exit 1
           fi
-      - name: Verify module checksums
-        run: go mod verify
+      - name: Verify module graph and checksums
+        run: |
+          go mod verify
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
       - name: Apply PostgreSQL schema
         env:
           PGPASSWORD: agent-ci

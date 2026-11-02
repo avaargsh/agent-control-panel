@@ -1,6 +1,6 @@
 # PostgreSQL Persistence Contract — P0
 
-Status: **schema foundation; repository and runtime integration pending**.
+Status: **PostgreSQL RunIntent repository and transactional Outbox foundation implemented; delivery workers and Runtime integration remain pending**.
 
 This migration persists only Control Plane-owned RunIntent and messaging delivery state. It deliberately does not create a \`runs\` table: Agent Runtime owns Run/Task/RunAttempt lifecycle and identifiers.
 
@@ -30,17 +30,28 @@ Expired publish leases return to retryable state. Never mark an event PUBLISHED 
 - A gap remains RECEIVED/deferred. Do not advance the cursor.
 - Unknown breaking schema versions are quarantined.
 
-## Explicit implementation gaps
+## Repository implementation foundation
 
-The SQL migration establishes constraints and indexes only. It does not yet provide:
-- a Go PostgreSQL repository or connection lifecycle;
-- transaction methods for idempotency + RunIntent + Outbox;
-- lease claim/reclaim SQL with fencing;
-- publisher and consumer workers;
-- migrations runner and rollback policy;
-- integration tests against a real PostgreSQL instance.
+### Implemented behavior (PR #5 — still Draft)
 
-Do not expose mutating HTTP endpoints until those operations are implemented and tested with concurrent transactions, duplicate delivery, crash/restart and lost-ACK scenarios.
+The Go repository foundation now provides:
+- `Repository.Create`: tenant/principal-scoped idempotency claim, RunIntent insert and `agent.run-intent.created` Outbox append in one transaction.
+- Exact replay checks the stored digest **and** immutable project/agent/release/session ownership metadata; a same-key/same-digest request that changes any separately stored owner field returns a conflict. A newly generated candidate ID is ignored on replay; the original committed ID is returned.
+- `Repository.Get` reads tenant-scoped state and revalidates persisted domain invariants.
+- `Repository.CompareAndSwap` locks the row, validates allowed transitions, immutable identity, optimistic version and fencing progression, then writes the transition and Outbox event atomically.
+- Outbox insert failure rolls back the state transition. PostgreSQL integration tests cover concurrent idempotency, digest and owner-metadata conflicts, CAS, transaction rollback and migration re-entry.
+- `Migrate` uses a PostgreSQL advisory lock and one transaction for schema DDL plus a version/name/SHA-256 migration ledger. It rejects changed checksums, incomplete schemas and unversioned pre-existing relations rather than silently adopting them.
+- CI runs the repository tests against PostgreSQL via `PGTEST_DSN`, in addition to parent-branch migration and tenant-isolation smoke checks.
+
+## Explicit remaining implementation gaps
+
+- Outbox publisher and Inbox consumer workers, including lease reclaim, retries, quarantine and gap recovery.
+- Authenticated Runtime `StartRun` / `InspectRunIntent` adapter and durable reconciliation worker.
+- Service connection lifecycle, dependency-aware readiness, deployment configuration and operational metrics.
+- Restart, lost-ACK, duplicate-start and cross-process recovery tests around the real Runtime adapter.
+- Migration forward/rollback and backup/restore operational policy beyond the checksummed initial migration.
+
+Do not expose mutating HTTP endpoints until Runtime authentication, durable dispatch/reconciliation, Outbox/Inbox workers and their failure-recovery tests are complete.
 
 ## Tenant-isolated messaging invariants (migration smoke)
 
