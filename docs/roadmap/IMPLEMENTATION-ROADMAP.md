@@ -1,11 +1,13 @@
 # Implementation Roadmap
 
+Status: proposed sequencing; protocol gates G02/G03 must be ratified by their service owners before implementation.
+
 ## Phase 0 — Freeze architecture contracts
 
 - [ ] Freeze domain ownership and canonical identifier ownership.
 - [ ] Freeze RunIntent → Runtime StartRun / InspectRunIntent handshake and stable Workflow ID mapping.
-- [ ] Freeze canonical Agent Decision v0.1 request/result JSON Schemas and shared Go/Python/TypeScript fixtures.
-- [ ] Freeze ActionProposal → Runtime operation_id → EngageGuard ActionHash → Approval/Permit → Receipt chain.
+- [ ] Ratify separate service-owned Decision Core and framework-adapter protocols; publish shared Go/Python/TypeScript fixtures from agent-decision (G02).
+- [ ] Ratify ActionProposal → Runtime guard_submission_key → EngageGuard-owned operation_id → ActionHash → Approval/Permit → Receipt chain (G03).
 - [ ] Freeze Compute Workload / Allocation / compute_operation_id relationship.
 - [ ] Freeze event envelope, aggregate-version gap recovery, Inbox states and idempotency/error semantics.
 - [ ] Freeze Temporal, Decision, EngageGuard and Compute retry ownership.
@@ -33,15 +35,17 @@
 
 ### agent-decision
 
-- [ ] Python reference plugin validates canonical v0.1 schemas.
-- [ ] Strict request/response validation and bounded HTTP server.
+- [ ] Go Decision Core owns DecisionRecord, decision APIs and durable invocation ledger.
+- [ ] Publish a service-owned Core OpenAPI contract and compatibility fixtures.
+- [ ] Define a separate, versioned Python/TypeScript framework-adapter protocol; it owns no second Decision ledger.
 - [ ] Durable invocation idempotency: same ID/digest replays exact result; changed digest conflicts.
 - [ ] Mock/deterministic adapter first; framework adapter is replaceable.
-- [ ] Shared Go/Python/TypeScript conformance vectors.
+- [ ] Shared Go/Python/TypeScript conformance fixtures from the owning service (G02).
 
 ### EngageGuard
 
-- [ ] Canonical ActionEnvelope and RFC 8785 JCS ActionHash golden vectors.
+- [ ] Ratify whether operation_id is server-generated and the stable Runtime guard_submission_key/idempotency contract (G03).
+- [ ] Publish the canonical ActionEnvelope, trusted normalization rules and RFC 8785 JCS ActionHash preimage/golden vectors (G03).
 - [ ] Authenticated PEP and trusted ToolBinding resolution.
 - [ ] Authorization and action-bound Approval.
 - [ ] One-time audience/operation-bound Permit claim.
@@ -61,18 +65,18 @@
 - [ ] AgentBundle → AgentRelease → Session → RunIntent.
 - [ ] Runtime accepts RunIntent, atomically creates one Run and stable Workflow ID.
 - [ ] Temporal starts/inspects the same Workflow ID under duplicate requests.
-- [ ] Runtime invokes one bounded Decision Turn using canonical schemas and stable invocation_id.
-- [ ] FinalResponse and ActionProposals are validated; plugin cannot execute privileged effects.
+- [ ] Runtime invokes Decision Core with stable invocation_id; any framework adapter call uses its separately versioned contract.
+- [ ] Service-owned Decision Core/adapter outputs are validated; reasoning plugins cannot execute privileged effects.
 - [ ] Restart, duplicate delivery, lost start ACK, replay and cancellation tests.
 
 ## Phase 3 — Secure action vertical slice
 
-- [ ] Runtime persists accepted ActionProposal and assigns one stable Action operation_id.
+- [ ] Runtime persists accepted ActionProposal and one stable guard_submission_key; EngageGuard owns operation_id (subject to G03 ratification).
 - [ ] EngageGuard canonicalizes and hashes trusted action.
 - [ ] Approval and Permit bind exact ActionHash, operation ID, target, audience and expiry.
 - [ ] Trusted enforcement point claims Permit once and executes.
 - [ ] Receipt binds ActionHash and executor_attempt_id.
-- [ ] Lost ACK becomes UNKNOWN; Runtime queries same operation and does not blindly replay.
+- [ ] Lost ACK becomes UNKNOWN; Runtime retries/inspects with the same guard_submission_key and does not blindly replay.
 - [ ] Adversarial tests: changed arguments, target, binding, policy, path traversal, symlink race and concurrent claim.
 
 ## Phase 4 — Compute Workload vertical slice
