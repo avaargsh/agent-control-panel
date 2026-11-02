@@ -37,6 +37,20 @@ def main() -> None:
     result_schema = load_json(DECISION / "decision-result.schema.json")
     Draft202012Validator.check_schema(request_schema)
     Draft202012Validator.check_schema(result_schema)
+    # ACP may retain non-normative snapshots for regression comparison, but
+    # MUST NOT publish a service-owned Decision wire schema under an ACP
+    # canonical github.com URL. The Decision Core owns its canonical contract.
+    for label, schema in (
+        ("decision-turn", request_schema),
+        ("decision-result", result_schema),
+    ):
+        expected = f"urn:avaargsh:agent-control-panel:compat-snapshot:{label}:v0.1"
+        if schema.get("$id") != expected:
+            raise SystemExit(
+                f"{label}: legacy compatibility snapshot must have non-normative urn $id"
+            )
+        if "non-normative" not in schema.get("description", "").lower():
+            raise SystemExit(f"{label}: missing non-normative provenance warning")
 
     request_validator = Draft202012Validator(request_schema, format_checker=FormatChecker())
     result_validator = Draft202012Validator(result_schema, format_checker=FormatChecker())
