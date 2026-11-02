@@ -138,6 +138,25 @@ class GovernanceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "request ID semantics mismatch"):
             validate_registry(broken)
 
+    def test_guard_wire_submission_is_distinct_from_internal_action_request(self):
+        contracts = {x["id"]: x for x in REGISTRY["contracts"]}
+        submission = contracts["guard-action-submission"]
+        internal = contracts["guard-internal-action-request"]
+        self.assertEqual(submission["path"], "docs/contracts/action-submission.v1.schema.json")
+        self.assertEqual(submission["version"], "action-submission.v1-draft")
+        self.assertEqual(internal["path"], "docs/contracts/action-request.v1.schema.json")
+        self.assertEqual(internal["version"], "guard-internal.v1-draft")
+        self.assertEqual(submission["state"], "blocked")
+        self.assertEqual(internal["state"], "blocked")
+
+    def test_guard_external_contract_cannot_be_removed(self):
+        broken = copy.deepcopy(REGISTRY)
+        broken["contracts"] = [
+            c for c in broken["contracts"] if c["id"] != "guard-action-submission"
+        ]
+        with self.assertRaisesRegex(ValueError, "missing required service contract"):
+            validate_registry(broken)
+
 
 if __name__ == "__main__":
     unittest.main()
