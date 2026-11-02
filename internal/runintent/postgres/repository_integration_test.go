@@ -66,18 +66,18 @@ func testRepository(t *testing.T) (*Repository, *pgxpool.Pool) {
 
 func testIntent(sequence int) runintent.Intent {
 	return runintent.Intent{
-		ID: fmt.Sprintf("00000000-0000-4000-8000-%012d", sequence),
+		ID:       fmt.Sprintf("00000000-0000-4000-8000-%012d", sequence),
 		TenantID: "tenant-integration", PrincipalID: "principal-integration",
 		ProjectID: "project-1", AgentID: "agent-1", ReleaseID: "release-1",
 		SessionID: "session-1", IdempotencyKey: fmt.Sprintf("key-%d", sequence),
 		RequestDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		Version: 1, Status: runintent.Pending,
+		Version:       1, Status: runintent.Pending,
 	}
 }
 
 func testEvent(intent runintent.Intent, version uint64, eventID int, eventType string) Event {
 	return Event{
-		ID: fmt.Sprintf("00000000-0000-4000-8000-%012d", eventID),
+		ID:       fmt.Sprintf("00000000-0000-4000-8000-%012d", eventID),
 		Producer: "agent-control-panel", Type: eventType, SchemaVersion: 1,
 		TenantID: intent.TenantID, AggregateType: aggregateType,
 		AggregateID: intent.ID, AggregateVersion: version,
@@ -230,12 +230,17 @@ func TestCompareAndSwapRequiresNewFenceForNewLease(t *testing.T) {
 	if err != nil {
 		t.Fatalf("claim dispatch: %v", err)
 	}
+	dispatching, err = repository.CompareAndSwap(ctx, intent.TenantID, intent.ID, created.Version, dispatching,
+		testEvent(dispatching, dispatching.Version, 502, "agent.run-intent.dispatching"))
+	if err != nil {
+		t.Fatalf("persist dispatch lease: %v", err)
+	}
 	unknown, err := dispatching.ExpireLease(dispatching.Version, now.Add(2*time.Second))
 	if err != nil {
 		t.Fatalf("expire dispatch lease: %v", err)
 	}
 	unknown, err = repository.CompareAndSwap(ctx, intent.TenantID, intent.ID, dispatching.Version, unknown,
-		testEvent(unknown, unknown.Version, 502, "agent.run-intent.unknown"))
+		testEvent(unknown, unknown.Version, 503, "agent.run-intent.unknown"))
 	if err != nil {
 		t.Fatalf("persist expired dispatch lease: %v", err)
 	}
@@ -247,7 +252,7 @@ func TestCompareAndSwapRequiresNewFenceForNewLease(t *testing.T) {
 	// acquired lease, even when the status and version are otherwise valid.
 	reconciling.FenceToken = unknown.FenceToken
 	if _, err := repository.CompareAndSwap(ctx, intent.TenantID, intent.ID, unknown.Version, reconciling,
-		testEvent(reconciling, reconciling.Version, 503, "agent.run-intent.reconciling")); !errors.Is(err, ErrFenceRegression) {
+		testEvent(reconciling, reconciling.Version, 504, "agent.run-intent.reconciling")); !errors.Is(err, ErrFenceRegression) {
 		t.Fatalf("new lease with reused fence token returned %v, want ErrFenceRegression", err)
 	}
 }
