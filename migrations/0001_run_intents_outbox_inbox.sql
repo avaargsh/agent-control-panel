@@ -28,7 +28,7 @@ CREATE TABLE run_intents (
  ),
  CONSTRAINT run_intents_state_payload_consistency CHECK (
   (status IN ('PENDING','DISPATCHING','UNKNOWN','RECONCILING') AND runtime_run_id IS NULL AND workflow_id IS NULL AND rejection_code IS NULL AND manual_review_code IS NULL)
-  OR (status = 'ACCEPTED' AND runtime_run_id IS NOT NULL AND runtime_run_id <> '' AND runtime_run_id = btrim(runtime_run_id) AND length(runtime_run_id) <= 256 AND runtime_run_id !~ '[/\?#]' AND workflow_id IS NOT NULL AND workflow_id = 'agent-run/v1/' || runtime_run_id AND rejection_code IS NULL AND manual_review_code IS NULL)
+  OR (status = 'ACCEPTED' AND runtime_run_id IS NOT NULL AND runtime_run_id <> '' AND runtime_run_id = btrim(runtime_run_id) AND length(runtime_run_id) <= 256 AND runtime_run_id !~ '[/#?]' AND workflow_id IS NOT NULL AND workflow_id = 'agent-run/v1/' || runtime_run_id AND rejection_code IS NULL AND manual_review_code IS NULL)
   OR (status = 'REJECTED' AND rejection_code IS NOT NULL AND rejection_code ~ '^[A-Z0-9_-]{1,128}$' AND runtime_run_id IS NULL AND workflow_id IS NULL AND manual_review_code IS NULL)
   OR (status = 'MANUAL_REVIEW' AND manual_review_code IS NOT NULL AND manual_review_code ~ '^[A-Z0-9_-]{1,128}$' AND runtime_run_id IS NULL AND workflow_id IS NULL AND rejection_code IS NULL)
  )
@@ -101,7 +101,8 @@ CREATE TABLE inbox_aggregate_claims (
  event_id uuid NOT NULL,
  claimed_at timestamptz NOT NULL DEFAULT now(),
  PRIMARY KEY (consumer_name,aggregate_type,aggregate_id,aggregate_version),
- UNIQUE (consumer_name,event_id)
+ UNIQUE (consumer_name,event_id),
+ FOREIGN KEY (consumer_name,event_id) REFERENCES inbox_events (consumer_name,event_id)
 );
 CREATE TABLE inbox_cursors (
  consumer_name text NOT NULL,
