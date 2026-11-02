@@ -111,7 +111,7 @@ type Intent struct {
 
 func validOpaqueID(value string) bool {
     return value != "" && value == strings.TrimSpace(value) &&
-        len(value) <= 256 && !strings.ContainsAny(value, " \\t\\r\\n\\x00")
+        len(value) <= 256 && !strings.ContainsAny(value, " \t\r\n\x00")
 }
 
 func validReasonCode(value string) bool {
@@ -280,6 +280,7 @@ func (i Intent) ExpireLease(expectedVersion uint64, now time.Time) (Intent, erro
     if now.IsZero() || now.Before(i.LeaseExpiresAt) { return i, ErrLeaseActive }
     i = i.clearLease()
     i.Status = Unknown
+    i.FenceToken++
     i.Version++
     return i, nil
 }
