@@ -8,4 +8,5 @@ var (
 	ErrVersionConflict     = errors.New("run version conflict")
 	ErrIdempotencyConflict = errors.New("idempotency key reused with a different request")
 	ErrInvalidInput        = errors.New("invalid input")
+	ErrOutboxLeaseLost     = errors.New("outbox event lease lost")
 )
