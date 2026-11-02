@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate canonical Decision schemas and cross-language ActionHash vectors."""
+"""Validate ACP-local legacy compatibility snapshots only; not service-owned contracts."""
 
 from __future__ import annotations
 
@@ -75,7 +75,7 @@ def main() -> None:
         if digest != vector["action_hash"]:
             raise SystemExit(f"{vector['name']}: ActionHash mismatch")
 
-    print("Decision JSON Schemas and ActionHash v0.1 vectors: PASS")
+    print("ACP-local legacy Decision/ActionHash compatibility snapshots: PASS (non-normative)")
 
 
 if __name__ == "__main__":
