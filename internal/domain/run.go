@@ -46,11 +46,12 @@ type Run struct {
 }
 
 func NewRun(id, tenantID, agentID, releaseID, sessionID string, input json.RawMessage, now time.Time) (Run, error) {
-	for name, value := range map[string]string{
-		"id": id, "tenantId": tenantID, "agentId": agentID, "releaseId": releaseID, "sessionId": sessionID,
+	for _, field := range []struct{ name, value string }{
+		{"id", id}, {"tenantId", tenantID}, {"agentId", agentID},
+		{"releaseId", releaseID}, {"sessionId", sessionID},
 	} {
-		if value == "" {
-			return Run{}, fmt.Errorf("%w: %s is required", ErrInvalidInput, name)
+		if field.value == "" {
+			return Run{}, fmt.Errorf("%w: %s is required", ErrInvalidInput, field.name)
 		}
 	}
 	if len(input) == 0 {
