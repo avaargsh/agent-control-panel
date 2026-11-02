@@ -2,11 +2,11 @@
 
 ## Status
 
-Proposed v0.2. Normative for the Runtime / Decision boundary once the shared v0.1 plugin schemas are frozen.
+Proposed v0.2. The service-owned Decision Core and framework-adapter boundaries are candidates; exact wire protocols remain blocked pending agent-decision #9.
 
 ## Decision
 
-Use Temporal for durable workflow orchestration and a managed Python/TypeScript Agent Framework plugin for bounded reasoning turns. Runtime is the sole owner of platform Run lifecycle. A framework invocation returns exactly one v0.1 result: `final_response` or `action_proposals`. It does not execute privileged tools.
+Use Temporal for durable workflow orchestration. Runtime is the sole owner of platform Run lifecycle and invokes the Go Decision Core API owned by agent-decision; that Core may use a separately versioned Python/TypeScript framework adapter for bounded reasoning. The Core and adapter are different interfaces and must not share an assumed v0.1 wire contract. Framework adapters do not execute privileged tools.
 
 Protected effects are executed separately through EngageGuard and a trusted enforcement point.
 
@@ -21,14 +21,13 @@ Protected effects are executed separately through EngageGuard and a trusted enfo
 
 ## Invocation contract
 
-The canonical wire schemas are:
+The canonical protocol source belongs to agent-decision. Its Go Core OpenAPI candidate is pinned in the governance registry; the framework-adapter protocol is a separate interface and is not assumed to match the Core API.
 
-- `contracts/agent-decision/v0.1/decision-turn.schema.json`
-- `contracts/agent-decision/v0.1/decision-result.schema.json`
+ACP-local files under `contracts/agent-decision/v0.1/` are historical compatibility snapshots only, not canonical schemas. Do not infer a frozen endpoint, payload union, field set, limit or error envelope from them. The Go Core and adapter contracts must be independently versioned and ratified by agent-decision and Runtime (G02).
 
-Runtime creates one `invocation_id` per logical Decision Turn. Temporal Activity retries reuse the same ID and identical canonical request. Decision stores the request digest and exact response; same ID/same digest replays, same ID/different digest conflicts. The plugin cannot fetch opaque source references or use them as arbitrary network URLs; Runtime supplies the already-authorized projection inline.
+Runtime creates one `invocation_id` per logical Decision Turn. Temporal Activity retries reuse the same ID and canonical request digest. Decision owns the durable invocation ledger and exact result; same ID/same digest replays, same ID/different digest conflicts. Runtime supplies context that has already passed its authorization and projection policy. A framework adapter is a bounded reasoning component, not a second Decision ledger.
 
-The plugin's `allowed_capabilities` constrain proposal generation only. They do not grant execution permission. Every ActionProposal is untrusted and is revalidated by EngageGuard at execution time. Clarification is represented as a FinalResponse in v0.1; new response variants require a versioned schema change. Transport errors use the platform error envelope.
+Any ActionProposal is untrusted input and is revalidated by EngageGuard before a protected effect. Proposal discriminators and clarification variants are part of the unratified adapter protocol; this ADR does not freeze them.
 
 ## Retry ownership
 
@@ -36,10 +35,10 @@ The plugin's `allowed_capabilities` constrain proposal generation only. They do 
 2. Decision owns invocation idempotency and exact result replay.
 3. EngageGuard owns Action Operation idempotency, Permit claim and UNKNOWN reconciliation.
 4. Compute Control Plane owns Compute Operation idempotency and provider reconciliation.
-5. Runtime never generates a new invocation/operation ID merely because an Activity was retried.
+5. Runtime never generates a new invocation_id or guard_submission_key merely because an Activity was retried; EngageGuard owns operation_id.
 6. An Activity may repeat a request with the same stable ID. It must not create a new logical side effect while the owning service reports UNKNOWN.
 7. Retryable transport failures may be retried within the bounded Temporal policy. Protocol/schema/security failures are non-retryable and fail closed.
-8. A protected action timeout is not a normal retry signal. Runtime queries EngageGuard using the same Action operation ID; only EngageGuard's reconciled state can authorize continuation.
+8. A protected action timeout is not a normal retry signal. Runtime reuses the same guard_submission_key and consults EngageGuard's authoritative operation lookup using the ratified contract; only EngageGuard's reconciled state can authorize continuation.
 
 ## Prohibited overlap
 
