@@ -41,3 +41,19 @@ The SQL migration establishes constraints and indexes only. It does not yet prov
 - integration tests against a real PostgreSQL instance.
 
 Do not expose mutating HTTP endpoints until those operations are implemented and tested with concurrent transactions, duplicate delivery, crash/restart and lost-ACK scenarios.
+
+## Tenant-isolated messaging invariants (migration smoke)
+
+The schema and PostgreSQL 16 CI now assert that the same aggregate ID and
+version may exist in **different tenants**. The Outbox aggregate-version unique
+key includes `tenant_id`; Inbox aggregate claims and cursor primary keys
+also include `tenant_id`. The claim foreign key binds
+`(consumer_name,event_id,tenant_id)` to the original Inbox event, preventing
+an event from one tenant from being attributed to another.
+
+The `migrations/tests/0001_tenant_isolation.sql` smoke test checks two-tenant
+same-ID acceptance, same-tenant duplicate version refusal and cross-tenant
+event attribution refusal. This verifies **schema constraints only**, not a
+trusted broker consumer, authenticated principal, PostgreSQL Repository
+transactions, or a production migration runner. Until these exist, do not
+expose mutating Control Plane APIs.
