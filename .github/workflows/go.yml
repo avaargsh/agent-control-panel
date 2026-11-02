@@ -33,13 +33,11 @@ jobs:
         with:
           go-version: '1.27.3'
           cache: false
-      - name: Diagnose Go formatting
-        continue-on-error: true
+      - name: Verify Go formatting
         run: |
           files="$(gofmt -l .)"
           if [ -n "$files" ]; then
             echo "$files"
-            gofmt -d $files
             exit 1
           fi
       - name: Verify module graph
