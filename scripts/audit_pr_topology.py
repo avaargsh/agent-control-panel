@@ -59,8 +59,8 @@ def validate_snapshot(snapshot: dict, registry: dict) -> bool:
             if pr["head_branch"] in branches:
                 raise ValueError("two PRs share a head branch without explicit resolution")
             branches[pr["head_branch"]] = number
-            if pr.get("draft") is not True or pr.get("disposition") != "blocked":
-                raise ValueError("snapshot cannot approve a live Draft implementation PR")
+            if not isinstance(pr.get("draft"), bool) or pr.get("disposition") != "blocked":
+                raise ValueError("snapshot cannot approve an open implementation PR")
             gates = pr.get("gate_ids")
             if (not isinstance(gates, list) or not gates or
                     len(gates) != len(set(gates)) or

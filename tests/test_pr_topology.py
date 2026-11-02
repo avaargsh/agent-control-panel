@@ -23,7 +23,7 @@ class PRTopologyTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unknown governance gate"):
             validate_snapshot(changed, REGISTRY)
 
-    def test_active_draft_cannot_be_mislabeled_approved(self):
+    def test_open_pr_cannot_be_mislabeled_approved(self):
         changed = copy.deepcopy(SNAPSHOT)
         changed["repositories"][0]["pull_requests"][0]["disposition"] = "approved"
         with self.assertRaisesRegex(ValueError, "cannot approve"):
@@ -45,17 +45,19 @@ class PRTopologyTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "missing active parent"):
             validate_snapshot(changed, REGISTRY)
 
-    def test_parallel_guard_conflicts_are_explicitly_recorded(self):
-        changed = copy.deepcopy(SNAPSHOT)
-        changed["parallel_conflicts"] = []
-        with self.assertRaisesRegex(ValueError, "unresolved parallel"):
-            validate_snapshot(changed, REGISTRY)
+    def test_closed_guard_competing_pr_is_removed_from_open_snapshot(self):
+        guard = next(r for r in SNAPSHOT["repositories"] if r["repo"] == "avaargsh/EngageGuard")
+        self.assertNotIn(4, {p["number"] for p in guard["pull_requests"]})
+        self.assertEqual(SNAPSHOT["parallel_conflicts"], [])
+        self.assertTrue(validate_snapshot(SNAPSHOT, REGISTRY))
 
-    def test_guard_candidate_must_be_one_of_conflicting_prs(self):
+    def test_non_draft_open_pr_remains_blocked_until_gate_passes(self):
         changed = copy.deepcopy(SNAPSHOT)
-        changed["parallel_conflicts"][0]["candidate_pr"] = 42
-        with self.assertRaisesRegex(ValueError, "invalid parallel conflict candidate"):
-            validate_snapshot(changed, REGISTRY)
+        compute = next(r for r in changed["repositories"] if r["repo"] == "avaargsh/compute-control-panel")
+        ready = next(p for p in compute["pull_requests"] if p["number"] == 6)
+        self.assertIs(ready["draft"], False)
+        self.assertEqual(ready["disposition"], "blocked")
+        self.assertTrue(validate_snapshot(changed, REGISTRY))
 
     def test_head_sha_must_be_full_commit(self):
         changed = copy.deepcopy(SNAPSHOT)

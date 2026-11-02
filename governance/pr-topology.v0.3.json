@@ -1,18 +1,32 @@
 {
   "schema_version": "pr-topology/v0.3",
   "state": "observed-not-approved",
-  "observed_date": "2026-11-02",
+  "observed_date": "2026-11-03",
   "root_issue": "https://github.com/avaargsh/agent-control-panel/issues/3",
   "repositories": [
     {
       "repo": "avaargsh/agent-control-panel",
       "pull_requests": [
         {
-          "number": 5,
-          "title": "feat: add transactional PostgreSQL RunIntent persistence",
-          "head_branch": "feature/postgres-runintent-store",
-          "base_branch": "feat/go-foundation",
-          "head_sha": "7e87b5ef9067f60f2454a8697e3173c1e265636f",
+          "number": 1,
+          "title": "docs: establish Open Agent Infrastructure architecture baseline",
+          "head_branch": "feature/platform-foundation",
+          "base_branch": "main",
+          "head_sha": "143a568892e0d53127606e04136243d07403cef6",
+          "draft": true,
+          "disposition": "blocked",
+          "gate_ids": [
+            "G01",
+            "G02",
+            "G03"
+          ]
+        },
+        {
+          "number": 2,
+          "title": "feat: establish Go service foundation and RunIntent invariants",
+          "head_branch": "feat/go-foundation",
+          "base_branch": "main",
+          "head_sha": "18f231deca5dc9ce8a58dd40e9a5c5f64f961e25",
           "draft": true,
           "disposition": "blocked",
           "gate_ids": [
@@ -24,7 +38,7 @@
           "title": "docs(governance): proposed platform v0.3 authority map and cross-repo merge gates",
           "head_branch": "governance/platform-v0.3",
           "base_branch": "main",
-          "head_sha": "fe6a93e138ab64f8188f3fde818afce984c60381",
+          "head_sha": "5d005722ea12b8562732f2fd6cfb0913d2023130",
           "draft": true,
           "disposition": "blocked",
           "gate_ids": [
@@ -37,29 +51,15 @@
           "head_tracking": "exists-only"
         },
         {
-          "number": 2,
-          "title": "feat: establish Go service foundation and RunIntent invariants",
-          "head_branch": "feat/go-foundation",
-          "base_branch": "main",
-          "head_sha": "82e3ba2b4ceb874816628dca9d0abe971282c825",
+          "number": 5,
+          "title": "feat: add transactional PostgreSQL RunIntent persistence",
+          "head_branch": "feature/postgres-runintent-store",
+          "base_branch": "feat/go-foundation",
+          "head_sha": "86b9dc0e948e08a708b9df87312548bc1c8cf1f0",
           "draft": true,
           "disposition": "blocked",
           "gate_ids": [
             "G01"
-          ]
-        },
-        {
-          "number": 1,
-          "title": "docs: establish Open Agent Infrastructure architecture baseline",
-          "head_branch": "feature/platform-foundation",
-          "base_branch": "main",
-          "head_sha": "803bcbea0dc29f336dc325febe5df7328aa9dd20",
-          "draft": true,
-          "disposition": "blocked",
-          "gate_ids": [
-            "G01",
-            "G02",
-            "G03"
           ]
         }
       ]
@@ -68,28 +68,16 @@
       "repo": "avaargsh/agent-runtime",
       "pull_requests": [
         {
-          "number": 4,
-          "title": "feat: add PostgreSQL RunStore and idempotent StartRun",
-          "head_branch": "feature/postgres-run-store-20261102",
-          "base_branch": "docs/reliability-acceptance-20261102",
-          "head_sha": "676637c951b7c1b87123e55dd3312b3ea9bb54a7",
+          "number": 1,
+          "title": "feat(runtime): Guard recovery policy and Decision/Temporal integration contract",
+          "head_branch": "feature/platform-foundation",
+          "base_branch": "main",
+          "head_sha": "e2089cfee9bc30478ed4ba1276723244869742a6",
           "draft": true,
           "disposition": "blocked",
           "gate_ids": [
             "G01",
-            "G05"
-          ]
-        },
-        {
-          "number": 3,
-          "title": "docs: define runtime reliability acceptance gates",
-          "head_branch": "docs/reliability-acceptance-20261102",
-          "base_branch": "feature/temporal-plugin-spike",
-          "head_sha": "4ee204daba28a51751d83e2a99ed960da968ece2",
-          "draft": true,
-          "disposition": "blocked",
-          "gate_ids": [
-            "G01",
+            "G02",
             "G03",
             "G05"
           ]
@@ -108,48 +96,42 @@
           ]
         },
         {
-          "number": 1,
-          "title": "feat(runtime): Guard recovery policy and Decision/Temporal integration contract",
-          "head_branch": "feature/platform-foundation",
-          "base_branch": "main",
-          "head_sha": "e2089cfee9bc30478ed4ba1276723244869742a6",
+          "number": 3,
+          "title": "docs: define runtime reliability acceptance gates",
+          "head_branch": "docs/reliability-acceptance-20261102",
+          "base_branch": "feature/temporal-plugin-spike",
+          "head_sha": "1ac81b1f2e37ef747ab5c4ef1c497aba6535c316",
           "draft": true,
           "disposition": "blocked",
           "gate_ids": [
             "G01",
-            "G02",
             "G03",
-            "G05"
-          ]
-        }
-      ]
-    },
-    {
-      "repo": "avaargsh/agent-decision",
-      "pull_requests": [
-        {
-          "number": 10,
-          "title": "feat: add transactional Decision outbox and leased dispatcher",
-          "head_branch": "feat/decision-outbox-v1-stacked",
-          "base_branch": "feat/v0.1-decision-core-baseline",
-          "head_sha": "8330487031e414f3ca6dba47badf24089b7ad845",
-          "draft": true,
-          "disposition": "blocked",
-          "gate_ids": [
-            "G02",
             "G05"
           ]
         },
         {
-          "number": 8,
-          "title": "feat: establish Go-first Decision Core and ledger APIs",
-          "head_branch": "feat/v0.1-decision-core-baseline",
-          "base_branch": "main",
-          "head_sha": "f6c3ee783fccfa132867b450cc432a9ff7392c66",
+          "number": 6,
+          "title": "feat(runtime): durable ACP RunIntent acceptance and lost-ACK lookup",
+          "head_branch": "feature/runintent-acceptance-p0",
+          "base_branch": "docs/reliability-acceptance-20261102",
+          "head_sha": "6ea96a4c4f9928737c016a8f6793e0fc75bf338a",
           "draft": true,
           "disposition": "blocked",
           "gate_ids": [
-            "G02",
+            "G01",
+            "G05"
+          ]
+        },
+        {
+          "number": 7,
+          "title": "feat(runtime): mTLS-verified ACP RunIntent accept and inspect HTTP boundary",
+          "head_branch": "feature/acp-mtls-runintent-http-v1",
+          "base_branch": "feature/runintent-acceptance-p0",
+          "head_sha": "05c8b3d88f3e057ffdaece5eda322b33de2fec5d",
+          "draft": true,
+          "disposition": "blocked",
+          "gate_ids": [
+            "G01",
             "G05"
           ]
         }
@@ -159,23 +141,11 @@
       "repo": "avaargsh/EngageGuard",
       "pull_requests": [
         {
-          "number": 5,
-          "title": "fix(P0): separate untrusted submission from Guard-owned operation ID",
-          "head_branch": "fix/guard-submission-authority-v1",
-          "base_branch": "feature/action-hash-v0",
-          "head_sha": "15582a24b1bd22ab16cca9dbbf745696745d1ce6",
-          "draft": true,
-          "disposition": "blocked",
-          "gate_ids": [
-            "G03"
-          ]
-        },
-        {
-          "number": 4,
-          "title": "fix(protocol): separate Runtime submission key from Guard-owned operation ID",
-          "head_branch": "feature/guard-submission-v1",
-          "base_branch": "feature/action-hash-v0",
-          "head_sha": "2e8bc6187a3975aa9ae8dc635343c048ebd665ef",
+          "number": 1,
+          "title": "docs: establish action authorization and trusted execution baseline",
+          "head_branch": "feature/platform-foundation",
+          "base_branch": "main",
+          "head_sha": "baa93e90ff33004a2e0071cf1dd67946480d91c2",
           "draft": true,
           "disposition": "blocked",
           "gate_ids": [
@@ -184,10 +154,10 @@
         },
         {
           "number": 2,
-          "title": "feat: bounded Workspace ActionHash and approval binding tests",
+          "title": "feat: separate submission RequestHash from resolved ActionHash",
           "head_branch": "feature/action-hash-v0",
           "base_branch": "feature/platform-foundation",
-          "head_sha": "aace8181e7bebc796f3fc249072240feb67f311e",
+          "head_sha": "9816eb36622ca0220f0308e379ecaa9090f01a51",
           "draft": true,
           "disposition": "blocked",
           "gate_ids": [
@@ -195,11 +165,95 @@
           ]
         },
         {
-          "number": 1,
-          "title": "docs: establish action authorization and trusted execution baseline",
-          "head_branch": "feature/platform-foundation",
-          "base_branch": "main",
-          "head_sha": "baa93e90ff33004a2e0071cf1dd67946480d91c2",
+          "number": 5,
+          "title": "fix(P0): separate untrusted submission from Guard-owned operation ID",
+          "head_branch": "fix/guard-submission-authority-v1",
+          "base_branch": "feature/action-hash-v0",
+          "head_sha": "d07359ec59deb20f18ba46afe1f3082394ee66f6",
+          "draft": true,
+          "disposition": "blocked",
+          "gate_ids": [
+            "G03"
+          ]
+        },
+        {
+          "number": 6,
+          "title": "test(P0): pin Go/Python/TypeScript Workspace ActionHash interoperability vectors",
+          "head_branch": "test/workspace-jcs-interoperability",
+          "base_branch": "fix/guard-submission-authority-v1",
+          "head_sha": "24b1ca4060a9328adc2eead15f45c7bb7af4effe",
+          "draft": true,
+          "disposition": "blocked",
+          "gate_ids": [
+            "G03"
+          ]
+        },
+        {
+          "number": 7,
+          "title": "feat(P0): PostgreSQL atomic Guard submission acceptance and stable operation IDs",
+          "head_branch": "feature/guard-postgres-acceptance-v1",
+          "base_branch": "fix/guard-submission-authority-v1",
+          "head_sha": "e7ffaedaf0522d2296b99e915bc5932e16d076d7",
+          "draft": true,
+          "disposition": "blocked",
+          "gate_ids": [
+            "G03"
+          ]
+        },
+        {
+          "number": 8,
+          "title": "fix(P0): port fail-closed schema durability to transactional Guard migrations",
+          "head_branch": "fix/guard-versioned-atomic-pg-migrations",
+          "base_branch": "feature/guard-postgres-acceptance-v1",
+          "head_sha": "192c180f0c8c7f24ca164b9f317de43b5d77c3d8",
+          "draft": true,
+          "disposition": "blocked",
+          "gate_ids": [
+            "G03"
+          ]
+        },
+        {
+          "number": 9,
+          "title": "feat(P0): fail-closed authenticated Guard admission HTTP seam",
+          "head_branch": "feature/guard-authenticated-admission-v1",
+          "base_branch": "fix/guard-versioned-atomic-pg-migrations",
+          "head_sha": "8bd6a116f209d02da75100bf919a2bc573103f87",
+          "draft": true,
+          "disposition": "blocked",
+          "gate_ids": [
+            "G03"
+          ]
+        },
+        {
+          "number": 10,
+          "title": "feat(P0): atomic one-time Permit claim, operation intent and audit",
+          "head_branch": "feature/guard-atomic-permit-intent-v1",
+          "base_branch": "feature/guard-authenticated-admission-v1",
+          "head_sha": "29b5b4c35001422f9876e52d891a429070df8bdc",
+          "draft": true,
+          "disposition": "blocked",
+          "gate_ids": [
+            "G03"
+          ]
+        },
+        {
+          "number": 11,
+          "title": "fix(P0): bind Permit, Intent and Audit to one operation via v3 constraints",
+          "head_branch": "fix/guard-ledger-cross-binding-v3",
+          "base_branch": "feature/guard-atomic-permit-intent-v1",
+          "head_sha": "539c9c4a6d3d9f8b9990eec20b10d35f792399d2",
+          "draft": true,
+          "disposition": "blocked",
+          "gate_ids": [
+            "G03"
+          ]
+        },
+        {
+          "number": 12,
+          "title": "feat(P0): verified SPIFFE mTLS Runtime principal resolver (no header trust)",
+          "head_branch": "feature/guard-spiffe-mtls-principal-v1",
+          "base_branch": "feature/guard-authenticated-admission-v1",
+          "head_sha": "401a853a8a25b6037e6cce45280c055da3eb1604",
           "draft": true,
           "disposition": "blocked",
           "gate_ids": [
@@ -212,18 +266,6 @@
       "repo": "avaargsh/compute-control-panel",
       "pull_requests": [
         {
-          "number": 2,
-          "title": "feat: establish Go service foundation and provider operation invariants",
-          "head_branch": "feat/go-foundation",
-          "base_branch": "main",
-          "head_sha": "921c8bf59088e2e3de351518fa65b9ef7b861d03",
-          "draft": true,
-          "disposition": "blocked",
-          "gate_ids": [
-            "G04"
-          ]
-        },
-        {
           "number": 1,
           "title": "docs: establish Compute Control Plane baseline",
           "head_branch": "feature/platform-foundation",
@@ -234,20 +276,64 @@
           "gate_ids": [
             "G04"
           ]
+        },
+        {
+          "number": 2,
+          "title": "feat: establish Go service foundation and provider operation invariants",
+          "head_branch": "feat/go-foundation",
+          "base_branch": "main",
+          "head_sha": "f1fef171cfa5ab841c0e5a05508cd6a3a42f4ea3",
+          "draft": true,
+          "disposition": "blocked",
+          "gate_ids": [
+            "G04"
+          ]
+        },
+        {
+          "number": 6,
+          "title": "fix(inbox): reject ambiguous and deeply nested event payloads",
+          "head_branch": "fix/inbox-strict-payload-json-v1",
+          "base_branch": "feat/go-foundation",
+          "head_sha": "13bb4d6946e7f161bf3a0862ec0e0250c17244f2",
+          "draft": false,
+          "disposition": "blocked",
+          "gate_ids": [
+            "G04"
+          ]
+        }
+      ]
+    },
+    {
+      "repo": "avaargsh/agent-decision",
+      "pull_requests": [
+        {
+          "number": 8,
+          "title": "feat: establish Go-first Decision Core and ledger APIs",
+          "head_branch": "feat/v0.1-decision-core-baseline",
+          "base_branch": "main",
+          "head_sha": "13f526eca976a39d6f0abad26d11962d59ad85fe",
+          "draft": true,
+          "disposition": "blocked",
+          "gate_ids": [
+            "G02",
+            "G05"
+          ]
+        },
+        {
+          "number": 10,
+          "title": "feat: add transactional Decision outbox and leased dispatcher",
+          "head_branch": "feat/decision-outbox-v1-stacked",
+          "base_branch": "feat/v0.1-decision-core-baseline",
+          "head_sha": "9126d41a4c5d98c87809896cf2b6effec5e0dd03",
+          "draft": true,
+          "disposition": "blocked",
+          "gate_ids": [
+            "G02",
+            "G05"
+          ]
         }
       ]
     }
   ],
-  "parallel_conflicts": [
-    {
-      "repo": "avaargsh/EngageGuard",
-      "pull_requests": [
-        4,
-        5
-      ],
-      "candidate_pr": 5,
-      "reason": "Both sibling PRs change caller/Guard operation ID boundary; PR #5 has an ActionSubmission type and schema, while #4 contains a competing ingress contract. Selectively port validated improvements, never merge both independently.",
-      "issue": "https://github.com/avaargsh/EngageGuard/issues/3"
-    }
-  ]
+  "parallel_conflicts": []
 }
