@@ -39,10 +39,14 @@ jobs:
           files="$(gofmt -l .)"
           if [ -n "$files" ]; then
             echo "$files"
+            gofmt -d $files
             exit 1
           fi
       - name: Verify module checksums
-        run: go mod verify
+        run: |
+          go mod verify
+          go mod tidy
+          git diff -- go.mod go.sum
       - name: Static analysis
         run: go vet ./...
       - name: Race-enabled tests
