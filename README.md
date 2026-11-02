@@ -49,7 +49,7 @@ Compute is requested through Compute Control Plane; a Decision plugin never crea
 8. EngageGuard owns protected-action authorization and Action Operation Journal; Compute owns provider operation journal.
 9. Secrets never enter AgentBundle, plugin payloads, logs, traces or evidence.
 
-## Normative architecture documents
+## Architecture and contract references (proposed)
 
 - [Platform baseline](docs/architecture/PLATFORM-BASELINE.md)
 - [Domain ownership](docs/architecture/DOMAIN-OWNERSHIP.md)
@@ -62,9 +62,10 @@ Compute is requested through Compute Control Plane; a Decision plugin never crea
 - [P0 Golden Path](docs/roadmap/P0-GOLDEN-PATH.md)
 - [Architecture review disposition](docs/architecture/REVIEW-DISPOSITION-2026-11-02.md)
 - [Implementation roadmap](docs/roadmap/IMPLEMENTATION-ROADMAP.md)
-- [Decision Turn request schema](contracts/agent-decision/v0.1/decision-turn.schema.json)
-- [Decision result schema](contracts/agent-decision/v0.1/decision-result.schema.json)
-- [ActionHash v0.1 cross-language vectors](contracts/engageguard/action-hash/v0.1/workspace-write-vectors.json)
+- [Agent Decision Go Core API candidate](https://github.com/avaargsh/agent-decision/blob/bbdf45e415b310b421932977ca415419772dcaaa/api/openapi.yaml) — service-owned source, blocked pending [agent-decision#9](https://github.com/avaargsh/agent-decision/issues/9).
+- [Cross-repository protocol authority proposal](https://github.com/avaargsh/agent-control-panel/blob/governance/platform-v0.3/docs/governance/ADR-0001-PROTOCOL-AUTHORITY.md) — proposed only; not ratified.
+  
+The ACP-local `contracts/agent-decision/v0.1/` schemas and `contracts/engageguard/action-hash/v0.1/` vectors are retained as historical compatibility snapshots. They are not normative service contracts and must not be used to freeze a wire format or ActionHash preimage before the owning services approve the source contract.
 
 ## Status
 
