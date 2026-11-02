@@ -58,12 +58,12 @@ Required fields are validated at the consumer boundary. `causation_id` may be om
 8. Unknown breaking schema versions are quarantined and alerted. Additive optional fields may be ignored only where the schema permits it.
 9. No distributed transaction and no exactly-once delivery or external-effect claim.
 
-## Identifier ownership
+## Candidate identifier ownership (cross-service ratification pending)
 
 See [Identifier Lifecycle](IDENTIFIER-LIFECYCLE.md) for the canonical creator, owner and retry rules.
 
 - Control Plane: `run_intent_id`.
-- Runtime: `run_id`, `workflow_id`, `run_attempt_id`; Runtime generates `invocation_id` and `guard_submission_key` before calling their owning services; EngageGuard generates and returns `operation_id`.
+- Runtime: `run_id`, `workflow_id`, `run_attempt_id`; Runtime proposes to generate `invocation_id` and `guard_submission_key` before calling their owning services; EngageGuard owns the Action Operation and proposed `operation_id` (creation semantics remain blocked by G03).
 - Decision: DecisionRecord, invocation ledger/result and `proposal_id`.
 - EngageGuard: Action Operation record (wire field `operation_id`), `action_hash`, `permit_id`, `executor_attempt_id`.
 - Compute Control Plane: `workload_id`, `allocation_id`, `compute_operation_id`.
