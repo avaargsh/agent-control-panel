@@ -159,5 +159,46 @@ func verifyRunIntentSchema(ctx context.Context, tx pgx.Tx) error {
 	if !complete {
 		return ErrSchemaDrift
 	}
+
+	// A matching migration checksum proves which SQL was applied; it does not
+	// prove that an operator has not since dropped a critical database guard.
+	// Verify the constraints that enforce idempotency, lease/fence consistency,
+	// state payload ownership, ordered Inbox identity and tenant-scoped claims.
+	requiredConstraints := []string{
+		"run_intents_pkey",
+		"run_intents_idempotency_unique",
+		"run_intents_lease_consistency",
+		"run_intents_state_payload_consistency",
+		"outbox_events_pkey",
+		"outbox_aggregate_version_unique",
+		"outbox_lease_consistency",
+		"outbox_published_consistency",
+		"inbox_events_pkey",
+		"inbox_event_tenant_identity",
+		"inbox_applied_consistency",
+		"inbox_aggregate_claims_pkey",
+		"inbox_aggregate_claims_event_id_key",
+		"inbox_aggregate_claims_consumer_name_event_id_tenant_id_fkey",
+		"inbox_cursors_pkey",
+	}
+	var found int
+	if err := tx.QueryRow(ctx, `
+		SELECT count(*)
+		FROM pg_constraint
+		WHERE conname = ANY($1::text[])
+		  AND convalidated
+		  AND conrelid IN (
+			to_regclass('run_intents'),
+			to_regclass('outbox_events'),
+			to_regclass('inbox_events'),
+			to_regclass('inbox_aggregate_claims'),
+			to_regclass('inbox_cursors')
+		  )
+	`, requiredConstraints).Scan(&found); err != nil {
+		return fmt.Errorf("verify RunIntent schema constraints: %w", err)
+	}
+	if found != len(requiredConstraints) {
+		return ErrSchemaDrift
+	}
 	return nil
 }
