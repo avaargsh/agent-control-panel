@@ -77,20 +77,30 @@ func (r *Repository) ClaimOutbox(
 
 	rows, err := tx.Query(ctx, `
 		WITH candidates AS (
-			SELECT event_id
-			FROM outbox_events
-			WHERE attempts < $1
+			SELECT candidate.event_id
+			FROM outbox_events AS candidate
+			WHERE candidate.attempts < $1
 			  AND (
-			    (delivery_state = 'PENDING' AND next_attempt_at <= $2)
+			    (candidate.delivery_state = 'PENDING' AND candidate.next_attempt_at <= $2)
 			    OR
-			    (delivery_state = 'PUBLISHING' AND lease_expires_at <= $2)
+			    (candidate.delivery_state = 'PUBLISHING' AND candidate.lease_expires_at <= $2)
+			  )
+			  AND NOT EXISTS (
+			    SELECT 1
+			    FROM outbox_events AS predecessor
+			    WHERE predecessor.producer = candidate.producer
+			      AND predecessor.tenant_id = candidate.tenant_id
+			      AND predecessor.aggregate_type = candidate.aggregate_type
+			      AND predecessor.aggregate_id = candidate.aggregate_id
+			      AND predecessor.aggregate_version < candidate.aggregate_version
+			      AND predecessor.delivery_state <> 'PUBLISHED'
 			  )
 			ORDER BY
-			  CASE WHEN delivery_state = 'PUBLISHING' THEN lease_expires_at ELSE next_attempt_at END,
-			  created_at,
-			  event_id
+			  CASE WHEN candidate.delivery_state = 'PUBLISHING' THEN candidate.lease_expires_at ELSE candidate.next_attempt_at END,
+			  candidate.created_at,
+			  candidate.event_id
 			LIMIT $3
-			FOR UPDATE SKIP LOCKED
+			FOR UPDATE OF candidate SKIP LOCKED
 		)
 		UPDATE outbox_events AS event
 		SET delivery_state = 'PUBLISHING',
