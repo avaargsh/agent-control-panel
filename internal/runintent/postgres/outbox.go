@@ -193,6 +193,7 @@ func (r *Repository) AcknowledgeOutbox(ctx context.Context, lease OutboxLease, p
 		UPDATE outbox_events
 		SET delivery_state = 'PUBLISHED',
 		    published_at = $4,
+		    last_error_code = NULL,
 		    lease_owner = NULL,
 		    lease_expires_at = NULL
 		WHERE event_id = $1::uuid

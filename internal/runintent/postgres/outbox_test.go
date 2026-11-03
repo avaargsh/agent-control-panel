@@ -168,6 +168,31 @@ func TestOutboxDispatcherRetriesWithoutPersistingPublisherError(t *testing.T) {
 	if strings.Contains(errorCode, "secret-value") {
 		t.Fatal("publisher error text leaked into persisted Outbox error code")
 	}
+
+	// A later successful delivery clears the transient failure code.
+	publisher.err = nil
+	if _, err := pool.Exec(ctx, `
+		UPDATE outbox_events
+		SET next_attempt_at = clock_timestamp() - INTERVAL '1 second'
+		WHERE aggregate_id = $1
+	`, intent.ID); err != nil {
+		t.Fatalf("make retry eligible: %v", err)
+	}
+	result, err = dispatcher.DispatchOnce(ctx)
+	if err != nil || result.Claimed != 1 || result.Published != 1 {
+		t.Fatalf("successful retry: result=%+v err=%v", result, err)
+	}
+	var recoveredState string
+	var errorCleared bool
+	if err := pool.QueryRow(ctx, `
+		SELECT delivery_state, last_error_code IS NULL
+		FROM outbox_events WHERE aggregate_id = $1
+	`, intent.ID).Scan(&recoveredState, &errorCleared); err != nil {
+		t.Fatalf("read recovered Outbox row: %v", err)
+	}
+	if recoveredState != "PUBLISHED" || !errorCleared {
+		t.Fatalf("successful retry retained failure state: state=%q errorCleared=%v", recoveredState, errorCleared)
+	}
 }
 
 func TestOutboxClaimFencesExpiredWorkerLease(t *testing.T) {
