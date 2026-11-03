@@ -311,3 +311,54 @@ func TestOutboxLeaseValidationRejectsBadErrorCodes(t *testing.T) {
 		t.Fatal(fmt.Sprintf("unexpected Outbox error code validation"))
 	}
 }
+
+func TestOutboxClaimPreservesAggregateVersionOrder(t *testing.T) {
+	repository, _ := testRepository(t)
+	ctx := context.Background()
+	intent := testIntent(206)
+	firstEvent := testEvent(intent, 1, 1206, eventCreated)
+	if _, inserted, err := repository.Create(ctx, intent, firstEvent); err != nil || !inserted {
+		t.Fatalf("create RunIntent and first Outbox event: inserted=%v err=%v", inserted, err)
+	}
+
+	secondEvent := testEvent(intent, 2, 1207, "agent.run-intent.dispatching")
+	tx, err := repository.pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin second Outbox event transaction: %v", err)
+	}
+	if err := insertEvent(ctx, tx, secondEvent); err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("insert second Outbox event: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit second Outbox event: %v", err)
+	}
+
+	firstClaim, err := repository.ClaimOutbox(ctx, "ordered-worker-1", time.Now().UTC(), time.Minute, 10, 3)
+	if err != nil {
+		t.Fatalf("claim first aggregate event: %v", err)
+	}
+	if len(firstClaim) != 1 || firstClaim[0].Event.AggregateVersion != 1 {
+		t.Fatalf("first claim must contain only aggregate version 1, got %+v", firstClaim)
+	}
+
+	// A different worker must not skip the leased v1 and publish v2.
+	secondWorkerClaim, err := repository.ClaimOutbox(ctx, "ordered-worker-2", time.Now().UTC(), time.Minute, 10, 3)
+	if err != nil {
+		t.Fatalf("claim while aggregate predecessor is leased: %v", err)
+	}
+	if len(secondWorkerClaim) != 0 {
+		t.Fatalf("later aggregate version was claimed before v1 was published: %+v", secondWorkerClaim)
+	}
+
+	if err := repository.AcknowledgeOutbox(ctx, firstClaim[0], time.Now().UTC()); err != nil {
+		t.Fatalf("acknowledge aggregate version 1: %v", err)
+	}
+	nextClaim, err := repository.ClaimOutbox(ctx, "ordered-worker-2", time.Now().UTC(), time.Minute, 10, 3)
+	if err != nil {
+		t.Fatalf("claim aggregate version 2 after v1 ACK: %v", err)
+	}
+	if len(nextClaim) != 1 || nextClaim[0].Event.AggregateVersion != 2 {
+		t.Fatalf("expected aggregate version 2 after v1 ACK, got %+v", nextClaim)
+	}
+}
