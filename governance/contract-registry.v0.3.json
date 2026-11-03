@@ -197,5 +197,26 @@
       "durable_index_owner": "avaargsh/EngageGuard",
       "meaning": "stable HTTP Guard Idempotency-Key; Guard creates operation_id"
     }
-  ]
+  ],
+  "runtime_migration": {
+    "status": "candidate",
+    "strategy": "single-writer-cutover",
+    "baseline_writer": "avaargsh/agent-runtime",
+    "candidate_writer": "avaargsh/agent-infra",
+    "cutover_authorized": false,
+    "gate": "G01",
+    "evidence": {
+      "rust_sqlx_store": "测试通过",
+      "trusted_acp_transport": "当前未知",
+      "workflow_engine_parity": "当前未知",
+      "restart_recovery": "当前未知",
+      "cross_service_golden_path": "当前未知"
+    },
+    "source": {
+      "pr_url": "https://github.com/avaargsh/agent-infra/pull/9",
+      "head_sha": "545269c6c1a9fa486e27286ddef85b1bceac4cc2",
+      "ci_url": "https://github.com/avaargsh/agent-infra/actions/runs/41593065180"
+    },
+    "limitations": "Snapshot describes design authorization only; it does not attest any running deployment, routing state, production cutover, or real-provider recovery."
+  }
 }
