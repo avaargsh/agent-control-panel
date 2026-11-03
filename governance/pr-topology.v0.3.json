@@ -240,7 +240,7 @@
           "title": "fix(P0): transactional checksummed Guard schema migrations",
           "head_branch": "feature/guard-versioned-migrations-v2",
           "base_branch": "feature/guard-postgres-acceptance-v3",
-          "head_sha": "cab54aec6f95c35038638bcba47d083a1265fa8d",
+          "head_sha": "e8c7fc095cd3f8a96401c17e8d95361969322e5d",
           "draft": true,
           "disposition": "blocked",
           "gate_ids": [
@@ -252,7 +252,7 @@
           "title": "feat(P0): authenticated HTTP admission for Guard submissions",
           "head_branch": "feature/guard-http-admission-v2",
           "base_branch": "feature/guard-versioned-migrations-v2",
-          "head_sha": "6317da545d229df324d11e3f4225b89e3e93960d",
+          "head_sha": "f64a6b4855668c761bd9fe8fb22916a73ba6c69b",
           "draft": true,
           "disposition": "blocked",
           "gate_ids": [
@@ -264,7 +264,7 @@
           "title": "feat(P0): verify SPIFFE mTLS Runtime identity and full Principal binding",
           "head_branch": "feature/guard-spiffe-mtls-principal-v2",
           "base_branch": "feature/guard-http-admission-v2",
-          "head_sha": "f29229d80e78c2f2504da3bdda476734022dbf67",
+          "head_sha": "1fd9058a564ba07e13ea96142015b8b87c52efc0",
           "draft": true,
           "disposition": "blocked",
           "gate_ids": [
