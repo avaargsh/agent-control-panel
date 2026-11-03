@@ -42,8 +42,9 @@ reused.
 Configure:
 
 - `BatchSize`: 1–1000 events per pass.
-- `LeaseTTL`: longer than `PublishTimeout`, including time for the database
-  ACK.
+- `LeaseTTL`: must exceed `(BatchSize + 1) × PublishTimeout`; sequential batch
+  publication needs a full per-event timeout budget plus one extra timeout-sized
+  margin for database ACK and loop overhead.
 - `PublishTimeout`: per-event transport timeout and strictly shorter than
   the lease TTL.
 - `MaxAttempts`: maximum number of claim/publish attempts.

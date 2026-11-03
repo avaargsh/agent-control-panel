@@ -19,7 +19,6 @@ var (
 	ErrOutboxLeaseLost    = errors.New("outbox publish lease was lost")
 	ErrInvalidOutboxLease = errors.New("invalid outbox publish lease")
 	ErrInvalidOutboxCode  = errors.New("invalid outbox error code")
-	ErrOutboxPublish      = errors.New("outbox event publish failed")
 )
 
 // OutboxLease identifies one claim attempt. Attempt is a fencing value: even
@@ -335,7 +334,7 @@ func NewOutboxDispatcher(repository *Repository, publisher EventPublisher, optio
 		strings.TrimSpace(options.Owner) == "" || options.Owner != strings.TrimSpace(options.Owner) ||
 		len(options.Owner) > 128 || options.BatchSize < 1 || options.BatchSize > maxOutboxBatchSize ||
 		options.LeaseTTL < time.Microsecond || options.PublishTimeout <= 0 ||
-		options.PublishTimeout >= options.LeaseTTL || options.MaxAttempts < 1 ||
+		options.PublishTimeout >= options.LeaseTTL/time.Duration(options.BatchSize+1) || options.MaxAttempts < 1 ||
 		options.MaxAttempts > math.MaxInt32 || options.BaseBackoff <= 0 ||
 		options.MaxBackoff < options.BaseBackoff || options.PollInterval <= 0 {
 		return nil, errors.New("invalid Outbox dispatcher configuration")

@@ -77,6 +77,13 @@ func TestNewOutboxDispatcherRejectsUnsafeConfiguration(t *testing.T) {
 				MaxAttempts: 3, BaseBackoff: time.Second, MaxBackoff: time.Minute, PollInterval: time.Second,
 			},
 		},
+		{
+			name: "batch cannot finish before lease expiry",
+			options: OutboxDispatcherOptions{
+				Owner: "worker-1", BatchSize: 10, LeaseTTL: 30 * time.Second, PublishTimeout: 3 * time.Second,
+				MaxAttempts: 3, BaseBackoff: time.Second, MaxBackoff: time.Minute, PollInterval: time.Second,
+			},
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
