@@ -3,17 +3,31 @@
 Status: **PROPOSED sequencing / no automatic merges**.
 Governance anchor: https://github.com/avaargsh/agent-control-panel/issues/3.
 
-## Current branch topology (observed 2026-11-02)
+## Current branch topology (observed 2026-11-03)
 
-| Repo | Latest observed open Draft PR topology | Governance handling |
+This document covers **22 open infrastructure PRs across five repositories**.
+The separate 3 open GRPO-Rag PRs are tracked as an independent S1/GxP
+workstream; do not treat them as Control Plane implementation dependencies.
+See `governance/pr-topology.v0.3.json` for exact reviewed heads.
+
+| Repository | Open branches and ancestry | Integration decision |
 |---|---|---|
-| agent-control-panel | #1 architecture (main), #2 Go RunIntent (main), #5 PostgreSQL RunIntent (base #2), #4 governance (main) | #5 must remain stacked after #2; #1/#4 proposals not silently authoritative |
-| agent-runtime | #1 baseline (main) → #2 Temporal Spike (base #1) → #3 reliability (base #2) → #4 PostgreSQL RunStore (base #3) | Preserve sequential review and ancestry |
-| agent-decision | #8 Go Core (main) → #10 transactional Outbox (base #8). Legacy #1/#2/#3/#7 are no longer in the open-PR snapshot; do not delete their reviewed code without diffing. | Prefer Go Core #8 mainline; #10 as stacked Outbox |
-| EngageGuard | #1 baseline (main) → #2 ActionHash (base #1), with competing siblings #4 and #5 (both based on #2). Prefer #5 as a candidate submission boundary; selectively port relevant #4 validation, do NOT merge both as if sequential. | #4/#5 parallel conflict recorded; no simultaneous independent merge |
-| compute-control-panel | #1 architecture (main); #2 Go/PG/FakeProvider (main) | Keep FakeProvider evidence distinct from provider production approval |
+| agent-control-panel (4) | #1 architecture; #2 Go foundation → #5 PostgreSQL; #4 governance | Preserve single ACP RunIntent authority; #5 stacks on #2 |
+| agent-runtime (5) | #1 → #2 Temporal → #3 reliability → #6 RunIntent → #7 authenticated HTTP | Runtime #4 was merged into stacked #3 ancestry; do not reopen it |
+| agent-decision (1) | #8 Go Decision Core; #10 transactional Outbox **merged into #8 branch** | Review #8 current head for both core and outbox, never double-merge #10 |
+| EngageGuard (10) | New candidate: #5 → #14 → #16 → #17 → #18; #15 compatibility sibling from #5. **Legacy blocked lineage:** #9 (parent #8 closed unmerged) → #10 → #11; #12 branches from #9 | New #17 replaces old #9 ingress; new #18 replaces old #12 principal resolver. Retain useful Permit/Intent/Audit integrity from old #10/#11 by selective reviewed port only |
+| compute-control-panel (2) | #1 architecture and #2 Go/PG/FakeProvider off main | Closed #6 must not reappear in the open inventory; provider production acceptance remains G04 |
 
-**No PR is declared superseded, approved or merged by this matrix.** No existing branch is closed, rebased or rewritten automatically.
+`lineage_state=retired-parent-blocked` is intentionally **not** permission to
+merge. The validator accepts an orphan only when the exact closed, unmerged
+parent PR number, head branch and 40-character SHA are pinned. The label
+propagates through its live children; neither approval nor production dispatch
+follows. The existing retired branches remain open until all reviewed reusable
+fixes are covered by replacement tests.
+
+The GitHub `mergeable` flag and green branch CI are independent of the
+cross-service security/recovery gates. No PR is automatically marked approved
+or merged by the manifest.
 
 ## Hard gates by service
 
@@ -53,4 +67,15 @@ The observation at `governance/pr-topology.v0.3.json` records current PR numbers
 
 ## Guard contract authority correction
 
-External Runtime→Guard ingress must use **ActionSubmission v1** from EngageGuard PR #5 candidate; the operation_id-bearing `ActionRequest` is a Guard-internal resolved record and cannot be sent by Runtime. The v0.3 registry pins these as distinct blocked contracts. Guard #4/#5 are sibling changes sharing a parent branch; do not merge both independently. Keep #4's validation improvements only after diff/review against #5. The database claim, hash, Permit and reconciliation remain G03 blockers.
+Runtime → Guard ingress uses the unified `ActionSubmission v1` from new
+EngageGuard #5. The operation-ID-bearing resolved `ActionRequest` is
+Guard-internal and never accepted as caller-controlled identity. The new
+acceptance stack (#14, #16, #17, #18) is a **Draft candidate**, not a
+production enforcement path.
+
+The old #9/#10/#11/#12 chain is based on the retired #8 migration parent.
+Its one-time Permit/Intent/Audit integrity and v3 composite foreign keys are
+reviewed implementation ideas that must be explicitly transplanted and
+retested on the unified schema; do not merge the old chain as if it were a
+successor. Until a real permit, trusted executor and UNKNOWN reconciliation
+are proven, **protected side effects remain disabled**.
