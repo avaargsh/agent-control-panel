@@ -255,6 +255,42 @@ def validate_registry(registry):
         if set(gate["owners"]) != expected_owners or gate["issue"] != expected_issue:
             raise ValueError("merge gate authoritative owners mismatch: " + gate_id)
 
+    # Rust is an execution-core migration candidate, not a second Run writer.
+    # Only a separately ratified governance version may authorize the cutover.
+    migration = registry.get("runtime_migration")
+    if not isinstance(migration, dict):
+        raise ValueError("runtime migration declaration required")
+    if (migration.get("baseline_writer") != domain_by_id["run-execution"]["writer"] or
+            migration.get("candidate_writer") != "avaargsh/agent-infra" or
+            migration.get("candidate_writer") == migration.get("baseline_writer")):
+        raise ValueError("runtime migration owner mismatch")
+    if (migration.get("strategy") != "single-writer-cutover" or
+            migration.get("status") != "candidate" or
+            migration.get("gate") != "G01" or
+            gate_by_id["G01"]["state"] != "blocked"):
+        raise ValueError("runtime migration requires blocked G01 single-writer gate")
+    if migration.get("cutover_authorized") is not False:
+        raise ValueError("runtime migration cutover is not authorized")
+    evidence = migration.get("evidence")
+    required_evidence = {
+        "rust_sqlx_store", "trusted_acp_transport", "workflow_engine_parity",
+        "restart_recovery", "cross_service_golden_path",
+    }
+    allowed_levels = {"已实现", "测试通过", "真实环境验收", "当前未知"}
+    if (not isinstance(evidence, dict) or set(evidence) != required_evidence or
+            any(v not in allowed_levels for v in evidence.values())):
+        raise ValueError("runtime migration evidence invalid")
+    if any(evidence[k] != "当前未知" for k in required_evidence - {"rust_sqlx_store"}):
+        raise ValueError("runtime migration parity is not verified")
+    source = migration.get("source")
+    if (not isinstance(source, dict) or
+            source.get("pr_url") != "https://github.com/avaargsh/agent-infra/pull/9" or
+            not isinstance(source.get("head_sha"), str) or
+            not SHA.fullmatch(source["head_sha"]) or
+            not isinstance(source.get("ci_url"), str) or
+            not re.fullmatch(r"https://github\\.com/avaargsh/agent-infra/actions/runs/[0-9]+", source["ci_url"])):
+        raise ValueError("runtime migration evidence source invalid")
+
     return True
 
 
