@@ -240,7 +240,7 @@
           "title": "fix(P0): transactional checksummed Guard schema migrations",
           "head_branch": "feature/guard-versioned-migrations-v2",
           "base_branch": "feature/guard-postgres-acceptance-v3",
-          "head_sha": "9c6a751635f04058a724061cddb5690b52aedb1b",
+          "head_sha": "cab54aec6f95c35038638bcba47d083a1265fa8d",
           "draft": true,
           "disposition": "blocked",
           "gate_ids": [
