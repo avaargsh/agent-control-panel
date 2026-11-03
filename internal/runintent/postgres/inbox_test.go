@@ -1,4 +1,3 @@
-
 package postgres
 
 import (
@@ -35,17 +34,17 @@ func (a *testInboxApplier) Apply(ctx context.Context, tx pgx.Tx, event InboxEven
 
 func testInboxEvent(tenantID, aggregateID string, version uint64, eventID int) Event {
 	return Event{
-		ID: fmt.Sprintf("00000000-0000-4000-8000-%012d", eventID),
-		Producer: "test-producer",
-		Type: "agent.test.changed",
-		SchemaVersion: 1,
-		TenantID: tenantID,
-		AggregateType: "agent",
-		AggregateID: aggregateID,
+		ID:               fmt.Sprintf("00000000-0000-4000-8000-%012d", eventID),
+		Producer:         "test-producer",
+		Type:             "agent.test.changed",
+		SchemaVersion:    1,
+		TenantID:         tenantID,
+		AggregateType:    "agent",
+		AggregateID:      aggregateID,
 		AggregateVersion: version,
-		OccurredAt: time.Now().UTC(),
-		CorrelationID: "test-correlation",
-		Payload: json.RawMessage(fmt.Sprintf("{\"version\":%d}", version)),
+		OccurredAt:       time.Now().UTC(),
+		CorrelationID:    "test-correlation",
+		Payload:          json.RawMessage(fmt.Sprintf("{\"version\":%d}", version)),
 	}
 }
 
