@@ -70,12 +70,40 @@ def validate_snapshot(snapshot: dict, registry: dict) -> bool:
                     repo != "avaargsh/agent-control-panel" or number != 4 or
                     pr["head_tracking"] != "exists-only"):
                 raise ValueError("only the self-editing governance PR may ignore its own head SHA")
+        by_number = {p["number"]: p for p in entry["pull_requests"]}
         for pr in entry["pull_requests"]:
-            if pr["base_branch"] != "main":
-                parent_number = branches.get(pr["base_branch"])
-                if parent_number is None or parent_number == pr["number"]:
+            parent_branch = pr["base_branch"]
+            parent_number = branches.get(parent_branch) if parent_branch != "main" else None
+            lineage = pr.get("lineage_state")
+            explicit = pr.get("legacy_parent")
+            if lineage not in (None, "retired-parent-blocked"):
+                raise ValueError("unrecognized PR lineage state")
+            if parent_branch == "main":
+                if lineage is not None or explicit is not None:
+                    raise ValueError("main-based PR cannot claim retired parent")
+                continue
+            if parent_number is None or parent_number == pr["number"]:
+                # No live parent: only an explicitly identified, unmerged,
+                # closed PR can explain this legacy branch. It stays BLOCKED.
+                if (lineage != "retired-parent-blocked" or
+                        not isinstance(explicit, dict) or
+                        type(explicit.get("pr_number")) is not int or
+                        explicit["pr_number"] <= 0 or
+                        explicit["pr_number"] in by_number or
+                        explicit.get("head_branch") != parent_branch or
+                        not isinstance(explicit.get("head_sha"), str) or
+                        not SHA.fullmatch(explicit["head_sha"]) or
+                        explicit.get("state") != "closed" or
+                        explicit.get("merged") is not False):
                     raise ValueError("missing active parent PR for stacked branch")
-        all_prs[repo] = {p["number"]: p for p in entry["pull_requests"]}
+            else:
+                if explicit is not None:
+                    raise ValueError("active parent cannot also be a legacy parent")
+                parent = by_number[parent_number]
+                inherited_retired = parent.get("lineage_state") == "retired-parent-blocked"
+                if inherited_retired != (lineage == "retired-parent-blocked"):
+                    raise ValueError("retired parent lineage must propagate to children")
+        all_prs[repo] = by_number
     if seen_repo != EXPECTED_REPOS:
         raise ValueError("missing or unexpected core repository")
     groups = snapshot.get("parallel_conflicts", [])
