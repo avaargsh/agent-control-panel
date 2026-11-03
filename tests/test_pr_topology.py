@@ -48,7 +48,8 @@ class PRTopologyTests(unittest.TestCase):
     def test_closed_guard_competing_pr_is_removed_from_open_snapshot(self):
         guard = next(r for r in SNAPSHOT["repositories"] if r["repo"] == "avaargsh/EngageGuard")
         self.assertNotIn(4, {p["number"] for p in guard["pull_requests"]})
-        self.assertEqual(SNAPSHOT["parallel_conflicts"], [])
+        conflicts = {tuple(sorted(group["pull_requests"])) for group in SNAPSHOT["parallel_conflicts"]}
+        self.assertEqual(conflicts, {(9, 17), (12, 18)})
         self.assertTrue(validate_snapshot(SNAPSHOT, REGISTRY))
 
     def test_non_draft_open_pr_remains_blocked_until_gate_passes(self):
