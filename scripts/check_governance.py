@@ -288,7 +288,7 @@ def validate_registry(registry):
             not isinstance(source.get("head_sha"), str) or
             not SHA.fullmatch(source["head_sha"]) or
             not isinstance(source.get("ci_url"), str) or
-            not re.fullmatch(r"https://github\\.com/avaargsh/agent-infra/actions/runs/[0-9]+", source["ci_url"])):
+            not re.fullmatch(r"https://github\.com/avaargsh/agent-infra/actions/runs/[0-9]+", source["ci_url"])):
         raise ValueError("runtime migration evidence source invalid")
 
     return True
