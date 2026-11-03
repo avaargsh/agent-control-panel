@@ -21,6 +21,7 @@ ID and report success only after the transport acknowledges the message.
   cause a duplicate publish. Consumers must deduplicate by `event_id`.
 - **Bounded claims.** Each claim uses `FOR UPDATE SKIP LOCKED`, a batch limit,
   an owner and a lease expiry.
+- **Per-aggregate ordering.** A version is claimable only after every earlier event for the same producer, tenant, aggregate type and aggregate ID is `PUBLISHED`. A leased, retrying or quarantined predecessor blocks later versions; quarantine requires explicit operator resolution before the aggregate stream can advance. Independent aggregates remain concurrent.
 - **Fenced ACK/retry.** Every claim increments the persisted attempt counter.
   ACK and retry require event ID, lease owner and exact attempt; a stale claim
   cannot complete a newer claim even when a worker reuses its owner name.
