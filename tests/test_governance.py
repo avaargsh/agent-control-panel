@@ -158,5 +158,38 @@ class GovernanceTests(unittest.TestCase):
             validate_registry(broken)
 
 
+    def test_rust_migration_candidate_is_not_run_owner(self):
+        migration = REGISTRY["runtime_migration"]
+        self.assertEqual(migration["baseline_writer"], "avaargsh/agent-runtime")
+        self.assertEqual(migration["candidate_writer"], "avaargsh/agent-infra")
+        self.assertIs(migration["cutover_authorized"], False)
+        self.assertEqual(migration["gate"], "G01")
+        self.assertTrue(validate_registry(REGISTRY))
+
+    def test_rust_migration_cannot_silently_enable_dual_writes(self):
+        broken = copy.deepcopy(REGISTRY)
+        broken["runtime_migration"]["cutover_authorized"] = True
+        with self.assertRaisesRegex(ValueError, "runtime migration cutover is not authorized"):
+            validate_registry(broken)
+
+    def test_rust_migration_cannot_claim_unverified_parity(self):
+        broken = copy.deepcopy(REGISTRY)
+        broken["runtime_migration"]["evidence"]["workflow_engine_parity"] = "真实环境验收"
+        with self.assertRaisesRegex(ValueError, "runtime migration parity is not verified"):
+            validate_registry(broken)
+
+    def test_runtime_migration_metadata_is_mandatory(self):
+        broken = copy.deepcopy(REGISTRY)
+        broken.pop("runtime_migration")
+        with self.assertRaisesRegex(ValueError, "runtime migration declaration required"):
+            validate_registry(broken)
+
+    def test_rust_migration_candidate_must_be_distinct(self):
+        broken = copy.deepcopy(REGISTRY)
+        broken["runtime_migration"]["candidate_writer"] = "avaargsh/agent-runtime"
+        with self.assertRaisesRegex(ValueError, "runtime migration owner mismatch"):
+            validate_registry(broken)
+
+
 if __name__ == "__main__":
     unittest.main()
