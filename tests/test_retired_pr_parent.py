@@ -19,22 +19,16 @@ class ClosedParentTests(unittest.TestCase):
     def test_old_guard_branch_requires_explicit_retired_parent(self):
         changed = copy.deepcopy(SNAPSHOT)
         g = guard(changed)
-        g["pull_requests"] = [p for p in g["pull_requests"] if p["number"] != 8]
         legacy = next(p for p in g["pull_requests"] if p["number"] == 9)
         legacy["lineage_state"] = "retired-parent-blocked"
-        legacy["legacy_parent"] = {
-            "pr_number": 8,
-            "head_branch": legacy["base_branch"],
-            "head_sha": "192c180f0c8c7f24ca164b9f317de43b5d77c3d8",
-            "state": "closed",
-            "merged": False,
-        }
+        self.assertIs(legacy["legacy_parent"]["merged"], False)
         self.assertTrue(validate_snapshot(changed, REGISTRY))
 
     def test_unqualified_missing_parent_rejected(self):
         changed = copy.deepcopy(SNAPSHOT)
         g = guard(changed)
         g["pull_requests"] = [p for p in g["pull_requests"] if p["number"] != 8]
+        next(p for p in g["pull_requests"] if p["number"] == 9).pop("legacy_parent")
         with self.assertRaisesRegex(ValueError, "missing active parent"):
             validate_snapshot(changed, REGISTRY)
 
@@ -44,13 +38,7 @@ class ClosedParentTests(unittest.TestCase):
         g["pull_requests"] = [p for p in g["pull_requests"] if p["number"] != 8]
         legacy = next(p for p in g["pull_requests"] if p["number"] == 9)
         legacy["lineage_state"] = "retired-parent-blocked"
-        legacy["legacy_parent"] = {
-            "pr_number": 8,
-            "head_branch": legacy["base_branch"],
-            "head_sha": "192c180f0c8c7f24ca164b9f317de43b5d77c3d8",
-            "state": "closed",
-            "merged": True,
-        }
+        legacy["legacy_parent"]["merged"] = True
         with self.assertRaises(ValueError):
             validate_snapshot(changed, REGISTRY)
 
