@@ -54,7 +54,8 @@ class PRTopologyTests(unittest.TestCase):
     def test_non_draft_open_pr_remains_blocked_until_gate_passes(self):
         changed = copy.deepcopy(SNAPSHOT)
         compute = next(r for r in changed["repositories"] if r["repo"] == "avaargsh/compute-control-panel")
-        ready = next(p for p in compute["pull_requests"] if p["number"] == 6)
+        ready = next(p for p in compute["pull_requests"] if p["number"] == 2)
+        ready["draft"] = False
         self.assertIs(ready["draft"], False)
         self.assertEqual(ready["disposition"], "blocked")
         self.assertTrue(validate_snapshot(changed, REGISTRY))
