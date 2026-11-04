@@ -375,11 +375,7 @@ func TestMigrationRejectsSameNameButChangedInboxConflictGuards(t *testing.T) {
 			name: "trigger function body changed to no-op",
 			statements: []string{
 				`CREATE OR REPLACE FUNCTION reject_inbox_conflict_evidence_mutation()
-				 RETURNS trigger LANGUAGE plpgsql AS $
-				 BEGIN
-				   RETURN NULL;
-				 END;
-				 $`,
+				 RETURNS trigger LANGUAGE plpgsql AS 'BEGIN RETURN NULL; END;'`,
 			},
 		},
 	}
