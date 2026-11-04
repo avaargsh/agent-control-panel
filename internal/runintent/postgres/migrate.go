@@ -204,25 +204,81 @@ func ensureInboxConflictMigration(ctx context.Context, tx pgx.Tx, applied bool, 
 	if !complete {
 		return ErrSchemaDrift
 	}
+	// Names alone are not enough. The archive's uniqueness scope must include
+	// the conflict digest, and the original-event FK must bind both identity
+	// columns; a same-name replacement must not be silently accepted.
 	var constraints int
 	if err := tx.QueryRow(ctx, `
-		SELECT count(*) FROM pg_constraint
-		WHERE conrelid=to_regclass('inbox_event_conflicts')
-		  AND convalidated
-		  AND conname IN ('inbox_event_conflicts_pkey','inbox_event_conflicts_original_fkey')
+		SELECT count(*)
+		FROM (
+			SELECT c.conname, c.contype, c.convalidated, c.confrelid,
+				(SELECT array_agg(a.attname::text ORDER BY k.ordinality)
+				 FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum,ordinality)
+				 JOIN pg_attribute a ON a.attrelid=c.conrelid AND a.attnum=k.attnum
+				) AS local_columns,
+				(SELECT array_agg(a.attname::text ORDER BY k.ordinality)
+				 FROM unnest(c.confkey) WITH ORDINALITY AS k(attnum,ordinality)
+				 JOIN pg_attribute a ON a.attrelid=c.confrelid AND a.attnum=k.attnum
+				) AS referenced_columns
+			FROM pg_constraint c
+			WHERE c.conrelid=to_regclass('inbox_event_conflicts')
+		) AS c
+		WHERE c.convalidated
+		  AND (
+			(c.conname='inbox_event_conflicts_pkey' AND c.contype='p'
+			 AND c.local_columns=ARRAY['consumer_name','event_id','conflict_sha256'])
+			OR
+			(c.conname='inbox_event_conflicts_original_fkey' AND c.contype='f'
+			 AND c.confrelid=to_regclass('inbox_events')
+			 AND c.local_columns=ARRAY['consumer_name','event_id']
+			 AND c.referenced_columns=ARRAY['consumer_name','event_id'])
+		  )
 	`).Scan(&constraints); err != nil {
-		return fmt.Errorf("verify Inbox conflict constraints: %w", err)
+		return fmt.Errorf("verify Inbox conflict constraint bindings: %w", err)
 	}
+	// pg_trigger.tgtype is an event bitmap: ROW=1 BEFORE=2 DELETE=8
+	// UPDATE=16 TRUNCATE=32. Reject same-name triggers wired to another
+	// event, to another function, or disabled for ordinary sessions.
 	var triggers int
 	if err := tx.QueryRow(ctx, `
-		SELECT count(*) FROM pg_trigger
-		WHERE tgrelid=to_regclass('inbox_event_conflicts')
-		  AND NOT tgisinternal AND tgenabled='O'
-		  AND tgname IN ('inbox_conflict_evidence_no_update_delete','inbox_conflict_evidence_no_truncate')
+		SELECT count(*) FROM pg_trigger t
+		WHERE t.tgrelid=to_regclass('inbox_event_conflicts')
+		  AND NOT t.tgisinternal AND t.tgenabled='O'
+		  AND t.tgfoid=to_regprocedure('reject_inbox_conflict_evidence_mutation()')
+		  AND (
+			(t.tgname='inbox_conflict_evidence_no_update_delete' AND t.tgtype=27)
+			OR
+			(t.tgname='inbox_conflict_evidence_no_truncate' AND t.tgtype=34)
+		  )
 	`).Scan(&triggers); err != nil {
-		return fmt.Errorf("verify Inbox conflict triggers: %w", err)
+		return fmt.Errorf("verify Inbox conflict trigger bindings: %w", err)
 	}
-	if constraints != 2 || triggers != 2 {
+	// A same-name CREATE OR REPLACE FUNCTION can change the trigger body
+	// while preserving its OID and every pg_trigger binding. Check the
+	// installed source against the immutable version-2 migration contract.
+	var guardBody string
+	err := tx.QueryRow(ctx, `
+		SELECT p.prosrc FROM pg_proc p
+		WHERE p.oid=to_regprocedure('reject_inbox_conflict_evidence_mutation()')
+		  AND p.pronargs=0
+		  AND p.prokind='f'
+		  AND p.prolang=(SELECT oid FROM pg_language WHERE lanname='plpgsql')
+		  AND p.prorettype='pg_catalog.trigger'::regtype
+		  AND p.provolatile='v'
+		  AND NOT p.prosecdef
+		  AND p.proconfig IS NULL
+	`).Scan(&guardBody)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrSchemaDrift
+	}
+	if err != nil {
+		return fmt.Errorf("verify Inbox conflict trigger function: %w", err)
+	}
+	const expectedGuardBody = `BEGIN
+    RAISE EXCEPTION 'inbox conflict evidence is append-only';
+END;`
+	if constraints != 2 || triggers != 2 ||
+		strings.TrimSpace(guardBody) != expectedGuardBody {
 		return ErrSchemaDrift
 	}
 	return nil
