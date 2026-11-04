@@ -17,6 +17,30 @@ class PRTopologyTests(unittest.TestCase):
     def test_observed_snapshot_is_not_merge_approval(self):
         self.assertTrue(validate_snapshot(SNAPSHOT, REGISTRY))
 
+    def test_open_pr_snapshot_covers_all_six_active_repositories(self):
+        groups = {r["repo"]: r["pull_requests"] for r in SNAPSHOT["repositories"]}
+        self.assertEqual(set(groups), {
+            "avaargsh/agent-infra", "avaargsh/agent-control-panel",
+            "avaargsh/compute-control-panel", "avaargsh/agent-runtime",
+            "avaargsh/agent-decision", "avaargsh/EngageGuard",
+        })
+        self.assertEqual(sum(len(prs) for prs in groups.values()), 39)
+        rust_numbers = {p["number"] for p in groups["avaargsh/agent-infra"]}
+        self.assertEqual(rust_numbers, {15, 16})
+        runtime_numbers = {p["number"] for p in groups["avaargsh/agent-runtime"]}
+        self.assertEqual(runtime_numbers, {1, 2, 3, 8, 9, 11, 12, 14, 16, 18, 19, 21})
+        compute_numbers = {p["number"] for p in groups["avaargsh/compute-control-panel"]}
+        self.assertNotIn(11, compute_numbers)
+        self.assertNotIn(28, compute_numbers)
+        self.assertEqual(SNAPSHOT["observed_date"], "2026-11-04")
+
+    def test_snapshot_records_full_base_and_head_commits(self):
+        for group in SNAPSHOT["repositories"]:
+            for pr in group["pull_requests"]:
+                with self.subTest(repo=group["repo"], number=pr["number"]):
+                    self.assertEqual(len(pr["head_sha"]), 40)
+                    self.assertEqual(len(pr["base_sha"]), 40)
+
     def test_untracked_gate_rejected(self):
         changed = copy.deepcopy(SNAPSHOT)
         changed["repositories"][0]["pull_requests"][0]["gate_ids"] = ["G99"]
