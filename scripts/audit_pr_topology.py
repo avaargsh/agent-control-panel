@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SHA = re.compile(r"^[a-f0-9]{40}$")
 EXPECTED_REPOS = frozenset({
     "avaargsh/agent-control-panel",
+    "avaargsh/agent-infra",
     "avaargsh/agent-runtime",
     "avaargsh/agent-decision",
     "avaargsh/EngageGuard",
@@ -54,6 +55,8 @@ def validate_snapshot(snapshot: dict, registry: dict) -> bool:
             seen_pr.add(number)
             if not SHA.fullmatch(pr["head_sha"]):
                 raise ValueError("invalid PR head SHA")
+            if not SHA.fullmatch(pr.get("base_sha", "")):
+                raise ValueError("invalid PR base SHA")
             if not pr.get("head_branch") or not pr.get("base_branch"):
                 raise ValueError("missing PR branch lineage")
             if pr["head_branch"] in branches:
