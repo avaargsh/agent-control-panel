@@ -460,7 +460,6 @@ func TestMigrationDetectsMissingCriticalConstraintAfterRecordedInstall(t *testin
 	}
 }
 
-
 // A checksum-valid v1 database can still have its live constraints replaced.
 // Constraint name lookup alone is insufficient: table, type and key columns
 // must match the original reviewed migration contract.
