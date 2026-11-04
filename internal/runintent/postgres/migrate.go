@@ -303,41 +303,60 @@ func verifyRunIntentSchema(ctx context.Context, tx pgx.Tx) error {
 	// prove that an operator has not since dropped a critical database guard.
 	// Verify the constraints that enforce idempotency, lease/fence consistency,
 	// state payload ownership, ordered Inbox identity and tenant-scoped claims.
-	requiredConstraints := []string{
-		"run_intents_pkey",
-		"run_intents_idempotency_unique",
-		"run_intents_lease_consistency",
-		"run_intents_state_payload_consistency",
-		"outbox_events_pkey",
-		"outbox_aggregate_version_unique",
-		"outbox_lease_consistency",
-		"outbox_published_consistency",
-		"inbox_events_pkey",
-		"inbox_event_tenant_identity",
-		"inbox_applied_consistency",
-		"inbox_aggregate_claims_pkey",
-		"inbox_aggregate_claims_consumer_name_event_id_key",
-		"inbox_aggregate_claims_consumer_name_event_id_tenant_id_fkey",
-		"inbox_cursors_pkey",
-	}
+	// Constraint names alone are not authority: PostgreSQL allows the same
+	// CHECK name on another table, and names can be reused for a weakened
+	// UNIQUE or foreign key definition. Bind each guard to the owning relation,
+	// constraint type and exact ordered identity columns. Arbitrary CHECK
+	// predicate-body drift needs an additional semantic guard.
 	rows, err := tx.Query(ctx, `
-		SELECT expected.constraint_name
-		FROM unnest($1::text[]) AS expected(constraint_name)
+		WITH expected (relation_name,constraint_name,kind,key_columns) AS (
+			VALUES
+			('run_intents','run_intents_pkey','p',ARRAY['id']::text[]),
+			('run_intents','run_intents_idempotency_unique','u',ARRAY['tenant_id','principal_id','operation','idempotency_key']::text[]),
+			('run_intents','run_intents_lease_consistency','c',NULL::text[]),
+			('run_intents','run_intents_state_payload_consistency','c',NULL::text[]),
+			('outbox_events','outbox_events_pkey','p',ARRAY['event_id']::text[]),
+			('outbox_events','outbox_aggregate_version_unique','u',ARRAY['producer','tenant_id','aggregate_type','aggregate_id','aggregate_version']::text[]),
+			('outbox_events','outbox_lease_consistency','c',NULL::text[]),
+			('outbox_events','outbox_published_consistency','c',NULL::text[]),
+			('inbox_events','inbox_events_pkey','p',ARRAY['consumer_name','event_id']::text[]),
+			('inbox_events','inbox_event_tenant_identity','u',ARRAY['consumer_name','event_id','tenant_id']::text[]),
+			('inbox_events','inbox_applied_consistency','c',NULL::text[]),
+			('inbox_aggregate_claims','inbox_aggregate_claims_pkey','p',ARRAY['consumer_name','tenant_id','aggregate_type','aggregate_id','aggregate_version']::text[]),
+			('inbox_aggregate_claims','inbox_aggregate_claims_consumer_name_event_id_key','u',ARRAY['consumer_name','event_id']::text[]),
+			('inbox_aggregate_claims','inbox_aggregate_claims_consumer_name_event_id_tenant_id_fkey','f',ARRAY['consumer_name','event_id','tenant_id']::text[]),
+			('inbox_cursors','inbox_cursors_pkey','p',ARRAY['consumer_name','tenant_id','aggregate_type','aggregate_id']::text[])
+		)
+		SELECT expected.relation_name || '.' || expected.constraint_name
+		FROM expected
 		WHERE NOT EXISTS (
-			SELECT 1
-			FROM pg_constraint actual
-			WHERE actual.conname = expected.constraint_name
-			  AND actual.convalidated
-			  AND actual.conrelid IN (
-				to_regclass('run_intents'),
-				to_regclass('outbox_events'),
-				to_regclass('inbox_events'),
-				to_regclass('inbox_aggregate_claims'),
-				to_regclass('inbox_cursors')
+			SELECT 1 FROM pg_constraint c
+			WHERE c.conname=expected.constraint_name
+			  AND c.conrelid=to_regclass(expected.relation_name)
+			  AND c.contype::text=expected.kind
+			  AND c.convalidated
+			  AND (
+				expected.key_columns IS NULL
+				OR (
+					SELECT array_agg(a.attname::text ORDER BY k.ordinality)
+					FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum,ordinality)
+					JOIN pg_attribute a ON a.attrelid=c.conrelid AND a.attnum=k.attnum
+				)=expected.key_columns
+			  )
+			  AND (
+				expected.kind <> 'f'
+				OR (
+					c.confrelid=to_regclass('inbox_events')
+					AND (
+						SELECT array_agg(a.attname::text ORDER BY k.ordinality)
+						FROM unnest(c.confkey) WITH ORDINALITY AS k(attnum,ordinality)
+						JOIN pg_attribute a ON a.attrelid=c.confrelid AND a.attnum=k.attnum
+					)=ARRAY['consumer_name','event_id','tenant_id']::text[]
+				)
 			  )
 		)
-		ORDER BY expected.constraint_name
-	`, requiredConstraints)
+		ORDER BY expected.relation_name,expected.constraint_name
+	`)
 	if err != nil {
 		return fmt.Errorf("verify RunIntent schema constraints: %w", err)
 	}
@@ -356,7 +375,7 @@ func verifyRunIntentSchema(ctx context.Context, tx pgx.Tx) error {
 	}
 	rows.Close()
 	if len(missing) > 0 {
-		return fmt.Errorf("%w: missing or unvalidated constraints: %s", ErrSchemaDrift, strings.Join(missing, ", "))
+		return fmt.Errorf("%w: missing, misbound or unvalidated constraints: %s", ErrSchemaDrift, strings.Join(missing, ", "))
 	}
 	return nil
 }
