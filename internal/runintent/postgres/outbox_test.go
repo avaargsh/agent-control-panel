@@ -205,23 +205,26 @@ func TestOutboxClaimFencesExpiredWorkerLease(t *testing.T) {
 	}
 
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	first, err := repository.ClaimOutbox(ctx, "worker-reused-id", now, time.Minute, 1, 3)
+	first, err := repository.ClaimOutbox(ctx, "worker-reused-id", time.Minute, 1, 3)
 	if err != nil || len(first) != 1 || first[0].Attempt != 1 {
 		t.Fatalf("first claim: leases=%+v err=%v", first, err)
 	}
-	contended, err := repository.ClaimOutbox(ctx, "worker-reused-id", now.Add(30*time.Second), time.Minute, 1, 3)
+	contended, err := repository.ClaimOutbox(ctx, "worker-reused-id", time.Minute, 1, 3)
 	if err != nil || len(contended) != 0 {
 		t.Fatalf("active lease was claimed twice: leases=%+v err=%v", contended, err)
 	}
 
-	reclaimed, err := repository.ClaimOutbox(ctx, "worker-reused-id", now.Add(time.Minute+time.Second), time.Minute, 1, 3)
+	if _, err := pool.Exec(ctx, `UPDATE outbox_events SET lease_expires_at = clock_timestamp() - INTERVAL '1 second' WHERE event_id = $1::uuid`, event.ID); err != nil {
+		t.Fatalf("expire first lease: %v", err)
+	}
+	reclaimed, err := repository.ClaimOutbox(ctx, "worker-reused-id", time.Minute, 1, 3)
 	if err != nil || len(reclaimed) != 1 || reclaimed[0].Attempt != 2 {
 		t.Fatalf("expired lease was not reclaimed: leases=%+v err=%v", reclaimed, err)
 	}
-	if err := repository.AcknowledgeOutbox(ctx, first[0], now.Add(time.Minute+2*time.Second)); !errors.Is(err, ErrOutboxLeaseLost) {
+	if err := repository.AcknowledgeOutbox(ctx, first[0]); !errors.Is(err, ErrOutboxLeaseLost) {
 		t.Fatalf("stale attempt ACK returned %v, want ErrOutboxLeaseLost", err)
 	}
-	if err := repository.AcknowledgeOutbox(ctx, reclaimed[0], now.Add(time.Minute+2*time.Second)); err != nil {
+	if err := repository.AcknowledgeOutbox(ctx, reclaimed[0]); err != nil {
 		t.Fatalf("current attempt ACK failed: %v", err)
 	}
 
@@ -243,24 +246,30 @@ func TestOutboxRetryQuarantinesAfterAttemptBudget(t *testing.T) {
 	}
 
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	first, err := repository.ClaimOutbox(ctx, "worker-1", now, time.Minute, 1, 2)
+	first, err := repository.ClaimOutbox(ctx, "worker-1", time.Minute, 1, 2)
 	if err != nil || len(first) != 1 {
 		t.Fatalf("first claim: leases=%+v err=%v", first, err)
 	}
-	retryAt := now.Add(time.Minute)
-	quarantined, err := repository.RetryOutbox(ctx, first[0], retryAt, "PUBLISH_FAILED", 2)
+	quarantined, err := repository.RetryOutbox(ctx, first[0], time.Minute, "PUBLISH_FAILED", 2)
 	if err != nil || quarantined {
 		t.Fatalf("first failed attempt: quarantined=%v err=%v", quarantined, err)
 	}
-	early, err := repository.ClaimOutbox(ctx, "worker-2", retryAt.Add(-time.Second), time.Minute, 1, 2)
+	early, err := repository.ClaimOutbox(ctx, "worker-2", time.Minute, 1, 2)
 	if err != nil || len(early) != 0 {
 		t.Fatalf("event was claimed before its retry time: leases=%+v err=%v", early, err)
 	}
-	second, err := repository.ClaimOutbox(ctx, "worker-2", retryAt, time.Minute, 1, 2)
+	if _, err := pool.Exec(ctx, `
+		UPDATE outbox_events
+		SET next_attempt_at = clock_timestamp() - INTERVAL '1 second'
+		WHERE aggregate_id = $1
+	`, intent.ID); err != nil {
+		t.Fatalf("make retry eligible: %v", err)
+	}
+	second, err := repository.ClaimOutbox(ctx, "worker-2", time.Minute, 1, 2)
 	if err != nil || len(second) != 1 || second[0].Attempt != 2 {
 		t.Fatalf("second claim: leases=%+v err=%v", second, err)
 	}
-	quarantined, err = repository.RetryOutbox(ctx, second[0], retryAt.Add(time.Second), "PUBLISH_FAILED", 2)
+	quarantined, err = repository.RetryOutbox(ctx, second[0], time.Second, "PUBLISH_FAILED", 2)
 	if err != nil || !quarantined {
 		t.Fatalf("attempt budget exhaustion: quarantined=%v err=%v", quarantined, err)
 	}
@@ -283,11 +292,14 @@ func TestOutboxExpiredLeaseAtAttemptLimitIsQuarantined(t *testing.T) {
 	}
 
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	claimed, err := repository.ClaimOutbox(ctx, "worker-1", now, time.Minute, 1, 1)
+	claimed, err := repository.ClaimOutbox(ctx, "worker-1", time.Minute, 1, 1)
 	if err != nil || len(claimed) != 1 || claimed[0].Attempt != 1 {
 		t.Fatalf("claim final attempt: leases=%+v err=%v", claimed, err)
 	}
-	afterExpiry, err := repository.ClaimOutbox(ctx, "worker-2", now.Add(time.Minute+time.Second), time.Minute, 1, 1)
+	if _, err := pool.Exec(ctx, `UPDATE outbox_events SET lease_expires_at = clock_timestamp() - INTERVAL '1 second' WHERE event_id = $1::uuid`, claimed[0].Event.ID); err != nil {
+		t.Fatalf("expire final lease: %v", err)
+	}
+	afterExpiry, err := repository.ClaimOutbox(ctx, "worker-2", time.Minute, 1, 1)
 	if err != nil || len(afterExpiry) != 0 {
 		t.Fatalf("expired final lease should be quarantined, not reclaimed: leases=%+v err=%v", afterExpiry, err)
 	}
@@ -334,7 +346,7 @@ func TestOutboxClaimPreservesAggregateVersionOrder(t *testing.T) {
 		t.Fatalf("commit second Outbox event: %v", err)
 	}
 
-	firstClaim, err := repository.ClaimOutbox(ctx, "ordered-worker-1", time.Now().UTC(), time.Minute, 10, 3)
+	firstClaim, err := repository.ClaimOutbox(ctx, "ordered-worker-1", time.Minute, 10, 3)
 	if err != nil {
 		t.Fatalf("claim first aggregate event: %v", err)
 	}
@@ -343,7 +355,7 @@ func TestOutboxClaimPreservesAggregateVersionOrder(t *testing.T) {
 	}
 
 	// A different worker must not skip the leased v1 and publish v2.
-	secondWorkerClaim, err := repository.ClaimOutbox(ctx, "ordered-worker-2", time.Now().UTC(), time.Minute, 10, 3)
+	secondWorkerClaim, err := repository.ClaimOutbox(ctx, "ordered-worker-2", time.Minute, 10, 3)
 	if err != nil {
 		t.Fatalf("claim while aggregate predecessor is leased: %v", err)
 	}
@@ -351,10 +363,10 @@ func TestOutboxClaimPreservesAggregateVersionOrder(t *testing.T) {
 		t.Fatalf("later aggregate version was claimed before v1 was published: %+v", secondWorkerClaim)
 	}
 
-	if err := repository.AcknowledgeOutbox(ctx, firstClaim[0], time.Now().UTC()); err != nil {
+	if err := repository.AcknowledgeOutbox(ctx, firstClaim[0]); err != nil {
 		t.Fatalf("acknowledge aggregate version 1: %v", err)
 	}
-	nextClaim, err := repository.ClaimOutbox(ctx, "ordered-worker-2", time.Now().UTC(), time.Minute, 10, 3)
+	nextClaim, err := repository.ClaimOutbox(ctx, "ordered-worker-2", time.Minute, 10, 3)
 	if err != nil {
 		t.Fatalf("claim aggregate version 2 after v1 ACK: %v", err)
 	}
