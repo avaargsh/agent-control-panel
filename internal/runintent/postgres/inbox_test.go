@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -95,6 +96,55 @@ func TestReceiveInboxEventIsIdempotentAndQuarantinesIDConflict(t *testing.T) {
 	}
 	if eventCount != 1 || state != "QUARANTINED" || errorCode != "EVENT_ID_CONFLICT" {
 		t.Fatalf("unexpected deduplication state: count=%d state=%q error=%q", eventCount, state, errorCode)
+	}
+}
+
+// Conflicting redelivery must retain durable evidence even when the original
+// event was already applied and cannot be quarantined retroactively.
+func TestInboxChangedRedeliveryAfterApplyPersistsConflictEvidence(t *testing.T) {
+	repository, pool := testRepository(t)
+	setupInboxProjection(t, pool)
+	ctx := context.Background()
+	event := testInboxEvent("tenant-a", "applied-agent", 1, 751)
+	if _, err := repository.ReceiveInboxEvent(ctx, "test-consumer", event); err != nil {
+		t.Fatalf("receive original event: %v", err)
+	}
+	applied, err := repository.ApplyInboxBatch(ctx, "test-consumer", &testInboxApplier{}, 1)
+	if err != nil || applied.Applied != 1 {
+		t.Fatalf("apply original event: result=%+v err=%v", applied, err)
+	}
+
+	conflict := event
+	conflict.Payload = json.RawMessage(`{"version":999,"sensitive":"conflicting"}`)
+	first, err := repository.ReceiveInboxEvent(ctx, "test-consumer", conflict)
+	if err != nil || !first.Conflict || first.Quarantined {
+		t.Fatalf("changed replay after apply: result=%+v err=%v", first, err)
+	}
+	duplicate, err := repository.ReceiveInboxEvent(ctx, "test-consumer", conflict)
+	if err != nil || !duplicate.Conflict {
+		t.Fatalf("repeat changed replay: result=%+v err=%v", duplicate, err)
+	}
+	var count int
+	var digest, payload, originalState string
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*), min(conflict_sha256), min(payload::text)
+		FROM inbox_event_conflicts WHERE consumer_name='test-consumer' AND event_id=$1::uuid
+	`, event.ID).Scan(&count, &digest, &payload); err != nil {
+		t.Fatalf("read durable conflict evidence: %v", err)
+	}
+	if count != 1 || len(digest) != 64 || !strings.Contains(payload, "conflicting") {
+		t.Fatalf("conflicting replay was not retained idempotently: count=%d digest=%q payload=%q", count, digest, payload)
+	}
+	if err := pool.QueryRow(ctx, `
+		SELECT state FROM inbox_events WHERE consumer_name='test-consumer' AND event_id=$1::uuid
+	`, event.ID).Scan(&originalState); err != nil {
+		t.Fatal(err)
+	}
+	if originalState != "APPLIED" {
+		t.Fatalf("conflicting replay changed original applied history to %q", originalState)
+	}
+	if _, err := pool.Exec(ctx, "DELETE FROM inbox_event_conflicts WHERE consumer_name='test-consumer'"); err == nil {
+		t.Fatal("conflict evidence unexpectedly deletable")
 	}
 }
 
