@@ -65,7 +65,7 @@ func (r *Repository) ClaimOutbox(
 		    lease_owner = NULL,
 		    lease_expires_at = NULL,
 		    last_error_code = 'OUTBOX_ATTEMPTS_EXHAUSTED'
-		WHERE attempts >= $2
+		WHERE attempts >= $1
 		  AND (
 		    delivery_state = 'PENDING'
 		    OR (delivery_state = 'PUBLISHING' AND lease_expires_at <= clock_timestamp())
@@ -98,13 +98,13 @@ func (r *Repository) ClaimOutbox(
 			  CASE WHEN candidate.delivery_state = 'PUBLISHING' THEN candidate.lease_expires_at ELSE candidate.next_attempt_at END,
 			  candidate.created_at,
 			  candidate.event_id
-			LIMIT $3
+			LIMIT $2
 			FOR UPDATE OF candidate SKIP LOCKED
 		)
 		UPDATE outbox_events AS event
 		SET delivery_state = 'PUBLISHING',
 		    attempts = event.attempts + 1,
-		    lease_owner = $4,
+		    lease_owner = $3,
 		    lease_expires_at = clock_timestamp() + ($4::double precision * INTERVAL '1 microsecond')
 		FROM candidates
 		WHERE event.event_id = candidates.event_id
