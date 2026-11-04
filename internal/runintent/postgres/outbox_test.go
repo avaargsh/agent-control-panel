@@ -84,6 +84,13 @@ func TestNewOutboxDispatcherRejectsUnsafeConfiguration(t *testing.T) {
 				MaxAttempts: 3, BaseBackoff: time.Second, MaxBackoff: time.Minute, PollInterval: time.Second,
 			},
 		},
+		{
+			name: "backoff below PostgreSQL timestamp precision",
+			options: OutboxDispatcherOptions{
+				Owner: "worker-1", BatchSize: 1, LeaseTTL: time.Minute, PublishTimeout: time.Second,
+				MaxAttempts: 3, BaseBackoff: time.Nanosecond, MaxBackoff: time.Minute, PollInterval: time.Second,
+			},
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
