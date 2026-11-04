@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-func TestClaimOutboxUsesDatabaseClockNotCallerClock(t *testing.T) {
+func TestClaimOutboxUsesDatabaseClockForEligibilityAndLeaseExpiry(t *testing.T) {
 	repository, pool := testRepository(t)
 	ctx := context.Background()
 	intent := testIntent(207)
@@ -23,10 +23,9 @@ func TestClaimOutboxUsesDatabaseClockNotCallerClock(t *testing.T) {
 		t.Fatalf("defer Outbox event: %v", err)
 	}
 
-	// A client clock that is one day ahead must not make a not-yet-due event
-	// eligible. PostgreSQL is the authority for retry and lease timestamps.
-	futureClientClock := time.Now().UTC().Add(24 * time.Hour)
-	claims, err := repository.ClaimOutbox(ctx, "clock-skew-worker", futureClientClock, time.Minute, 1, 3)
+	// A future retry timestamp must remain ineligible. ClaimOutbox has no
+	// caller-supplied clock; PostgreSQL decides eligibility and lease expiry.
+	claims, err := repository.ClaimOutbox(ctx, "clock-skew-worker", time.Minute, 1, 3)
 	if err != nil {
 		t.Fatalf("claim with skewed client clock: %v", err)
 	}
@@ -41,7 +40,7 @@ func TestClaimOutboxUsesDatabaseClockNotCallerClock(t *testing.T) {
 	`, event.ID); err != nil {
 		t.Fatalf("make Outbox event eligible: %v", err)
 	}
-	claims, err = repository.ClaimOutbox(ctx, "clock-skew-worker", futureClientClock, time.Minute, 1, 3)
+	claims, err = repository.ClaimOutbox(ctx, "clock-skew-worker", time.Minute, 1, 3)
 	if err != nil || len(claims) != 1 {
 		t.Fatalf("claim eligible Outbox event: claims=%+v err=%v", claims, err)
 	}
