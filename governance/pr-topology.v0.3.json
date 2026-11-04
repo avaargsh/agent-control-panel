@@ -41,7 +41,7 @@
           "head_branch": "governance/platform-v0.3",
           "base_branch": "main",
           "base_sha": "90f2a6f5d19f2782e5175f43fd3e8968e6711ef7",
-          "head_sha": "7e3d68a3d4b4f5fc347d9c98e9d4036117ad2278",
+          "head_sha": "7d5cd1e5a01c104e662d90f4df8e87e64b884701",
           "draft": true,
           "disposition": "blocked",
           "gate_ids": [
