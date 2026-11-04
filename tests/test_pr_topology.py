@@ -24,7 +24,7 @@ class PRTopologyTests(unittest.TestCase):
             "avaargsh/compute-control-panel", "avaargsh/agent-runtime",
             "avaargsh/agent-decision", "avaargsh/EngageGuard",
         })
-        self.assertEqual(sum(len(prs) for prs in groups.values()), 39)
+        self.assertEqual(sum(len(prs) for prs in groups.values()), 40)
         rust_numbers = {p["number"] for p in groups["avaargsh/agent-infra"]}
         self.assertEqual(rust_numbers, {15, 16})
         runtime_numbers = {p["number"] for p in groups["avaargsh/agent-runtime"]}
@@ -84,6 +84,12 @@ class PRTopologyTests(unittest.TestCase):
         self.assertIs(ready["draft"], False)
         self.assertEqual(ready["disposition"], "blocked")
         self.assertTrue(validate_snapshot(changed, REGISTRY))
+
+    def test_base_sha_must_be_full_commit(self):
+        changed = copy.deepcopy(SNAPSHOT)
+        changed["repositories"][0]["pull_requests"][0]["base_sha"] = "main"
+        with self.assertRaisesRegex(ValueError, "invalid PR base"):
+            validate_snapshot(changed, REGISTRY)
 
     def test_head_sha_must_be_full_commit(self):
         changed = copy.deepcopy(SNAPSHOT)
