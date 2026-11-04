@@ -1,7 +1,7 @@
 {
   "schema_version": "pr-topology/v0.3",
   "state": "observed-not-approved",
-  "observed_date": "2026-11-03",
+  "observed_date": "2026-11-04",
   "root_issue": "https://github.com/avaargsh/agent-control-panel/issues/3",
   "repositories": [
     {
@@ -12,6 +12,7 @@
           "title": "docs: establish Open Agent Infrastructure architecture baseline",
           "head_branch": "feature/platform-foundation",
           "base_branch": "main",
+          "base_sha": "90f2a6f5d19f2782e5175f43fd3e8968e6711ef7",
           "head_sha": "143a568892e0d53127606e04136243d07403cef6",
           "draft": true,
           "disposition": "blocked",
@@ -26,6 +27,7 @@
           "title": "feat: establish Go service foundation and RunIntent invariants",
           "head_branch": "feat/go-foundation",
           "base_branch": "main",
+          "base_sha": "90f2a6f5d19f2782e5175f43fd3e8968e6711ef7",
           "head_sha": "18f231deca5dc9ce8a58dd40e9a5c5f64f961e25",
           "draft": true,
           "disposition": "blocked",
@@ -38,7 +40,8 @@
           "title": "docs(governance): proposed platform v0.3 authority map and cross-repo merge gates",
           "head_branch": "governance/platform-v0.3",
           "base_branch": "main",
-          "head_sha": "83572abc35e9e4e543ba3fd954d7b4c983061279",
+          "base_sha": "90f2a6f5d19f2782e5175f43fd3e8968e6711ef7",
+          "head_sha": "7e3d68a3d4b4f5fc347d9c98e9d4036117ad2278",
           "draft": true,
           "disposition": "blocked",
           "gate_ids": [
@@ -55,7 +58,34 @@
           "title": "feat: add transactional PostgreSQL RunIntent persistence",
           "head_branch": "feature/postgres-runintent-store",
           "base_branch": "feat/go-foundation",
+          "base_sha": "18f231deca5dc9ce8a58dd40e9a5c5f64f961e25",
           "head_sha": "86b9dc0e948e08a708b9df87312548bc1c8cf1f0",
+          "draft": true,
+          "disposition": "blocked",
+          "gate_ids": [
+            "G01"
+          ]
+        },
+        {
+          "number": 6,
+          "title": "feat: add leased PostgreSQL Outbox publisher worker",
+          "head_branch": "feat/outbox-publisher",
+          "base_branch": "feature/postgres-runintent-store",
+          "base_sha": "86b9dc0e948e08a708b9df87312548bc1c8cf1f0",
+          "head_sha": "88f5d74b61f555b3686e554f20cfccaa7c2b3e34",
+          "draft": true,
+          "disposition": "blocked",
+          "gate_ids": [
+            "G01"
+          ]
+        },
+        {
+          "number": 7,
+          "title": "feat: add ordered PostgreSQL Inbox consumer",
+          "head_branch": "feat/inbox-consumer",
+          "base_branch": "feat/outbox-publisher",
+          "base_sha": "601fb2aa68a2dde937be07cceb306f6c37d627a9",
+          "head_sha": "f886ec2b280004010ad3a574a4b7e08e0127b126",
           "draft": true,
           "disposition": "blocked",
           "gate_ids": [
@@ -277,11 +307,12 @@
       "repo": "avaargsh/compute-control-panel",
       "pull_requests": [
         {
-          "number": 1,
-          "title": "docs: establish Compute Control Plane baseline",
-          "head_branch": "feature/platform-foundation",
+          "number": 9,
+          "title": "docs: define Compute Economics domain and GPU FinOps boundaries",
+          "head_branch": "docs/compute-economics-domain-v0.1",
           "base_branch": "main",
-          "head_sha": "cc2ab75dc95d1c1d5f243868a71659b9486ead2f",
+          "base_sha": "16270cde7bdd6c2f2eeb3f5c96d3baa4eaa37e60",
+          "head_sha": "3784dd4cfe0209f1fb3aac50d1d785344e05946d",
           "draft": true,
           "disposition": "blocked",
           "gate_ids": [
@@ -289,11 +320,64 @@
           ]
         },
         {
-          "number": 2,
-          "title": "feat: establish Go service foundation and provider operation invariants",
-          "head_branch": "feat/go-foundation",
+          "number": 12,
+          "title": "docs: restore architecture baseline without README conflict",
+          "head_branch": "docs/architecture-baseline-main-20261104",
           "base_branch": "main",
-          "head_sha": "a66fcdf18499b09d24ee15aef8775cdbf976841d",
+          "base_sha": "eb6746c4b8b8c0a15a2d592f86c9575d7d601442",
+          "head_sha": "c355ce32e805942cd880a659ac1b7b4c04204889",
+          "draft": true,
+          "disposition": "blocked",
+          "gate_ids": [
+            "G04"
+          ]
+        },
+        {
+          "number": 14,
+          "title": "fix(economics): bind rate contracts to versioned currency metadata",
+          "head_branch": "fix/economics-currency-registry-contract-v2-20261104",
+          "base_branch": "docs/compute-economics-domain-v0.1",
+          "base_sha": "3784dd4cfe0209f1fb3aac50d1d785344e05946d",
+          "head_sha": "3f7021fee2be2dafef9050eeecf6dcae125cfe30",
+          "draft": true,
+          "disposition": "blocked",
+          "gate_ids": [
+            "G04"
+          ]
+        },
+        {
+          "number": 16,
+          "title": "docs(economics): define trusted Allocation usage evidence gate v1",
+          "head_branch": "docs/compute-economics-allocation-evidence-v1",
+          "base_branch": "docs/compute-economics-domain-v0.1",
+          "base_sha": "3784dd4cfe0209f1fb3aac50d1d785344e05946d",
+          "head_sha": "bd0c1a2609814b89e7c8a05b848bc32415099e69",
+          "draft": true,
+          "disposition": "blocked",
+          "gate_ids": [
+            "G04"
+          ]
+        },
+        {
+          "number": 23,
+          "title": "feat(economics): integrate deterministic cost and E1 evidence contracts",
+          "head_branch": "integrate/compute-economics-e1-main",
+          "base_branch": "main",
+          "base_sha": "3883b575f9aa4d21d8b9a93fbd7a1459f345f4f1",
+          "head_sha": "47219103d2e2f9d02daba9d4805447ba8fad9281",
+          "draft": true,
+          "disposition": "blocked",
+          "gate_ids": [
+            "G04"
+          ]
+        },
+        {
+          "number": 26,
+          "title": "feat(economics): persist trusted Allocation usage evidence",
+          "head_branch": "feat/persist-allocation-usage-evidence-main-v3",
+          "base_branch": "integrate/compute-economics-e1-main",
+          "base_sha": "47219103d2e2f9d02daba9d4805447ba8fad9281",
+          "head_sha": "ae158a57aa2f283fea4dfa0ca4bfd367ac2ed11f",
           "draft": true,
           "disposition": "blocked",
           "gate_ids": [
