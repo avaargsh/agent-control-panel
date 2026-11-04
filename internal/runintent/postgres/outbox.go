@@ -345,7 +345,7 @@ func NewOutboxDispatcher(repository *Repository, publisher EventPublisher, optio
 		len(options.Owner) > 128 || options.BatchSize < 1 || options.BatchSize > maxOutboxBatchSize ||
 		options.LeaseTTL < time.Microsecond || options.PublishTimeout <= 0 ||
 		options.PublishTimeout >= options.LeaseTTL/time.Duration(options.BatchSize+1) || options.MaxAttempts < 1 ||
-		options.MaxAttempts > math.MaxInt32 || options.BaseBackoff <= 0 ||
+		options.MaxAttempts > math.MaxInt32 || options.BaseBackoff < time.Microsecond ||
 		options.MaxBackoff < options.BaseBackoff || options.PollInterval <= 0 {
 		return nil, errors.New("invalid Outbox dispatcher configuration")
 	}
