@@ -24,7 +24,8 @@ class PRTopologyTests(unittest.TestCase):
             "avaargsh/compute-control-panel", "avaargsh/agent-runtime",
             "avaargsh/agent-decision", "avaargsh/EngageGuard",
         })
-        self.assertEqual(sum(len(prs) for prs in groups.values()), 40)
+        self.assertEqual(sum(len(prs) for prs in groups.values()), SNAPSHOT["observed_count"])
+        self.assertGreaterEqual(SNAPSHOT["observed_count"], 41)
         rust_numbers = {p["number"] for p in groups["avaargsh/agent-infra"]}
         self.assertEqual(rust_numbers, {15, 16})
         runtime_numbers = {p["number"] for p in groups["avaargsh/agent-runtime"]}
@@ -40,6 +41,12 @@ class PRTopologyTests(unittest.TestCase):
                 with self.subTest(repo=group["repo"], number=pr["number"]):
                     self.assertEqual(len(pr["head_sha"]), 40)
                     self.assertEqual(len(pr["base_sha"]), 40)
+
+    def test_observation_count_cannot_hide_missing_prs(self):
+        changed = copy.deepcopy(SNAPSHOT)
+        changed["observed_count"] += 1
+        with self.assertRaisesRegex(ValueError, "observed PR count"):
+            validate_snapshot(changed, REGISTRY)
 
     def test_untracked_gate_rejected(self):
         changed = copy.deepcopy(SNAPSHOT)
