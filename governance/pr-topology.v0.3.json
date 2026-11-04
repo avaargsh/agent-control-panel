@@ -95,6 +95,100 @@
       ]
     },
     {
+      "repo": "avaargsh/agent-decision",
+      "pull_requests": [
+        {
+          "number": 8,
+          "title": "feat: establish Go-first Decision Core and ledger APIs",
+          "head_branch": "feat/v0.1-decision-core-baseline",
+          "base_branch": "main",
+          "base_sha": "c0d60e9692f61ccb4131ef3c24b97d7d5fa1d911",
+          "head_sha": "a9aa100fc0b5db3ce1d691127faa0ed1bc2f017f",
+          "draft": true,
+          "disposition": "blocked",
+          "gate_ids": [
+            "G02",
+            "G05"
+          ]
+        },
+        {
+          "number": 12,
+          "title": "fix(api): reject Unicode case-fold aliases in Decision JSON fields",
+          "head_branch": "fix/decision-ascii-json-keys-20261104",
+          "base_branch": "feat/v0.1-decision-core-baseline",
+          "base_sha": "4aacfc2f94334c508f9d3150767d68c62f6b97f1",
+          "head_sha": "04b131033103f9c20526efb91475b33c5ef38a0b",
+          "draft": true,
+          "disposition": "blocked",
+          "gate_ids": [
+            "G02",
+            "G05"
+          ]
+        },
+        {
+          "number": 13,
+          "title": "fix(postgres): fail closed when Decision ledger protection triggers drift",
+          "head_branch": "fix/decision-migration-trigger-integrity-20261104",
+          "base_branch": "feat/v0.1-decision-core-baseline",
+          "base_sha": "4aacfc2f94334c508f9d3150767d68c62f6b97f1",
+          "head_sha": "d7204fab100893bd0417a7a4d218dbc7a3b54dc7",
+          "draft": true,
+          "disposition": "blocked",
+          "gate_ids": [
+            "G02",
+            "G05"
+          ]
+        },
+        {
+          "number": 14,
+          "title": "integration: combine Decision JSON and PostgreSQL drift hardening against latest Core",
+          "head_branch": "integration/decision-core-hardening-20261104",
+          "base_branch": "feat/v0.1-decision-core-baseline",
+          "base_sha": "31386a263eeda834b97e30c1bec6eb1c34140d65",
+          "head_sha": "fe1951f290bc531e1793dc9f26ea5835a5743544",
+          "draft": true,
+          "disposition": "blocked",
+          "gate_ids": [
+            "G02",
+            "G05"
+          ]
+        }
+      ]
+    },
+    {
+      "repo": "avaargsh/agent-infra",
+      "pull_requests": [
+        {
+          "number": 15,
+          "title": "fix(temporal): enforce immutable Run binding before Update delivery and reconciliation",
+          "head_branch": "fix/temporal-update-binding-preflight",
+          "base_branch": "main",
+          "base_sha": "482bfd9b66f7fc4f66a5c0d1461f428d879b339e",
+          "head_sha": "16483d84b9b860a3ec6124a0e1318a1e5d1ca159",
+          "draft": true,
+          "disposition": "blocked",
+          "gate_ids": [
+            "G01",
+            "G05"
+          ]
+        },
+        {
+          "number": 16,
+          "title": "fix(relay): never claim more Outbox leases than active processing slots",
+          "head_branch": "fix/relay-unstarted-lease-expiry",
+          "base_branch": "main",
+          "base_sha": "482bfd9b66f7fc4f66a5c0d1461f428d879b339e",
+          "head_sha": "92b564d28e29a22f705e4dbfc795b532b9c240ba",
+          "draft": true,
+          "disposition": "blocked",
+          "gate_ids": [
+            "G01",
+            "G05"
+          ]
+        }
+      ]
+    },
+    {
       "repo": "avaargsh/agent-runtime",
       "pull_requests": [
         {
@@ -271,6 +365,89 @@
       ]
     },
     {
+      "repo": "avaargsh/compute-control-panel",
+      "pull_requests": [
+        {
+          "number": 9,
+          "title": "docs: define Compute Economics domain and GPU FinOps boundaries",
+          "head_branch": "docs/compute-economics-domain-v0.1",
+          "base_branch": "main",
+          "base_sha": "16270cde7bdd6c2f2eeb3f5c96d3baa4eaa37e60",
+          "head_sha": "3784dd4cfe0209f1fb3aac50d1d785344e05946d",
+          "draft": true,
+          "disposition": "blocked",
+          "gate_ids": [
+            "G04"
+          ]
+        },
+        {
+          "number": 12,
+          "title": "docs: restore architecture baseline without README conflict",
+          "head_branch": "docs/architecture-baseline-main-20261104",
+          "base_branch": "main",
+          "base_sha": "eb6746c4b8b8c0a15a2d592f86c9575d7d601442",
+          "head_sha": "c355ce32e805942cd880a659ac1b7b4c04204889",
+          "draft": true,
+          "disposition": "blocked",
+          "gate_ids": [
+            "G04"
+          ]
+        },
+        {
+          "number": 14,
+          "title": "fix(economics): bind rate contracts to versioned currency metadata",
+          "head_branch": "fix/economics-currency-registry-contract-v2-20261104",
+          "base_branch": "docs/compute-economics-domain-v0.1",
+          "base_sha": "3784dd4cfe0209f1fb3aac50d1d785344e05946d",
+          "head_sha": "3f7021fee2be2dafef9050eeecf6dcae125cfe30",
+          "draft": true,
+          "disposition": "blocked",
+          "gate_ids": [
+            "G04"
+          ]
+        },
+        {
+          "number": 16,
+          "title": "docs(economics): define trusted Allocation usage evidence gate v1",
+          "head_branch": "docs/compute-economics-allocation-evidence-v1",
+          "base_branch": "docs/compute-economics-domain-v0.1",
+          "base_sha": "3784dd4cfe0209f1fb3aac50d1d785344e05946d",
+          "head_sha": "bd0c1a2609814b89e7c8a05b848bc32415099e69",
+          "draft": true,
+          "disposition": "blocked",
+          "gate_ids": [
+            "G04"
+          ]
+        },
+        {
+          "number": 23,
+          "title": "feat(economics): integrate deterministic cost and E1 evidence contracts",
+          "head_branch": "integrate/compute-economics-e1-main",
+          "base_branch": "main",
+          "base_sha": "3883b575f9aa4d21d8b9a93fbd7a1459f345f4f1",
+          "head_sha": "47219103d2e2f9d02daba9d4805447ba8fad9281",
+          "draft": true,
+          "disposition": "blocked",
+          "gate_ids": [
+            "G04"
+          ]
+        },
+        {
+          "number": 26,
+          "title": "feat(economics): persist trusted Allocation usage evidence",
+          "head_branch": "feat/persist-allocation-usage-evidence-main-v3",
+          "base_branch": "integrate/compute-economics-e1-main",
+          "base_sha": "47219103d2e2f9d02daba9d4805447ba8fad9281",
+          "head_sha": "ae158a57aa2f283fea4dfa0ca4bfd367ac2ed11f",
+          "draft": true,
+          "disposition": "blocked",
+          "gate_ids": [
+            "G04"
+          ]
+        }
+      ]
+    },
+    {
       "repo": "avaargsh/EngageGuard",
       "pull_requests": [
         {
@@ -412,107 +589,6 @@
           "disposition": "blocked",
           "gate_ids": [
             "G03"
-          ]
-        }
-      ]
-    },
-    {
-      "repo": "avaargsh/compute-control-panel",
-      "pull_requests": [
-        {
-          "number": 9,
-          "title": "docs: define Compute Economics domain and GPU FinOps boundaries",
-          "head_branch": "docs/compute-economics-domain-v0.1",
-          "base_branch": "main",
-          "base_sha": "16270cde7bdd6c2f2eeb3f5c96d3baa4eaa37e60",
-          "head_sha": "3784dd4cfe0209f1fb3aac50d1d785344e05946d",
-          "draft": true,
-          "disposition": "blocked",
-          "gate_ids": [
-            "G04"
-          ]
-        },
-        {
-          "number": 12,
-          "title": "docs: restore architecture baseline without README conflict",
-          "head_branch": "docs/architecture-baseline-main-20261104",
-          "base_branch": "main",
-          "base_sha": "eb6746c4b8b8c0a15a2d592f86c9575d7d601442",
-          "head_sha": "c355ce32e805942cd880a659ac1b7b4c04204889",
-          "draft": true,
-          "disposition": "blocked",
-          "gate_ids": [
-            "G04"
-          ]
-        },
-        {
-          "number": 14,
-          "title": "fix(economics): bind rate contracts to versioned currency metadata",
-          "head_branch": "fix/economics-currency-registry-contract-v2-20261104",
-          "base_branch": "docs/compute-economics-domain-v0.1",
-          "base_sha": "3784dd4cfe0209f1fb3aac50d1d785344e05946d",
-          "head_sha": "3f7021fee2be2dafef9050eeecf6dcae125cfe30",
-          "draft": true,
-          "disposition": "blocked",
-          "gate_ids": [
-            "G04"
-          ]
-        },
-        {
-          "number": 16,
-          "title": "docs(economics): define trusted Allocation usage evidence gate v1",
-          "head_branch": "docs/compute-economics-allocation-evidence-v1",
-          "base_branch": "docs/compute-economics-domain-v0.1",
-          "base_sha": "3784dd4cfe0209f1fb3aac50d1d785344e05946d",
-          "head_sha": "bd0c1a2609814b89e7c8a05b848bc32415099e69",
-          "draft": true,
-          "disposition": "blocked",
-          "gate_ids": [
-            "G04"
-          ]
-        },
-        {
-          "number": 23,
-          "title": "feat(economics): integrate deterministic cost and E1 evidence contracts",
-          "head_branch": "integrate/compute-economics-e1-main",
-          "base_branch": "main",
-          "base_sha": "3883b575f9aa4d21d8b9a93fbd7a1459f345f4f1",
-          "head_sha": "47219103d2e2f9d02daba9d4805447ba8fad9281",
-          "draft": true,
-          "disposition": "blocked",
-          "gate_ids": [
-            "G04"
-          ]
-        },
-        {
-          "number": 26,
-          "title": "feat(economics): persist trusted Allocation usage evidence",
-          "head_branch": "feat/persist-allocation-usage-evidence-main-v3",
-          "base_branch": "integrate/compute-economics-e1-main",
-          "base_sha": "47219103d2e2f9d02daba9d4805447ba8fad9281",
-          "head_sha": "ae158a57aa2f283fea4dfa0ca4bfd367ac2ed11f",
-          "draft": true,
-          "disposition": "blocked",
-          "gate_ids": [
-            "G04"
-          ]
-        }
-      ]
-    },
-    {
-      "repo": "avaargsh/agent-decision",
-      "pull_requests": [
-        {
-          "number": 8,
-          "title": "feat: establish Go-first Decision Core and ledger APIs",
-          "head_branch": "feat/v0.1-decision-core-baseline",
-          "base_branch": "main",
-          "head_sha": "4aacfc2f94334c508f9d3150767d68c62f6b97f1",
-          "draft": true,
-          "disposition": "blocked",
-          "gate_ids": [
-            "G02",
-            "G05"
           ]
         }
       ]
