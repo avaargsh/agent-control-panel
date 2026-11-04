@@ -8,12 +8,14 @@ The transport adapter must call `Repository.ReceiveInboxEvent` and commit the ev
 
 - Delivery identity is scoped by `(consumer_name,event_id)`.
 - Exact redelivery is idempotent.
-- Reuse of an event ID with different persisted envelope fields or payload is surfaced as an identity conflict. A not-yet-applied stored event is quarantined.
+- Reuse of an event ID with different persisted envelope fields or payload is surfaced as an identity conflict. A not-yet-applied stored event is quarantined. Every changed delivery is also committed to the append-only `inbox_event_conflicts` v2 archive (full persisted envelope fields, payload and deterministic SHA-256 conflict identity), including when the original is already `APPLIED` and cannot be retroactively quarantined. Exact replay of the same conflicting envelope does not create duplicate archive rows.
 - Aggregate-version claims are scoped by consumer, tenant, aggregate type, aggregate ID and version.
 - A competing event for an already-claimed aggregate version is retained as `QUARANTINED`; it never replaces the first claim.
 - Cursor rows are initialized in the same transaction as the first accepted event.
 
 The Inbox schema persists producer, event type, schema version, tenant, aggregate identity/version and JSON payload. Transport metadata not represented by the schema is not reconstructed by the applier.
+
+The conflict archive is separate from the projection queue and its records cannot be UPDATEd, DELETEd or TRUNCATEd by ordinary database roles. The v2 SQL migration is additive, checksum-tracked and applied transactionally to existing v1 databases; changing v1 migration bytes is prohibited. An operator/runbook must still define alerting, authorized inspection, reconciliation and broker ACK/DLQ policy: persistent evidence alone does not imply that a conflicting event should be considered successfully applied, nor does it provide WORM retention against privileged DB users.
 
 ## Apply contract
 
