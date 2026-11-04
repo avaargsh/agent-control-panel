@@ -7,7 +7,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
-from audit_pr_topology import validate_snapshot, compare_live
+from audit_pr_topology import validate_snapshot, compare_live, snapshot_metadata, compare_live_metadata
 
 REGISTRY = json.loads((ROOT / "governance" / "contract-registry.v0.3.json").read_text())
 SNAPSHOT = json.loads((ROOT / "governance" / "pr-topology.v0.3.json").read_text())
@@ -96,6 +96,39 @@ class PRTopologyTests(unittest.TestCase):
         changed["repositories"][0]["pull_requests"][0]["head_sha"] = "main"
         with self.assertRaisesRegex(ValueError, "invalid PR head"):
             validate_snapshot(changed, REGISTRY)
+
+    def test_live_metadata_rejects_base_or_draft_drift(self):
+        expected = {"avaargsh/agent-runtime": {
+            8: {"head_sha": "a" * 40, "head_branch": "feature/one",
+                "base_sha": "b" * 40, "base_branch": "main", "draft": True},
+        }}
+        actual = copy.deepcopy(expected)
+        actual["avaargsh/agent-runtime"][8]["base_sha"] = "c" * 40
+        with self.assertRaisesRegex(ValueError, "base_sha"):
+            compare_live_metadata(expected, actual)
+        actual = copy.deepcopy(expected)
+        actual["avaargsh/agent-runtime"][8]["draft"] = False
+        with self.assertRaisesRegex(ValueError, "draft"):
+            compare_live_metadata(expected, actual)
+        actual = copy.deepcopy(expected)
+        actual["avaargsh/agent-runtime"][8]["head_branch"] = "unexpected"
+        with self.assertRaisesRegex(ValueError, "head_branch"):
+            compare_live_metadata(expected, actual)
+
+    def test_live_metadata_self_edit_exempts_only_own_head(self):
+        sample = {"repositories": [{"repo": "avaargsh/agent-control-panel",
+            "pull_requests": [{
+                "number": 4, "head_tracking": "exists-only",
+                "head_sha": "a" * 40, "head_branch": "governance/platform-v0.3",
+                "base_sha": "b" * 40, "base_branch": "main", "draft": True,
+            }]}]}
+        expected = snapshot_metadata(sample)
+        actual = copy.deepcopy(expected)
+        actual["avaargsh/agent-control-panel"][4]["head_sha"] = "c" * 40
+        self.assertTrue(compare_live_metadata(expected, actual))
+        actual["avaargsh/agent-control-panel"][4]["base_sha"] = "d" * 40
+        with self.assertRaisesRegex(ValueError, "base_sha"):
+            compare_live_metadata(expected, actual)
 
     def test_live_pr_drift_is_detected_without_auto_refresh(self):
         expected = {"avaargsh/agent-decision": {8: "a" * 40}}
