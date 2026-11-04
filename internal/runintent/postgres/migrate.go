@@ -17,6 +17,8 @@ const (
 	migrationLockID         int64 = 0x41435052554e
 	initialMigrationVersion int64 = 1
 	initialMigrationName          = "0001_run_intents_outbox_inbox.sql"
+	conflictMigrationVersion int64 = 2
+	conflictMigrationName = "0002_inbox_conflict_evidence.sql"
 )
 
 var (
@@ -67,12 +69,17 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 		return fmt.Errorf("read embedded RunIntent migration: %w", err)
 	}
 	checksum := fmt.Sprintf("%x", sha256.Sum256(source))
+	conflictSource, err := migrations.FS.ReadFile(conflictMigrationName)
+	if err != nil {
+		return fmt.Errorf("read embedded Inbox conflict migration: %w", err)
+	}
+	conflictChecksum := fmt.Sprintf("%x", sha256.Sum256(conflictSource))
 
 	rows, err := tx.Query(ctx, "SELECT version, name, checksum FROM schema_migrations")
 	if err != nil {
 		return fmt.Errorf("read schema migration history: %w", err)
 	}
-	var appliedVersion bool
+	var appliedVersion, conflictApplied bool
 	for rows.Next() {
 		var version int64
 		var name, appliedChecksum string
@@ -80,21 +87,38 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 			rows.Close()
 			return fmt.Errorf("scan schema migration history: %w", err)
 		}
-		if version != initialMigrationVersion || name != initialMigrationName ||
-			appliedChecksum != checksum || appliedVersion {
+		switch version {
+		case initialMigrationVersion:
+			if name != initialMigrationName || appliedChecksum != checksum || appliedVersion {
+				rows.Close()
+				return ErrSchemaDrift
+			}
+			appliedVersion = true
+		case conflictMigrationVersion:
+			if name != conflictMigrationName || appliedChecksum != conflictChecksum || conflictApplied {
+				rows.Close()
+				return ErrSchemaDrift
+			}
+			conflictApplied = true
+		default:
 			rows.Close()
 			return ErrSchemaDrift
 		}
-		appliedVersion = true
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
 		return fmt.Errorf("iterate schema migration history: %w", err)
 	}
 	rows.Close()
+	if conflictApplied && !appliedVersion {
+		return ErrSchemaDrift
+	}
 
 	if appliedVersion {
 		if err := verifyRunIntentSchema(ctx, tx); err != nil {
+			return err
+		}
+		if err := ensureInboxConflictMigration(ctx, tx, conflictApplied, conflictSource, conflictChecksum); err != nil {
 			return err
 		}
 		if err := tx.Commit(ctx); err != nil {
@@ -139,8 +163,66 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 	); err != nil {
 		return fmt.Errorf("record RunIntent migration checksum: %w", err)
 	}
+	if err := ensureInboxConflictMigration(ctx, tx, false, conflictSource, conflictChecksum); err != nil {
+		return err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit RunIntent schema migration: %w", err)
+	}
+	return nil
+}
+
+// ensureInboxConflictMigration upgrades pre-existing v1 databases without
+// altering the checksum-protected v1 migration. SQL, verification and ledger
+// recording share the caller's advisory-locked migration transaction.
+func ensureInboxConflictMigration(ctx context.Context, tx pgx.Tx, applied bool, source []byte, checksum string) error {
+	if !applied {
+		sql := strings.TrimSpace(string(source))
+		sql = strings.TrimPrefix(sql, "BEGIN;")
+		sql = strings.TrimSuffix(strings.TrimSpace(sql), "COMMIT;")
+		sql = strings.TrimSpace(sql)
+		if sql == "" || sql == strings.TrimSpace(string(source)) {
+			return ErrSchemaDrift
+		}
+		if _, err := tx.Exec(ctx, sql, pgx.QueryExecModeSimpleProtocol); err != nil {
+			return fmt.Errorf("apply Inbox conflict migration v2: %w", err)
+		}
+		if _, err := tx.Exec(ctx,
+			"INSERT INTO schema_migrations(version,name,checksum) VALUES($1,$2,$3)",
+			conflictMigrationVersion, conflictMigrationName, checksum); err != nil {
+			return fmt.Errorf("record Inbox conflict migration v2: %w", err)
+		}
+	}
+
+	var complete bool
+	if err := tx.QueryRow(ctx, `
+		SELECT to_regclass('inbox_event_conflicts') IS NOT NULL
+	`).Scan(&complete); err != nil {
+		return fmt.Errorf("verify Inbox conflict relation: %w", err)
+	}
+	if !complete {
+		return ErrSchemaDrift
+	}
+	var constraints int
+	if err := tx.QueryRow(ctx, `
+		SELECT count(*) FROM pg_constraint
+		WHERE conrelid=to_regclass('inbox_event_conflicts')
+		  AND convalidated
+		  AND conname IN ('inbox_event_conflicts_pkey','inbox_event_conflicts_original_fkey')
+	`).Scan(&constraints); err != nil {
+		return fmt.Errorf("verify Inbox conflict constraints: %w", err)
+	}
+	var triggers int
+	if err := tx.QueryRow(ctx, `
+		SELECT count(*) FROM pg_trigger
+		WHERE tgrelid=to_regclass('inbox_event_conflicts')
+		  AND NOT tgisinternal AND tgenabled='O'
+		  AND tgname IN ('inbox_conflict_evidence_no_update_delete','inbox_conflict_evidence_no_truncate')
+	`).Scan(&triggers); err != nil {
+		return fmt.Errorf("verify Inbox conflict triggers: %w", err)
+	}
+	if constraints != 2 || triggers != 2 {
+		return ErrSchemaDrift
 	}
 	return nil
 }
