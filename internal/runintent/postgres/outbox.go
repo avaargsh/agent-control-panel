@@ -37,7 +37,6 @@ type OutboxLease struct {
 func (r *Repository) ClaimOutbox(
 	ctx context.Context,
 	owner string,
-	now time.Time,
 	leaseTTL time.Duration,
 	limit int,
 	maxAttempts int,
@@ -46,7 +45,7 @@ func (r *Repository) ClaimOutbox(
 		return nil, errors.New("postgres run intent repository is not configured")
 	}
 	if strings.TrimSpace(owner) == "" || owner != strings.TrimSpace(owner) || len(owner) > 128 ||
-		now.IsZero() || leaseTTL < time.Microsecond || limit < 1 || limit > maxOutboxBatchSize ||
+		leaseTTL < time.Microsecond || limit < 1 || limit > maxOutboxBatchSize ||
 		maxAttempts < 1 || maxAttempts > math.MaxInt32 {
 		return nil, ErrInvalidOutboxLease
 	}
@@ -69,9 +68,9 @@ func (r *Repository) ClaimOutbox(
 		WHERE attempts >= $2
 		  AND (
 		    delivery_state = 'PENDING'
-		    OR (delivery_state = 'PUBLISHING' AND lease_expires_at <= $1)
+		    OR (delivery_state = 'PUBLISHING' AND lease_expires_at <= clock_timestamp())
 		  )
-	`, now.UTC(), int32(maxAttempts)); err != nil {
+	`, int32(maxAttempts)); err != nil {
 		return nil, fmt.Errorf("quarantine exhausted Outbox leases: %w", err)
 	}
 
@@ -81,9 +80,9 @@ func (r *Repository) ClaimOutbox(
 			FROM outbox_events AS candidate
 			WHERE candidate.attempts < $1
 			  AND (
-			    (candidate.delivery_state = 'PENDING' AND candidate.next_attempt_at <= $2)
+			    (candidate.delivery_state = 'PENDING' AND candidate.next_attempt_at <= clock_timestamp())
 			    OR
-			    (candidate.delivery_state = 'PUBLISHING' AND candidate.lease_expires_at <= $2)
+			    (candidate.delivery_state = 'PUBLISHING' AND candidate.lease_expires_at <= clock_timestamp())
 			  )
 			  AND NOT EXISTS (
 			    SELECT 1
@@ -106,7 +105,7 @@ func (r *Repository) ClaimOutbox(
 		SET delivery_state = 'PUBLISHING',
 		    attempts = event.attempts + 1,
 		    lease_owner = $4,
-		    lease_expires_at = $2 + ($5::double precision * INTERVAL '1 microsecond')
+		    lease_expires_at = clock_timestamp() + ($4::double precision * INTERVAL '1 microsecond')
 		FROM candidates
 		WHERE event.event_id = candidates.event_id
 		RETURNING
@@ -124,7 +123,7 @@ func (r *Repository) ClaimOutbox(
 		  event.traceparent,
 		  event.payload::text,
 		  event.attempts
-	`, int32(maxAttempts), now.UTC(), limit, owner, leaseTTL.Microseconds())
+	`, int32(maxAttempts), limit, owner, leaseTTL.Microseconds())
 	if err != nil {
 		return nil, fmt.Errorf("claim Outbox events: %w", err)
 	}
@@ -192,17 +191,17 @@ func (r *Repository) ClaimOutbox(
 // AcknowledgeOutbox marks a claimed event published only after the publisher
 // has acknowledged it. The attempt predicate fences stale workers and makes
 // the operation safe against an expired lease being reclaimed concurrently.
-func (r *Repository) AcknowledgeOutbox(ctx context.Context, lease OutboxLease, publishedAt time.Time) error {
+func (r *Repository) AcknowledgeOutbox(ctx context.Context, lease OutboxLease) error {
 	if r == nil || r.pool == nil {
 		return errors.New("postgres run intent repository is not configured")
 	}
-	if err := validateOutboxLease(lease); err != nil || publishedAt.IsZero() {
+	if err := validateOutboxLease(lease); err != nil {
 		return ErrInvalidOutboxLease
 	}
 	tag, err := r.pool.Exec(ctx, `
 		UPDATE outbox_events
 		SET delivery_state = 'PUBLISHED',
-		    published_at = $4,
+		    published_at = clock_timestamp(),
 		    last_error_code = NULL,
 		    lease_owner = NULL,
 		    lease_expires_at = NULL
@@ -211,7 +210,7 @@ func (r *Repository) AcknowledgeOutbox(ctx context.Context, lease OutboxLease, p
 		  AND lease_owner = $2
 		  AND attempts = $3
 		  AND lease_expires_at > clock_timestamp()
-	`, lease.Event.ID, lease.Owner, int32(lease.Attempt), publishedAt.UTC())
+	`, lease.Event.ID, lease.Owner, int32(lease.Attempt))
 	if err != nil {
 		return fmt.Errorf("acknowledge Outbox event: %w", err)
 	}
@@ -227,14 +226,14 @@ func (r *Repository) AcknowledgeOutbox(ctx context.Context, lease OutboxLease, p
 func (r *Repository) RetryOutbox(
 	ctx context.Context,
 	lease OutboxLease,
-	nextAttemptAt time.Time,
+	retryAfter time.Duration,
 	errorCode string,
 	maxAttempts int,
 ) (bool, error) {
 	if r == nil || r.pool == nil {
 		return false, errors.New("postgres run intent repository is not configured")
 	}
-	if err := validateOutboxLease(lease); err != nil || nextAttemptAt.IsZero() ||
+	if err := validateOutboxLease(lease); err != nil || retryAfter < time.Microsecond ||
 		maxAttempts < 1 || maxAttempts > math.MaxInt32 {
 		return false, ErrInvalidOutboxLease
 	}
@@ -246,7 +245,7 @@ func (r *Repository) RetryOutbox(
 	err := r.pool.QueryRow(ctx, `
 		UPDATE outbox_events
 		SET delivery_state = CASE WHEN attempts >= $5 THEN 'QUARANTINED' ELSE 'PENDING' END,
-		    next_attempt_at = $4,
+		    next_attempt_at = clock_timestamp() + ($4::double precision * INTERVAL '1 microsecond'),
 		    lease_owner = NULL,
 		    lease_expires_at = NULL,
 		    last_error_code = $6
@@ -256,7 +255,7 @@ func (r *Repository) RetryOutbox(
 		  AND attempts = $3
 		  AND lease_expires_at > clock_timestamp()
 		RETURNING delivery_state = 'QUARANTINED'
-	`, lease.Event.ID, lease.Owner, int32(lease.Attempt), nextAttemptAt.UTC(), int32(maxAttempts), errorCode).Scan(&quarantined)
+	`, lease.Event.ID, lease.Owner, int32(lease.Attempt), retryAfter.Microseconds(), int32(maxAttempts), errorCode).Scan(&quarantined)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, ErrOutboxLeaseLost
 	}
@@ -361,7 +360,7 @@ func (d *OutboxDispatcher) DispatchOnce(ctx context.Context) (OutboxDispatchResu
 		return OutboxDispatchResult{}, errors.New("Outbox dispatcher is not configured")
 	}
 	leases, err := d.repository.ClaimOutbox(
-		ctx, d.options.Owner, time.Now().UTC(), d.options.LeaseTTL,
+		ctx, d.options.Owner, d.options.LeaseTTL,
 		d.options.BatchSize, d.options.MaxAttempts,
 	)
 	if err != nil {
@@ -381,8 +380,8 @@ func (d *OutboxDispatcher) DispatchOnce(ctx context.Context) (OutboxDispatchResu
 			} else if errors.Is(publishErr, context.Canceled) {
 				errorCode = "PUBLISH_CANCELLED"
 			}
-			nextAttemptAt := time.Now().UTC().Add(retryDelay(lease.Attempt, d.options.BaseBackoff, d.options.MaxBackoff))
-			quarantined, retryErr := d.repository.RetryOutbox(ctx, lease, nextAttemptAt, errorCode, d.options.MaxAttempts)
+			retryAfter := retryDelay(lease.Attempt, d.options.BaseBackoff, d.options.MaxBackoff)
+			quarantined, retryErr := d.repository.RetryOutbox(ctx, lease, retryAfter, errorCode, d.options.MaxAttempts)
 			if retryErr != nil {
 				return result, fmt.Errorf("record Outbox publish failure: %w", retryErr)
 			}
@@ -394,7 +393,7 @@ func (d *OutboxDispatcher) DispatchOnce(ctx context.Context) (OutboxDispatchResu
 			continue
 		}
 
-		if err := d.repository.AcknowledgeOutbox(ctx, lease, time.Now().UTC()); err != nil {
+		if err := d.repository.AcknowledgeOutbox(ctx, lease); err != nil {
 			return result, fmt.Errorf("acknowledge published Outbox event: %w", err)
 		}
 		result.Published++
