@@ -17,9 +17,10 @@ const (
 	migrationLockID         int64 = 0x41435052554e
 	initialMigrationVersion int64 = 1
 	initialMigrationName          = "0001_run_intents_outbox_inbox.sql"
-	conflictMigrationVersion int64 = 2
-	conflictMigrationName = "0002_inbox_conflict_evidence.sql"
 )
+
+const conflictMigrationVersion int64 = 2
+const conflictMigrationName = "0002_inbox_conflict_evidence.sql"
 
 var (
 	ErrSchemaDrift       = errors.New("RunIntent schema migration checksum or relation drift")
