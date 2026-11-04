@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -59,6 +60,44 @@ type InboxBatchResult struct {
 type InboxEventApplier interface {
 	Supports(InboxEvent) bool
 	Apply(context.Context, pgx.Tx, InboxEvent) error
+}
+
+// persistInboxConflict retains the alternative envelope for forensic replay
+// before the caller can acknowledge the conflicting broker delivery. It does
+// not mutate the original event, including when that event was already APPLIED.
+func persistInboxConflict(ctx context.Context, tx pgx.Tx, consumerName string, event Event) error {
+	envelope := struct {
+		Producer         string          `json:"producer"`
+		Type             string          `json:"event_type"`
+		SchemaVersion    int32           `json:"schema_version"`
+		TenantID         string          `json:"tenant_id"`
+		AggregateType    string          `json:"aggregate_type"`
+		AggregateID      string          `json:"aggregate_id"`
+		AggregateVersion uint64          `json:"aggregate_version"`
+		Payload          json.RawMessage `json:"payload"`
+	}{
+		Producer: event.Producer, Type: event.Type, SchemaVersion: event.SchemaVersion,
+		TenantID: event.TenantID, AggregateType: event.AggregateType,
+		AggregateID: event.AggregateID, AggregateVersion: event.AggregateVersion,
+		Payload: event.Payload,
+	}
+	encoded, err := json.Marshal(envelope)
+	if err != nil {
+		return fmt.Errorf("encode Inbox conflict evidence: %w", err)
+	}
+	digest := fmt.Sprintf("%x", sha256.Sum256(encoded))
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO inbox_event_conflicts (
+			consumer_name,event_id,conflict_sha256,producer,event_type,schema_version,
+			tenant_id,aggregate_type,aggregate_id,aggregate_version,payload
+		) VALUES ($1,$2::uuid,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb)
+		ON CONFLICT (consumer_name,event_id,conflict_sha256) DO NOTHING
+	`, consumerName, event.ID, digest, event.Producer, event.Type, event.SchemaVersion,
+		event.TenantID, event.AggregateType, event.AggregateID,
+		int64(event.AggregateVersion), []byte(event.Payload)); err != nil {
+		return fmt.Errorf("persist Inbox conflicting delivery: %w", err)
+	}
+	return nil
 }
 
 // ReceiveInboxEvent persists a broker delivery before its transport is ACKed.
@@ -127,6 +166,9 @@ func (r *Repository) ReceiveInboxEvent(ctx context.Context, consumerName string,
 					return InboxReceiveResult{}, fmt.Errorf("quarantine conflicting Inbox event ID: %w", err)
 				}
 				state = "QUARANTINED"
+			}
+			if err := persistInboxConflict(ctx, tx, consumerName, event); err != nil {
+				return InboxReceiveResult{}, err
 			}
 			if err := tx.Commit(ctx); err != nil {
 				return InboxReceiveResult{}, fmt.Errorf("commit Inbox event conflict: %w", err)
