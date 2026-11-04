@@ -35,9 +35,11 @@ The Control Plane owns logical Agent/Session/Run identity and desired state. It 
 - **Agent Control Plane:** domain resources, desired state, lifecycle coordination, authorization delegation, release governance, federation and evidence links.
 - **Agent Runtime / workflow engine (Temporal or compatible):** durable execution, step semantics, retries, waits, checkpoints and worker orchestration.
 - **Sandbox Provider (OpenKruise Agents, OpenSandbox, etc.):** isolated execution environment lifecycle, filesystem/runtime and sandbox-level network enforcement.
-- **Compute Control Plane (`compute-control-panel` / `gpu-compute-platform`):** cluster/provider inventory, compute allocation and accelerator lifecycle.
+- **Compute Control Plane (`compute-control-panel`):** cluster/provider inventory, compute allocation and accelerator lifecycle.
 - **Identity / secrets / policy:** integrate Keycloak or an OIDC provider, OpenBao/Kubernetes Secret, and mature policy systems (OPA/Casbin/Cedar) through adapters.
 - **`agent-control-panel` UI:** operator and developer UX only; no separate authority or lifecycle source of truth.
+
+`gpu-compute-platform` is retired as an active delivery repository and is retained only as historical migration/reference material. New Compute implementation and release evidence belong exclusively to `compute-control-panel`.
 
 ## Architecture principles
 
