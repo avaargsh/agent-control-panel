@@ -347,6 +347,58 @@ func TestMigrationRejectsMissingConflictArchiveTruncateTrigger(t *testing.T) {
 	}
 }
 
+// A matching migration checksum and familiar object names do not establish
+// that the live conflict archive still has the originally reviewed protections.
+func TestMigrationRejectsSameNameButChangedInboxConflictGuards(t *testing.T) {
+	cases := []struct {
+		name       string
+		statements []string
+	}{
+		{
+			name: "same-named trigger changed from truncate to insert",
+			statements: []string{
+				"DROP TRIGGER inbox_conflict_evidence_no_truncate ON inbox_event_conflicts",
+				`CREATE TRIGGER inbox_conflict_evidence_no_truncate
+				 BEFORE INSERT ON inbox_event_conflicts
+				 FOR EACH ROW EXECUTE FUNCTION reject_inbox_conflict_evidence_mutation()`,
+			},
+		},
+		{
+			name: "same-named archive primary key no longer contains digest",
+			statements: []string{
+				"ALTER TABLE inbox_event_conflicts DROP CONSTRAINT inbox_event_conflicts_pkey",
+				`ALTER TABLE inbox_event_conflicts ADD CONSTRAINT inbox_event_conflicts_pkey
+				 PRIMARY KEY (consumer_name,event_id)`,
+			},
+		},
+		{
+			name: "trigger function body changed to no-op",
+			statements: []string{
+				`CREATE OR REPLACE FUNCTION reject_inbox_conflict_evidence_mutation()
+				 RETURNS trigger LANGUAGE plpgsql AS $
+				 BEGIN
+				   RETURN NULL;
+				 END;
+				 $`,
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, pool := testRepository(t)
+			ctx := context.Background()
+			for _, sql := range tc.statements {
+				if _, err := pool.Exec(ctx, sql); err != nil {
+					t.Fatalf("inject same-name catalog drift: %v", err)
+				}
+			}
+			if err := Migrate(ctx, pool); !errors.Is(err, ErrSchemaDrift) {
+				t.Fatalf("same-name altered archive guard passed: %v, want ErrSchemaDrift", err)
+			}
+		})
+	}
+}
+
 func TestMigrationHistoryChecksumAndSchemaDrift(t *testing.T) {
 	_, pool := testRepository(t)
 	ctx := context.Background()
