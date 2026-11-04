@@ -102,6 +102,7 @@
           "title": "feat(runtime): Guard recovery policy and Decision/Temporal integration contract",
           "head_branch": "feature/platform-foundation",
           "base_branch": "main",
+          "base_sha": "864ef89dec78584dd336aeb62ffd70b7c40c3b12",
           "head_sha": "5b361cd5c56f3d58a426e469c795f727f85da141",
           "draft": true,
           "disposition": "blocked",
@@ -117,6 +118,7 @@
           "title": "feat: initial Go Temporal workflow invoking bounded Python plugin",
           "head_branch": "feature/temporal-plugin-spike",
           "base_branch": "feature/platform-foundation",
+          "base_sha": "5b361cd5c56f3d58a426e469c795f727f85da141",
           "head_sha": "261b5aaf8cd4c3075d5d96073bea60be22527e93",
           "draft": true,
           "disposition": "blocked",
@@ -130,7 +132,8 @@
           "title": "docs: define runtime reliability acceptance gates",
           "head_branch": "docs/reliability-acceptance-20261102",
           "base_branch": "feature/temporal-plugin-spike",
-          "head_sha": "a3774402b7806b11743317668f40380dd9576e6c",
+          "base_sha": "51b98f9ef06b16994fd46b948e0e5794853b08a1",
+          "head_sha": "80e9cb6dcb91fcbc3a09459765505477852c7777",
           "draft": true,
           "disposition": "blocked",
           "gate_ids": [
@@ -140,28 +143,128 @@
           ]
         },
         {
-          "number": 6,
-          "title": "feat(runtime): durable ACP RunIntent acceptance and lost-ACK lookup",
-          "head_branch": "feature/runintent-acceptance-p0",
+          "number": 8,
+          "title": "feat(runtime): add Agent Execution Safety commit protocol",
+          "head_branch": "feat/agent-execution-safety-commit-protocol",
           "base_branch": "docs/reliability-acceptance-20261102",
-          "head_sha": "2e0d45176b93f08df139397875b5c2f1d470de4a",
+          "base_sha": "80e9cb6dcb91fcbc3a09459765505477852c7777",
+          "head_sha": "324ce5aad30d98bc2b27b618e6c5e9919bb4e839",
           "draft": true,
           "disposition": "blocked",
           "gate_ids": [
-            "G01",
+            "G03",
             "G05"
           ]
         },
         {
-          "number": 7,
-          "title": "feat(runtime): mTLS-verified ACP RunIntent accept and inspect HTTP boundary",
-          "head_branch": "feature/acp-mtls-runintent-http-v1",
-          "base_branch": "feature/runintent-acceptance-p0",
-          "head_sha": "8a1356cc7bc48d9237c10a84ca97ad7a83b7b9f1",
+          "number": 9,
+          "title": "feat(runtime): persist Proposal Commit state in PostgreSQL",
+          "head_branch": "feat/runtime-proposal-postgres-store",
+          "base_branch": "feat/agent-execution-safety-commit-protocol",
+          "base_sha": "83d89423c8d3dd4e6ba0d00d87a8b0a844380af4",
+          "head_sha": "16e69de1877bf6c2eb10c7ecea52e9d4740f577f",
           "draft": true,
           "disposition": "blocked",
           "gate_ids": [
-            "G01",
+            "G03",
+            "G05"
+          ]
+        },
+        {
+          "number": 11,
+          "title": "docs(runtime): define Coding Agent Security Boundary",
+          "head_branch": "feat/runtime-security-boundary",
+          "base_branch": "feat/runtime-proposal-postgres-store",
+          "base_sha": "16e69de1877bf6c2eb10c7ecea52e9d4740f577f",
+          "head_sha": "904b7be85d7e1cc40fffe7706e6922ccc3ef0284",
+          "draft": true,
+          "disposition": "blocked",
+          "gate_ids": [
+            "G03",
+            "G05"
+          ]
+        },
+        {
+          "number": 12,
+          "title": "feat(dataprotection): add run-scoped tokenization core",
+          "head_branch": "feature/runtime-dataprotection-core",
+          "base_branch": "feat/runtime-security-boundary",
+          "base_sha": "904b7be85d7e1cc40fffe7706e6922ccc3ef0284",
+          "head_sha": "fc2e2df2211f90eb3b8fc32fcf5c77fa5d0de1ff",
+          "draft": true,
+          "disposition": "blocked",
+          "gate_ids": [
+            "G03",
+            "G05"
+          ]
+        },
+        {
+          "number": 14,
+          "title": "feat(runtime): add identity, audit and breaker primitives",
+          "head_branch": "feature/runtime-security-primitives-v2",
+          "base_branch": "feature/runtime-dataprotection-core",
+          "base_sha": "fc2e2df2211f90eb3b8fc32fcf5c77fa5d0de1ff",
+          "head_sha": "ec03910c5f0b40cb035ead3c74c6fb0b355b1a65",
+          "draft": true,
+          "disposition": "blocked",
+          "gate_ids": [
+            "G03",
+            "G05"
+          ]
+        },
+        {
+          "number": 16,
+          "title": "feat(postgres): persist runtime security audit and breaker state",
+          "head_branch": "feature/runtime-security-postgres-store",
+          "base_branch": "feature/runtime-security-primitives-v2",
+          "base_sha": "ec03910c5f0b40cb035ead3c74c6fb0b355b1a65",
+          "head_sha": "1d92d007db8f70c9c0754c91e62bd98145ee98ce",
+          "draft": true,
+          "disposition": "blocked",
+          "gate_ids": [
+            "G03",
+            "G05"
+          ]
+        },
+        {
+          "number": 18,
+          "title": "feat(runtime): enforce Run breaker on Decision Activity",
+          "head_branch": "feature/runtime-breaker-enforcement",
+          "base_branch": "feature/runtime-security-postgres-store",
+          "base_sha": "1d92d007db8f70c9c0754c91e62bd98145ee98ce",
+          "head_sha": "166c06bbfac70e2d61d845d3c7d4a60e3fa97ab4",
+          "draft": true,
+          "disposition": "blocked",
+          "gate_ids": [
+            "G03",
+            "G05"
+          ]
+        },
+        {
+          "number": 19,
+          "title": "fix(audit): enforce TRUNCATE immutability on fresh and upgraded Runtime DBs",
+          "head_branch": "fix/security-audit-truncate-immutability",
+          "base_branch": "feature/runtime-breaker-enforcement",
+          "base_sha": "f0061ff735b84803495defbb8b7f207769744a27",
+          "head_sha": "fd26f5b6892a8a4151ca2561436fc24f59ffc0c1",
+          "draft": true,
+          "disposition": "blocked",
+          "gate_ids": [
+            "G03",
+            "G05"
+          ]
+        },
+        {
+          "number": 21,
+          "title": "feat(runtime): protect Decision egress with canonical Run identity",
+          "head_branch": "feat/runtime-decision-data-protection-integration",
+          "base_branch": "fix/security-audit-truncate-immutability",
+          "base_sha": "ea1a6bf2c74f100fe3f99aecdd74dc3f9f4bbfd1",
+          "head_sha": "7b232fa8996e33fc827e8bfa133b25ec5c033a8d",
+          "draft": true,
+          "disposition": "blocked",
+          "gate_ids": [
+            "G03",
             "G05"
           ]
         }
