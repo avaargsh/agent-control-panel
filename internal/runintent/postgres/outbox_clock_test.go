@@ -27,10 +27,10 @@ func TestClaimOutboxUsesDatabaseClockForEligibilityAndLeaseExpiry(t *testing.T) 
 	// caller-supplied clock; PostgreSQL decides eligibility and lease expiry.
 	claims, err := repository.ClaimOutbox(ctx, "clock-skew-worker", time.Minute, 1, 3)
 	if err != nil {
-		t.Fatalf("claim with skewed client clock: %v", err)
+		t.Fatalf("claim before retry eligibility: %v", err)
 	}
 	if len(claims) != 0 {
-		t.Fatalf("client clock skew bypassed next_attempt_at: claimed %+v", claims)
+		t.Fatalf("future next_attempt_at was ignored: claimed %+v", claims)
 	}
 
 	if _, err := pool.Exec(ctx, `
@@ -55,6 +55,6 @@ func TestClaimOutboxUsesDatabaseClockForEligibilityAndLeaseExpiry(t *testing.T) 
 		t.Fatalf("inspect persisted lease expiry: %v", err)
 	}
 	if !leaseWithinBound {
-		t.Fatal("lease expiry was derived from the client clock instead of the PostgreSQL clock")
+		t.Fatal("lease expiry is outside the database-clock bound")
 	}
 }
