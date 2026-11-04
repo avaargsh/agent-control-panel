@@ -459,3 +459,50 @@ func TestMigrationDetectsMissingCriticalConstraintAfterRecordedInstall(t *testin
 		t.Fatalf("schema with missing state/payload ownership constraint was accepted: %v", err)
 	}
 }
+
+
+// A checksum-valid v1 database can still have its live constraints replaced.
+// Constraint name lookup alone is insufficient: table, type and key columns
+// must match the original reviewed migration contract.
+func TestMigrationRejectsSameNameCriticalConstraintsWithDifferentBindings(t *testing.T) {
+	cases := []struct {
+		name       string
+		statements []string
+	}{
+		{
+			name: "state ownership check moved to unrelated relation",
+			statements: []string{
+				"ALTER TABLE run_intents DROP CONSTRAINT run_intents_state_payload_consistency",
+				"ALTER TABLE outbox_events ADD CONSTRAINT run_intents_state_payload_consistency CHECK (true)",
+			},
+		},
+		{
+			name: "state ownership check replaced by different constraint type",
+			statements: []string{
+				"ALTER TABLE run_intents DROP CONSTRAINT run_intents_state_payload_consistency",
+				"ALTER TABLE run_intents ADD CONSTRAINT run_intents_state_payload_consistency UNIQUE (tenant_id,id)",
+			},
+		},
+		{
+			name: "idempotency uniqueness no longer binds operation",
+			statements: []string{
+				"ALTER TABLE run_intents DROP CONSTRAINT run_intents_idempotency_unique",
+				"ALTER TABLE run_intents ADD CONSTRAINT run_intents_idempotency_unique UNIQUE (tenant_id,principal_id,idempotency_key)",
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, pool := testRepository(t)
+			ctx := context.Background()
+			for _, stmt := range tc.statements {
+				if _, err := pool.Exec(ctx, stmt); err != nil {
+					t.Fatalf("inject live catalog drift: %v", err)
+				}
+			}
+			if err := Migrate(ctx, pool); !errors.Is(err, ErrSchemaDrift) {
+				t.Fatalf("same-name weakened RunIntent guard accepted: %v, want ErrSchemaDrift", err)
+			}
+		})
+	}
+}
