@@ -143,6 +143,49 @@ def snapshot_heads(snapshot: dict) -> dict[str, dict[int, str | None]]:
     }
 
 
+def snapshot_metadata(snapshot: dict) -> dict[str, dict[int, dict]]:
+    """Pin live-observable identity, branch and Draft attributes for every open PR."""
+    return {
+        group["repo"]: {
+            p["number"]: {
+                "head_sha": None if p.get("head_tracking") == "exists-only" else p["head_sha"],
+                "head_branch": p["head_branch"],
+                "base_sha": p["base_sha"],
+                "base_branch": p["base_branch"],
+                "draft": p["draft"],
+            }
+            for p in group["pull_requests"]
+        }
+        for group in snapshot["repositories"]
+    }
+
+
+def compare_live_metadata(expected: dict, actual: dict) -> bool:
+    """Reject any inventory/head/lineage/Draft drift, except the self-editing head."""
+    for repo in sorted(set(expected) | set(actual)):
+        old = expected.get(repo, {})
+        new = actual.get(repo, {})
+        if set(old) != set(new):
+            raise ValueError(
+                f"PR drift: {repo} open PR identities changed "
+                f"(added={sorted(set(new) - set(old))}, closed={sorted(set(old) - set(new))})"
+            )
+        for number, pinned in old.items():
+            observed = new[number]
+            if not isinstance(observed, dict):
+                raise ValueError(f"PR drift: {repo} #{number} live metadata missing")
+            for key in ("head_sha", "head_branch", "base_sha", "base_branch", "draft"):
+                if key not in observed:
+                    raise ValueError(f"PR drift: {repo} #{number} {key} missing")
+                value = pinned[key]
+                if value is not None and observed[key] != value:
+                    raise ValueError(
+                        f"PR drift: {repo} #{number} {key} expected {value}, "
+                        f"observed {observed[key]}"
+                    )
+    return True
+
+
 def compare_live(expected: dict, actual: dict) -> bool:
     for repo in sorted(set(expected) | set(actual)):
         old = expected.get(repo, {})
@@ -160,7 +203,7 @@ def compare_live(expected: dict, actual: dict) -> bool:
     return True
 
 
-def fetch_live_pr_heads(repos: set[str], token: str | None = None) -> dict:
+def fetch_live_pr_metadata(repos: set[str], token: str | None = None) -> dict:
     """Read all open PR heads; API errors are fatal, not treated as empty lists."""
     result = {}
     for repo in sorted(repos):
@@ -182,13 +225,31 @@ def fetch_live_pr_heads(repos: set[str], token: str | None = None) -> dict:
             if not isinstance(entries, list):
                 raise RuntimeError(f"unexpected GitHub response for {repo}")
             for item in entries:
-                heads[item["number"]] = item["head"]["sha"]
+                number = item["number"]
+                if number in heads:
+                    raise RuntimeError(f"duplicate live PR number {repo} #{number}")
+                heads[number] = {
+                    "head_sha": item["head"]["sha"],
+                    "head_branch": item["head"]["ref"],
+                    "base_sha": item["base"]["sha"],
+                    "base_branch": item["base"]["ref"],
+                    "draft": item["draft"],
+                }
             if len(entries) < 100:
                 break
         else:
             raise RuntimeError(f"PR pagination limit reached for {repo}")
         result[repo] = heads
     return result
+
+
+def fetch_live_pr_heads(repos: set[str], token: str | None = None) -> dict:
+    """Compatibility helper for consumers only interested in PR head drift."""
+    details = fetch_live_pr_metadata(repos, token)
+    return {
+        repo: {number: entry["head_sha"] for number, entry in rows.items()}
+        for repo, rows in details.items()
+    }
 
 
 def main() -> None:
@@ -200,10 +261,10 @@ def main() -> None:
     validate_snapshot(snapshot, registry)
     print("Observed PR topology and blocked gate mapping are internally consistent")
     if args.live:
-        expected = snapshot_heads(snapshot)
-        live = fetch_live_pr_heads(set(expected), os.getenv("GH_GOVERNANCE_READ_TOKEN"))
-        compare_live(expected, live)
-        print("All observed open PR identities and pinned heads match live GitHub")
+        expected = snapshot_metadata(snapshot)
+        live = fetch_live_pr_metadata(set(expected), os.getenv("GH_GOVERNANCE_READ_TOKEN"))
+        compare_live_metadata(expected, live)
+        print("All observed PR identities, heads, bases, branches and Draft states match live GitHub")
 
 
 if __name__ == "__main__":
