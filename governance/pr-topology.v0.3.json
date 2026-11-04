@@ -444,6 +444,19 @@
           "gate_ids": [
             "G04"
           ]
+        },
+        {
+          "number": 29,
+          "title": "fix(recovery): reject stale terminal Provider Inspect evidence after lease claim",
+          "head_branch": "fix/reconcile-fresh-terminal-inspection-20261104",
+          "base_branch": "main",
+          "base_sha": "eb6746c4b8b8c0a15a2d592f86c9575d7d601442",
+          "head_sha": "052483749ab533363d41350f4b68a008f12b9519",
+          "draft": true,
+          "disposition": "blocked",
+          "gate_ids": [
+            "G04"
+          ]
         }
       ]
     },
@@ -615,5 +628,6 @@
       "reason": "Old SPIFFE resolver #12 derives from retired Guard ingress; #18 carries complete tenant/subject/actor/workload identity on the corrected ingress. Port reviewed fixes selectively.",
       "issue": "https://github.com/avaargsh/EngageGuard/issues/3"
     }
-  ]
+  ],
+  "observed_count": 41
 }
