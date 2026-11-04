@@ -1,6 +1,6 @@
 # PostgreSQL Persistence Contract — P0
 
-Status: **PostgreSQL RunIntent repository and transactional Outbox foundation implemented; delivery workers and Runtime integration remain pending**.
+Status: **transactional RunIntent/Outbox repository and generic Outbox dispatcher implemented; broker adapter, Inbox worker and Runtime integration remain pending**.
 
 This migration persists only Control Plane-owned RunIntent and messaging delivery state. It deliberately does not create a \`runs\` table: Agent Runtime owns Run/Task/RunAttempt lifecycle and identifiers.
 
@@ -45,7 +45,8 @@ The Go repository foundation now provides:
 
 ## Explicit remaining implementation gaps
 
-- Outbox publisher and Inbox consumer workers, including lease reclaim, retries, quarantine and gap recovery.
+- Inbox ingestion/consumer workers, including deduplication, tenant-scoped aggregate ordering, cursor advancement, gap recovery and quarantine.
+- Production `EventPublisher` adapter with transport authentication, TLS, schema compatibility, metrics and deployment configuration.
 - Authenticated Runtime `StartRun` / `InspectRunIntent` adapter and durable reconciliation worker.
 - Service connection lifecycle, dependency-aware readiness, deployment configuration and operational metrics.
 - Restart, lost-ACK, duplicate-start and cross-process recovery tests around the real Runtime adapter.
