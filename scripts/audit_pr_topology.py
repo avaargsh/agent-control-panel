@@ -109,6 +109,10 @@ def validate_snapshot(snapshot: dict, registry: dict) -> bool:
         all_prs[repo] = by_number
     if seen_repo != EXPECTED_REPOS:
         raise ValueError("missing or unexpected core repository")
+    count = snapshot.get("observed_count")
+    actual_count = sum(len(group["pull_requests"]) for group in repos)
+    if type(count) is not int or count != actual_count:
+        raise ValueError("observed PR count must match the recorded open-PR inventory")
     groups = snapshot.get("parallel_conflicts", [])
     seen_groups = set()
     for group in groups:
