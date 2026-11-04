@@ -244,7 +244,6 @@ func TestOutboxRetryQuarantinesAfterAttemptBudget(t *testing.T) {
 		t.Fatalf("create RunIntent and Outbox event: inserted=%v err=%v", inserted, err)
 	}
 
-	now := time.Now().UTC().Truncate(time.Microsecond)
 	first, err := repository.ClaimOutbox(ctx, "worker-1", time.Minute, 1, 2)
 	if err != nil || len(first) != 1 {
 		t.Fatalf("first claim: leases=%+v err=%v", first, err)
@@ -290,7 +289,6 @@ func TestOutboxExpiredLeaseAtAttemptLimitIsQuarantined(t *testing.T) {
 		t.Fatalf("create RunIntent and Outbox event: inserted=%v err=%v", inserted, err)
 	}
 
-	now := time.Now().UTC().Truncate(time.Microsecond)
 	claimed, err := repository.ClaimOutbox(ctx, "worker-1", time.Minute, 1, 1)
 	if err != nil || len(claimed) != 1 || claimed[0].Attempt != 1 {
 		t.Fatalf("claim final attempt: leases=%+v err=%v", claimed, err)
