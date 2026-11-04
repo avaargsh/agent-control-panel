@@ -103,7 +103,7 @@
           "head_branch": "feat/v0.1-decision-core-baseline",
           "base_branch": "main",
           "base_sha": "c0d60e9692f61ccb4131ef3c24b97d7d5fa1d911",
-          "head_sha": "a9aa100fc0b5db3ce1d691127faa0ed1bc2f017f",
+          "head_sha": "8766d27fca6fbb449ee56b842ea129939855b313",
           "draft": true,
           "disposition": "blocked",
           "gate_ids": [
@@ -144,8 +144,8 @@
           "title": "integration: combine Decision JSON and PostgreSQL drift hardening against latest Core",
           "head_branch": "integration/decision-core-hardening-20261104",
           "base_branch": "feat/v0.1-decision-core-baseline",
-          "base_sha": "31386a263eeda834b97e30c1bec6eb1c34140d65",
-          "head_sha": "fe1951f290bc531e1793dc9f26ea5835a5743544",
+          "base_sha": "a9aa100fc0b5db3ce1d691127faa0ed1bc2f017f",
+          "head_sha": "fb576e3236abcb16cd22cfb4f9af4d69f5c09ffc",
           "draft": true,
           "disposition": "blocked",
           "gate_ids": [
@@ -157,36 +157,7 @@
     },
     {
       "repo": "avaargsh/agent-infra",
-      "pull_requests": [
-        {
-          "number": 15,
-          "title": "fix(temporal): enforce immutable Run binding before Update delivery and reconciliation",
-          "head_branch": "fix/temporal-update-binding-preflight",
-          "base_branch": "main",
-          "base_sha": "482bfd9b66f7fc4f66a5c0d1461f428d879b339e",
-          "head_sha": "16483d84b9b860a3ec6124a0e1318a1e5d1ca159",
-          "draft": true,
-          "disposition": "blocked",
-          "gate_ids": [
-            "G01",
-            "G05"
-          ]
-        },
-        {
-          "number": 16,
-          "title": "fix(relay): never claim more Outbox leases than active processing slots",
-          "head_branch": "fix/relay-unstarted-lease-expiry",
-          "base_branch": "main",
-          "base_sha": "482bfd9b66f7fc4f66a5c0d1461f428d879b339e",
-          "head_sha": "92b564d28e29a22f705e4dbfc795b532b9c240ba",
-          "draft": true,
-          "disposition": "blocked",
-          "gate_ids": [
-            "G01",
-            "G05"
-          ]
-        }
-      ]
+      "pull_requests": []
     },
     {
       "repo": "avaargsh/agent-runtime",
@@ -385,8 +356,8 @@
           "title": "docs: restore architecture baseline without README conflict",
           "head_branch": "docs/architecture-baseline-main-20261104",
           "base_branch": "main",
-          "base_sha": "eb6746c4b8b8c0a15a2d592f86c9575d7d601442",
-          "head_sha": "c355ce32e805942cd880a659ac1b7b4c04204889",
+          "base_sha": "0604b5fed70e00e061a66347cc92a5a39b830e96",
+          "head_sha": "d9ef626b8255d8dd498a21f530741f8527698d73",
           "draft": true,
           "disposition": "blocked",
           "gate_ids": [
@@ -439,19 +410,6 @@
           "base_branch": "integrate/compute-economics-e1-main",
           "base_sha": "47219103d2e2f9d02daba9d4805447ba8fad9281",
           "head_sha": "ae158a57aa2f283fea4dfa0ca4bfd367ac2ed11f",
-          "draft": true,
-          "disposition": "blocked",
-          "gate_ids": [
-            "G04"
-          ]
-        },
-        {
-          "number": 29,
-          "title": "fix(recovery): reject stale terminal Provider Inspect evidence after lease claim",
-          "head_branch": "fix/reconcile-fresh-terminal-inspection-20261104",
-          "base_branch": "main",
-          "base_sha": "eb6746c4b8b8c0a15a2d592f86c9575d7d601442",
-          "head_sha": "052483749ab533363d41350f4b68a008f12b9519",
           "draft": true,
           "disposition": "blocked",
           "gate_ids": [
@@ -629,5 +587,5 @@
       "issue": "https://github.com/avaargsh/EngageGuard/issues/3"
     }
   ],
-  "observed_count": 41
+  "observed_count": 38
 }
