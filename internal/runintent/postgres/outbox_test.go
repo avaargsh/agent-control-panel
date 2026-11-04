@@ -204,7 +204,6 @@ func TestOutboxClaimFencesExpiredWorkerLease(t *testing.T) {
 		t.Fatalf("create RunIntent and Outbox event: inserted=%v err=%v", inserted, err)
 	}
 
-	now := time.Now().UTC().Truncate(time.Microsecond)
 	first, err := repository.ClaimOutbox(ctx, "worker-reused-id", time.Minute, 1, 3)
 	if err != nil || len(first) != 1 || first[0].Attempt != 1 {
 		t.Fatalf("first claim: leases=%+v err=%v", first, err)
