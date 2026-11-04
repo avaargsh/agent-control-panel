@@ -304,6 +304,49 @@ func TestCreateReplayRejectsChangedOwnerMetadataWithSameDigest(t *testing.T) {
 	}
 }
 
+// Existing databases with a recorded v1 migration must receive the new
+// conflict archive through an additive v2 migration, not rewritten v1 SQL.
+func TestMigrationUpgradesRecordedV1ToConflictEvidenceV2(t *testing.T) {
+	_, pool := testRepository(t)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, "DROP TABLE inbox_event_conflicts"); err != nil {
+		t.Fatalf("simulate recorded v1 schema: %v", err)
+	}
+	if _, err := pool.Exec(ctx, "DELETE FROM schema_migrations WHERE version=2"); err != nil {
+		t.Fatalf("remove simulated future version ledger: %v", err)
+	}
+	if err := Migrate(ctx, pool); err != nil {
+		t.Fatalf("upgrade recorded v1 to v2: %v", err)
+	}
+	var installed bool
+	if err := pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM schema_migrations WHERE version=2
+		) AND to_regclass('inbox_event_conflicts') IS NOT NULL
+	`).Scan(&installed); err != nil {
+		t.Fatal(err)
+	}
+	if !installed {
+		t.Fatal("conflict-evidence v2 migration was not installed")
+	}
+	if err := Migrate(ctx, pool); err != nil {
+		t.Fatalf("repeat conflict-evidence v2 migration: %v", err)
+	}
+}
+
+func TestMigrationRejectsMissingConflictArchiveTruncateTrigger(t *testing.T) {
+	_, pool := testRepository(t)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `
+		DROP TRIGGER inbox_conflict_evidence_no_truncate ON inbox_event_conflicts
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if err := Migrate(ctx, pool); !errors.Is(err, ErrSchemaDrift) {
+		t.Fatalf("missing conflict archive TRUNCATE guard accepted: %v", err)
+	}
+}
+
 func TestMigrationHistoryChecksumAndSchemaDrift(t *testing.T) {
 	_, pool := testRepository(t)
 	ctx := context.Background()
