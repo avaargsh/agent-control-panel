@@ -53,9 +53,13 @@ type Delivery struct {
 	msg  jetstream.Msg
 	cfg  Config
 	meta *jetstream.MsgMetadata
+	journal *DispositionJournal
 }
 
-func NewDelivery(js jetstream.JetStream, msg jetstream.Msg, cfg Config) (*Delivery, error) {
+func NewDelivery(js jetstream.JetStream, msg jetstream.Msg, cfg Config, journal *DispositionJournal) (*Delivery, error) {
+	if _, err := ValidateDispositionJournal(journal); err != nil {
+		return nil, err
+	}
 	if js == nil || msg == nil ||
 		cfg.ConsumerName == "" || cfg.SourceStream == "" || cfg.SourceConsumer == "" ||
 		cfg.SourceSubject == "" || cfg.DLQStream == "" || cfg.DLQSubject == "" ||
@@ -68,7 +72,7 @@ func NewDelivery(js jetstream.JetStream, msg jetstream.Msg, cfg Config) (*Delive
 		meta.Sequence.Stream == 0 {
 		return nil, ErrUntrustedBrokerDelivery
 	}
-	return &Delivery{js: js, msg: msg, cfg: cfg, meta: meta}, nil
+	return &Delivery{js: js, msg: msg, cfg: cfg, meta: meta, journal: journal}, nil
 }
 
 func (d *Delivery) Ack(ctx context.Context) error {
@@ -78,11 +82,28 @@ func (d *Delivery) Ack(ctx context.Context) error {
 	return d.msg.DoubleAck(ctx)
 }
 
-// DeadLetter must first receive a positive publish acknowledgement from the
-// specifically configured DLQ stream. Only then can source DoubleAck run.
-// A missing DLQ, PubAck timeout, wrong stream or failed DoubleAck is an error.
+// DeadLetter must verify a retained, immutable DLQ record before source ACK.
+// A PostgreSQL disposition intent and one-record-per-subject JetStream stream
+// are both necessary; finite Nats-Msg-Id dedup alone cannot enforce this.
 func (d *Delivery) DeadLetter(ctx context.Context, reason string) error {
 	if d == nil || (reason != inboxtransport.ReasonEventIDConflict && reason != inboxtransport.ReasonQuarantined) {
+		return ErrUntrustedBrokerDelivery
+	}
+	if _, err := ValidateDispositionJournal(d.journal); err != nil {
+		return err
+	}
+	stream, err := d.js.Stream(ctx, d.cfg.DLQStream)
+	if err != nil {
+		return fmt.Errorf("resolve expected DLQ stream: %w", err)
+	}
+	info, err := stream.Info(ctx)
+	if err != nil {
+		return fmt.Errorf("verify expected DLQ stream: %w", err)
+	}
+	if info.Config.Discard != jetstream.DiscardNew ||
+		!info.Config.DiscardNewPerSubject || info.Config.MaxMsgsPerSubject != 1 ||
+		info.Config.MaxAge != 0 || info.Config.Retention != jetstream.LimitsPolicy ||
+		len(info.Config.Subjects) != 1 || info.Config.Subjects[0] != d.cfg.DLQSubject+".*" {
 		return ErrUntrustedBrokerDelivery
 	}
 	bodyHash := sha256.Sum256(d.msg.Data())
@@ -99,30 +120,66 @@ func (d *Delivery) DeadLetter(ctx context.Context, reason string) error {
 	if err != nil {
 		return fmt.Errorf("encode DLQ disposition: %w", err)
 	}
-	// Stable within the POC test stream. A production adapter requires a
-	// unique durable disposition journal outside a rolling dedup window.
-	keyInput := []byte(d.meta.Stream + "\x00" +
+	keyInput := []byte(d.meta.Stream + "\x00" + d.meta.Consumer + "\x00" +
 		strconv.FormatUint(d.meta.Sequence.Stream, 10) + "\x00" + reason + "\x00" + evidence.DeliveryHash)
 	key := sha256.Sum256(keyInput)
-	pub, err := d.js.Publish(ctx, d.cfg.DLQSubject, data,
-		jetstream.WithMsgID(fmt.Sprintf("%x", key)),
-		jetstream.WithExpectStream(d.cfg.DLQStream))
-	if err != nil {
-		return fmt.Errorf("publish confirmed JetStream DLQ evidence: %w", err)
+	dispositionID := fmt.Sprintf("%x", key)
+	subject := d.cfg.DLQSubject + "." + dispositionID
+	record := dispositionRecord{
+		stream: d.meta.Stream, consumer: d.meta.Consumer, sequence: int64(d.meta.Sequence.Stream),
+		hash: evidence.DeliveryHash, reason: reason, dlq: d.cfg.DLQStream,
+		subject: subject, evidence: data,
 	}
-	if pub == nil || pub.Stream != d.cfg.DLQStream || pub.Sequence == 0 {
-		return ErrUntrustedBrokerDelivery
+	confirmed, err := d.journal.ensure(ctx, record)
+	if err != nil {
+		return err
+	}
+	existing, lookupErr := stream.GetLastMsgForSubject(ctx, subject)
+	if lookupErr == nil {
+		if existing.Subject != subject || !bytes.Equal(existing.Data, data) {
+			return ErrDLQEvidenceConflict
+		}
+	} else {
+		if !errors.Is(lookupErr, jetstream.ErrMsgNotFound) {
+			return fmt.Errorf("inspect durable DLQ evidence: %w", lookupErr)
+		}
+		if confirmed {
+			return ErrDLQEvidenceMissing
+		}
+		pub, publishErr := d.js.Publish(ctx, subject, data,
+			jetstream.WithMsgID(dispositionID),
+			jetstream.WithExpectStream(d.cfg.DLQStream))
+		if publishErr != nil {
+			// Concurrent duplicate is acceptable only when the broker
+			// actually retained the identical immutable disposition.
+			existing, err = stream.GetLastMsgForSubject(ctx, subject)
+			if err != nil {
+				return fmt.Errorf("publish confirmed JetStream DLQ evidence: %w", publishErr)
+			}
+		} else if pub == nil || pub.Stream != d.cfg.DLQStream || pub.Sequence == 0 {
+			return ErrUntrustedBrokerDelivery
+		}
+		existing, err = stream.GetLastMsgForSubject(ctx, subject)
+		if err != nil {
+			return fmt.Errorf("verify published DLQ evidence: %w", err)
+		}
+		if existing.Subject != subject || !bytes.Equal(existing.Data, data) {
+			return ErrDLQEvidenceConflict
+		}
+	}
+	if err := d.journal.confirm(ctx, record); err != nil {
+		return err
 	}
 	if err := d.msg.DoubleAck(ctx); err != nil {
-		return fmt.Errorf("source ACK uncertain after DLQ PubAck: %w", err)
+		return fmt.Errorf("source ACK uncertain after verified DLQ journal: %w", err)
 	}
 	return nil
 }
 
 // HandleMessage reads only an allowed JetStream delivery and passes its
 // canonical envelope to the existing transactional PostgreSQL Inbox receiver.
-func HandleMessage(ctx context.Context, receiver inboxtransport.Receiver, js jetstream.JetStream, msg jetstream.Msg, cfg Config) error {
-	delivery, err := NewDelivery(js, msg, cfg)
+func HandleMessage(ctx context.Context, receiver inboxtransport.Receiver, js jetstream.JetStream, msg jetstream.Msg, cfg Config, journal *DispositionJournal) error {
+	delivery, err := NewDelivery(js, msg, cfg, journal)
 	if err != nil {
 		return err
 	}
