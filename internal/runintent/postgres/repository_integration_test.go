@@ -316,6 +316,17 @@ func TestCreateReplayRejectsChangedOwnerMetadataWithSameDigest(t *testing.T) {
 func TestMigrationUpgradesRecordedV1ToConflictEvidenceV2(t *testing.T) {
 	_, pool := testRepository(t)
 	ctx := context.Background()
+	// A v1-only fixture cannot retain the newer v3 journal or its checksum
+	// history, otherwise the migration-order guard must correctly reject it.
+	if _, err := pool.Exec(ctx, "DROP TABLE dlq_dispositions"); err != nil {
+		t.Fatalf("remove simulated v3 relation: %v", err)
+	}
+	if _, err := pool.Exec(ctx, "DROP FUNCTION reject_dlq_disposition_mutation()"); err != nil {
+		t.Fatalf("remove simulated v3 guard function: %v", err)
+	}
+	if _, err := pool.Exec(ctx, "DELETE FROM schema_migrations WHERE version=3"); err != nil {
+		t.Fatalf("remove simulated v3 history: %v", err)
+	}
 	if _, err := pool.Exec(ctx, "DROP TABLE inbox_event_conflicts"); err != nil {
 		t.Fatalf("simulate recorded v1 schema: %v", err)
 	}
