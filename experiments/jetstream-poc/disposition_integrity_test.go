@@ -5,6 +5,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/jackc/pgx/v5"
 )
 
 func journalIntegrityFixture() dispositionRecord {
@@ -92,6 +94,10 @@ func TestDispositionJournalMigrateDetectsGuardDrift(t *testing.T) {
 		{"changed guard function", `CREATE OR REPLACE FUNCTION poc_reject_unsafe_disposition_mutation()
 			RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END; $$`},
 		{"dropped truncate trigger", "DROP TRIGGER poc_dlq_no_truncate ON poc_dlq_dispositions"},
+		{"weakened confirmed-at check", `ALTER TABLE poc_dlq_dispositions DROP CONSTRAINT poc_dlq_published_at_check;
+			ALTER TABLE poc_dlq_dispositions ADD CONSTRAINT poc_dlq_published_at_check CHECK (TRUE)`},
+		{"weakened publish-attempt check", `ALTER TABLE poc_dlq_dispositions DROP CONSTRAINT poc_dlq_requires_attempt;
+			ALTER TABLE poc_dlq_dispositions ADD CONSTRAINT poc_dlq_requires_attempt CHECK (TRUE)`},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -101,7 +107,7 @@ func TestDispositionJournalMigrateDetectsGuardDrift(t *testing.T) {
 			if err := j.Migrate(ctx); err != nil {
 				t.Fatalf("intact journal not accepted: %v", err)
 			}
-			if _, err := pool.Exec(ctx, tc.alter); err != nil {
+			if _, err := pool.Exec(ctx, tc.alter, pgx.QueryExecModeSimpleProtocol); err != nil {
 				t.Fatalf("failed to inject guard drift: %v", err)
 			}
 			if err := j.Migrate(ctx); !errors.Is(err, ErrDispositionSchemaDrift) {
