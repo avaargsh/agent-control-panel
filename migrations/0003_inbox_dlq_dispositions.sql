@@ -6,6 +6,7 @@ CREATE TABLE inbox_dlq_dispositions (
     tenant_id text NOT NULL CHECK (tenant_id <> '' AND tenant_id = btrim(tenant_id)),
     consumer_name text NOT NULL CHECK (consumer_name <> '' AND consumer_name = btrim(consumer_name)),
     source_stream text NOT NULL CHECK (source_stream <> ''),
+    source_consumer text NOT NULL CHECK (source_consumer <> ''),
     source_sequence bigint NOT NULL CHECK (source_sequence > 0),
     event_id uuid NOT NULL,
     delivery_sha256 text NOT NULL CHECK (delivery_sha256 ~ '^[a-f0-9]{64}$'),
@@ -17,7 +18,7 @@ CREATE TABLE inbox_dlq_dispositions (
     published boolean NOT NULL DEFAULT false,
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     published_at timestamptz,
-    PRIMARY KEY (source_stream,consumer_name,source_sequence),
+    PRIMARY KEY (source_stream,source_consumer,source_sequence),
     CONSTRAINT inbox_dlq_published_at_check CHECK (
         (published AND published_at IS NOT NULL)
         OR (NOT published AND published_at IS NULL)
@@ -37,6 +38,7 @@ BEGIN
     IF NEW.tenant_id IS DISTINCT FROM OLD.tenant_id
         OR NEW.consumer_name IS DISTINCT FROM OLD.consumer_name
         OR NEW.source_stream IS DISTINCT FROM OLD.source_stream
+        OR NEW.source_consumer IS DISTINCT FROM OLD.source_consumer
         OR NEW.source_sequence IS DISTINCT FROM OLD.source_sequence
         OR NEW.event_id IS DISTINCT FROM OLD.event_id
         OR NEW.delivery_sha256 IS DISTINCT FROM OLD.delivery_sha256
