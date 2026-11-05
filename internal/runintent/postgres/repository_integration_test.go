@@ -505,3 +505,38 @@ func TestMigrationRejectsSameNameCriticalConstraintsWithDifferentBindings(t *tes
 		})
 	}
 }
+
+// Same-name CHECK constraints may be replaced by weakened expressions while
+// preserving their table, type and catalog validity. The migration verifier
+// must compare each predicate to the pinned v1 migration, not just the name.
+func TestMigrationRejectsWeakenedCriticalCheckPredicates(t *testing.T) {
+	cases := []struct {
+		name       string
+		relation   string
+		constraint string
+	}{
+		{"RunIntent lease consistency", "run_intents", "run_intents_lease_consistency"},
+		{"RunIntent state payload ownership", "run_intents", "run_intents_state_payload_consistency"},
+		{"Outbox publish lease", "outbox_events", "outbox_lease_consistency"},
+		{"Outbox published timestamp", "outbox_events", "outbox_published_consistency"},
+		{"Inbox applied timestamp", "inbox_events", "inbox_applied_consistency"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, pool := testRepository(t)
+			ctx := context.Background()
+			// The table and constraint identifiers are fixed test literals.
+			if _, err := pool.Exec(ctx, "ALTER TABLE "+tc.relation+
+				" DROP CONSTRAINT "+tc.constraint); err != nil {
+				t.Fatalf("remove original CHECK: %v", err)
+			}
+			if _, err := pool.Exec(ctx, "ALTER TABLE "+tc.relation+
+				" ADD CONSTRAINT "+tc.constraint+" CHECK (TRUE)"); err != nil {
+				t.Fatalf("install weakened same-name CHECK: %v", err)
+			}
+			if err := Migrate(ctx, pool); !errors.Is(err, ErrSchemaDrift) {
+				t.Fatalf("weakened CHECK accepted: %v, want ErrSchemaDrift", err)
+			}
+		})
+	}
+}
