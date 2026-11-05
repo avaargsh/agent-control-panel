@@ -166,11 +166,8 @@ func verifyDLQDispositionSchema(ctx context.Context, tx pgx.Tx, source []byte) e
 		return ErrSchemaDrift
 	}
 
-	// PostgreSQL compiles the reviewed v3 CHECK expressions for exact
-	// catalog comparison. Named table predicates come from the pinned SQL;
-	// PostgreSQL-generated column CHECK names use their frozen v3 expressions.
-	// Merely checking the two named table constraints missed digest and reason
-	// tampering (including a same-name CHECK(TRUE) replacement).
+	// Compile reviewed, checksum-pinned v3 CHECK expressions and fail closed
+	// on semantic drift of both named table and critical column constraints.
 	if _, err := tx.Exec(ctx,
 		"CREATE TEMP TABLE acp_expected_dlq_checks (LIKE dlq_dispositions) ON COMMIT DROP"); err != nil {
 		return fmt.Errorf("compile pinned v3 CHECK relation: %w", err)
@@ -181,33 +178,7 @@ func verifyDLQDispositionSchema(ctx context.Context, tx pgx.Tx, source []byte) e
 	}{
 		{name: "dlq_published_consistency"},
 		{name: "dlq_requires_attempt"},
-		{name: "dlq_dispositions_delivery_sha256_check", predicate: "delivery_sha256 ~ '^[a-f0-9]{64}		if _, err := tx.Exec(ctx, fmt.Sprintf(
-			"ALTER TABLE pg_temp.acp_expected_dlq_checks ADD CONSTRAINT %s CHECK (%s)",
-			name, predicate)); err != nil {
-			return fmt.Errorf("compile pinned disposition CHECK %s: %w", name, err)
-		}
-		var matches bool
-		err = tx.QueryRow(ctx, `
-			SELECT pg_get_expr(actual.conbin, actual.conrelid, false) =
-			       pg_get_expr(expected.conbin, expected.conrelid, false)
-			FROM pg_constraint actual
-			JOIN pg_constraint expected ON actual.conname=expected.conname
-			WHERE actual.conrelid=to_regclass('dlq_dispositions')
-			  AND expected.conrelid=to_regclass('pg_temp.acp_expected_dlq_checks')
-			  AND actual.conname=$1
-			  AND actual.contype='c' AND expected.contype='c'
-			  AND actual.convalidated
-		`, name).Scan(&matches)
-		if errors.Is(err, pgx.ErrNoRows) || err == nil && !matches {
-			return fmt.Errorf("%w: changed predicate for dlq_dispositions.%s", ErrSchemaDrift, name)
-		}
-		if err != nil {
-			return fmt.Errorf("verify DLQ disposition CHECK %s: %w", name, err)
-		}
-	}
-	return nil
-}
-"},
+		{name: "dlq_dispositions_delivery_sha256_check", predicate: "delivery_sha256 ~ '^[a-f0-9]{64}$'"},
 		{name: "dlq_dispositions_reason_check", predicate: "reason IN ('EVENT_ID_CONFLICT','INBOX_QUARANTINED')"},
 	}
 	for _, check := range checks {
