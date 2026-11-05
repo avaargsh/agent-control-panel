@@ -183,7 +183,7 @@ func (j *DispositionJournal) confirm(ctx context.Context, record dispositionReco
 			published_at=COALESCE(published_at,clock_timestamp())
 		WHERE source_stream=$1 AND source_consumer=$2 AND source_sequence=$3
 		  AND delivery_hash=$4 AND reason=$5 AND dlq_stream=$6
-		  AND dlq_subject=$7 AND evidence=$8
+		  AND dlq_subject=$7 AND evidence=$8 AND publish_started=TRUE
 	`, record.stream, record.consumer, record.sequence, record.hash,
 		record.reason, record.dlq, record.subject, record.evidence)
 	if err != nil {
