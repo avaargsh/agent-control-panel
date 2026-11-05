@@ -14,7 +14,7 @@ var (
 	ErrDispositionConflict        = errors.New("conflicting DLQ disposition identity or evidence")
 	ErrDLQEvidenceMissing         = errors.New("confirmed DLQ evidence is missing from broker")
 	ErrDLQEvidenceConflict        = errors.New("broker DLQ evidence differs from immutable disposition")
-	ErrDLQPublishUncertain       = errors.New("prior DLQ publication attempt is ambiguous and needs reconciliation")
+	ErrDLQPublishUncertain        = errors.New("prior DLQ publication attempt is ambiguous and needs reconciliation")
 )
 
 // DispositionJournal is an isolated POC table, deliberately NOT an ACP
