@@ -22,6 +22,9 @@ func TestCanonicalDLQV3RejectsCriticalCatalogDrift(t *testing.T) {
 			"ALTER TABLE inbox_dlq_dispositions DROP CONSTRAINT inbox_dlq_dispositions_reason_check",
 			"ALTER TABLE inbox_dlq_dispositions ADD CONSTRAINT inbox_dlq_dispositions_reason_check CHECK (TRUE)",
 		}},
+		{"journal converted to UNLOGGED", []string{
+			"ALTER TABLE inbox_dlq_dispositions SET UNLOGGED",
+		}},
 		{"event ID NOT NULL removed", []string{
 			"ALTER TABLE inbox_dlq_dispositions ALTER COLUMN event_id DROP NOT NULL",
 		}},
