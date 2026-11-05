@@ -732,3 +732,108 @@ func TestCASRejectsExpiredReconciliationResultUsingDatabaseClock(t *testing.T) {
 		t.Fatalf("stale reconciliation result mutated durable state: stored=%+v err=%v", stored, err)
 	}
 }
+
+// Positive path: a receipt applied before the DB lease expires commits the
+// canonical Runtime identity and exactly one transition Outbox event.
+func TestCASAcceptsUnexpiredAuthenticatedBoundaryReceipt(t *testing.T) {
+	repository, pool := testRepository(t)
+	ctx := context.Background()
+	intent := testIntent(814)
+	created, _, err := repository.Create(ctx, intent, testEvent(intent, 1, 8141, eventCreated))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dispatching, err := created.ClaimDispatch(created.Version, "worker-814", time.Now().UTC(), time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dispatching, err = repository.CompareAndSwap(ctx, intent.TenantID, intent.ID, created.Version, dispatching,
+		testEvent(dispatching, dispatching.Version, 8142, "agent.run-intent.dispatching"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	accepted, err := dispatching.RecordDispatchOutcome(dispatching.Version, "worker-814",
+		dispatching.FenceToken, time.Now().UTC(), runintent.DispatchOutcome{
+			TenantID: intent.TenantID, RunIntentID: intent.ID,
+			RequestDigest: intent.RequestDigest, Kind: runintent.DispatchAccepted,
+			RunID: "runtime-run-814", WorkflowID: "agent-run/v1/runtime-run-814",
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	accepted, err = repository.CompareAndSwap(ctx, intent.TenantID, intent.ID, dispatching.Version, accepted,
+		testEvent(accepted, accepted.Version, 8143, "agent.run-intent.accepted"))
+	if err != nil || accepted.Status != runintent.Accepted || accepted.RunID != "runtime-run-814" ||
+		countOutbox(t, pool, intent.ID) != 3 {
+		t.Fatalf("active lease acceptance not durable: accepted=%+v err=%v", accepted, err)
+	}
+}
+
+// A typed authoritative NOT_FOUND_FINAL result permits the same logical intent
+// to return to PENDING; no new idempotency key or request digest is minted.
+// This does not replace an authenticated Runtime lookup.
+func TestCASAllowsReconciledRetryWithoutNewIdentity(t *testing.T) {
+	repository, pool := testRepository(t)
+	ctx := context.Background()
+	intent := testIntent(815)
+	created, _, err := repository.Create(ctx, intent, testEvent(intent, 1, 8151, eventCreated))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dispatching, err := created.ClaimDispatch(created.Version, "worker-815", time.Now().UTC(), time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dispatching, err = repository.CompareAndSwap(ctx, intent.TenantID, intent.ID, created.Version, dispatching,
+		testEvent(dispatching, dispatching.Version, 8152, "agent.run-intent.dispatching"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ambiguous, err := dispatching.RecordDispatchOutcome(dispatching.Version, "worker-815",
+		dispatching.FenceToken, time.Now().UTC(), runintent.DispatchOutcome{
+			TenantID: intent.TenantID, RunIntentID: intent.ID,
+			RequestDigest: intent.RequestDigest, Kind: runintent.DispatchAmbiguous,
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	unknown, err := repository.CompareAndSwap(ctx, intent.TenantID, intent.ID, dispatching.Version, ambiguous,
+		testEvent(ambiguous, ambiguous.Version, 8153, "agent.run-intent.unknown"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reconciling, err := unknown.BeginReconciliation(unknown.Version, "reconciler-815", time.Now().UTC(), time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reconciling, err = repository.CompareAndSwap(ctx, intent.TenantID, intent.ID, unknown.Version, reconciling,
+		testEvent(reconciling, reconciling.Version, 8154, "agent.run-intent.reconciling"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending, err := reconciling.ApplyReconciliationResult(reconciling.Version, "reconciler-815",
+		reconciling.FenceToken, time.Now().UTC(), runintent.ReconciliationResult{
+			TenantID: intent.TenantID, RunIntentID: intent.ID,
+			RequestDigest: intent.RequestDigest, Kind: runintent.RuntimeNotFoundFinal,
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending, err = repository.CompareAndSwap(ctx, intent.TenantID, intent.ID, reconciling.Version, pending,
+		testEvent(pending, pending.Version, 8155, "agent.run-intent.pending"))
+	if err != nil || pending.Status != runintent.Pending {
+		t.Fatalf("authoritative not-found did not permit pending: %+v, %v", pending, err)
+	}
+	reclaimed, err := pending.ClaimDispatch(pending.Version, "worker-815-retry", time.Now().UTC(), time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reclaimed, err = repository.CompareAndSwap(ctx, intent.TenantID, intent.ID, pending.Version, reclaimed,
+		testEvent(reclaimed, reclaimed.Version, 8156, "agent.run-intent.dispatching"))
+	if err != nil || reclaimed.Status != runintent.Dispatching ||
+		reclaimed.FenceToken != dispatching.FenceToken+2 ||
+		reclaimed.IdempotencyKey != created.IdempotencyKey ||
+		reclaimed.RequestDigest != created.RequestDigest || countOutbox(t, pool, intent.ID) != 6 {
+		t.Fatalf("replay changed immutable request or fencing: %+v, %v", reclaimed, err)
+	}
+}
