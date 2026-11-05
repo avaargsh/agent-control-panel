@@ -46,8 +46,9 @@ type DLQEvidence struct {
 
 // Delivery bridges the real JetStream per-message ACK and confirmed DLQ PubAck
 // to the ACP Inbox transport-neutral settlement gate. The publish+ACK pair
-// is deliberately NOT an atomic transaction and does not provide lifetime
-// DLQ deduplication outside JetStream's finite duplicate window.
+// is deliberately NOT an atomic transaction. The POC journal and uniquely
+// retained subject provide guarded dedup beyond JetStream's finite MsgID
+// window, but deletion/expiry, broker IAM and production retention are unproven.
 type Delivery struct {
 	js      jetstream.JetStream
 	msg     jetstream.Msg
