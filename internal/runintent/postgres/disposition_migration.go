@@ -67,7 +67,7 @@ func verifyInboxDLQDispositionSchema(ctx context.Context, tx pgx.Tx, source []by
 		    SELECT array_agg(a.attname::text ORDER BY k.ordinality)
 		    FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum,ordinality)
 		    JOIN pg_attribute a ON a.attrelid=c.conrelid AND a.attnum=k.attnum
-		  )=ARRAY['source_stream','consumer_name','source_sequence']::text[]
+		  )=ARRAY['source_stream','source_consumer','source_sequence']::text[]
 	`).Scan(&pk); err != nil {
 		return fmt.Errorf("verify disposition primary key: %w", err)
 	}
