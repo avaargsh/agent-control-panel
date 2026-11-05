@@ -49,10 +49,10 @@ type DLQEvidence struct {
 // is deliberately NOT an atomic transaction and does not provide lifetime
 // DLQ deduplication outside JetStream's finite duplicate window.
 type Delivery struct {
-	js   jetstream.JetStream
-	msg  jetstream.Msg
-	cfg  Config
-	meta *jetstream.MsgMetadata
+	js      jetstream.JetStream
+	msg     jetstream.Msg
+	cfg     Config
+	meta    *jetstream.MsgMetadata
 	journal *DispositionJournal
 }
 
