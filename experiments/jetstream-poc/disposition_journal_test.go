@@ -125,3 +125,68 @@ func TestUnconfiguredDispositionJournalCannotSettleConflict(t *testing.T) {
 	_ = inboxtransport.ReasonEventIDConflict
 	_ = postgres.InboxReceiveResult{}
 }
+
+func TestAmbiguousDLQPublishThenEvidenceLossFailsClosed(t *testing.T) {
+	repository, pool := pocRepository(t)
+	js, consumer, dlq, cfg := pocNATS(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	journal := NewDispositionJournal(pool)
+	original := pocEvent(8501, 1)
+	publishEvent(t, ctx, js, cfg.SourceSubject, original)
+	if err := HandleMessage(ctx, repository, js, nextMessage(t, consumer), cfg, journal); err != nil {
+		t.Fatal(err)
+	}
+	applied, err := repository.ApplyNextInboxEvent(ctx, cfg.ConsumerName, allowPOCProjection{})
+	if err != nil || !applied.Applied {
+		t.Fatalf("original not APPLIED: %+v err=%v", applied, err)
+	}
+	// A PostgreSQL failure only during the post-PubAck journal confirmation
+	// reproduces the non-atomic crash window without a timing-dependent sleep.
+	if _, err := pool.Exec(ctx, `
+		CREATE FUNCTION reject_poc_journal_confirm() RETURNS trigger
+		LANGUAGE plpgsql AS $$
+		BEGIN
+			RAISE EXCEPTION 'injected PG failure after JetStream PubAck';
+		END; $$;
+		CREATE TRIGGER poc_fail_publish_confirm
+		BEFORE UPDATE ON poc_dlq_dispositions
+		FOR EACH ROW WHEN (NEW.published AND NOT OLD.published)
+		EXECUTE FUNCTION reject_poc_journal_confirm();
+	`); err != nil {
+		t.Fatal(err)
+	}
+	changed := original
+	changed.Payload = []byte(`{"version":8502}`)
+	publishEvent(t, ctx, js, cfg.SourceSubject, changed)
+	if err := HandleMessage(ctx, repository, js, nextMessage(t, consumer), cfg, journal); err == nil {
+		t.Fatal("PostgreSQL confirmation failure was ignored")
+	}
+	info, err := dlq.Info(ctx)
+	if err != nil || info.State.Msgs != 1 {
+		t.Fatalf("expected one already-published DLQ record: %+v err=%v", info, err)
+	}
+	if _, err := pool.Exec(ctx, "DROP TRIGGER poc_fail_publish_confirm ON poc_dlq_dispositions"); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := dlq.GetMsg(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := dlq.DeleteMsg(ctx, raw.Sequence); err != nil {
+		t.Fatal(err)
+	}
+	// The persisted attempt fence is necessary: a source redelivery with
+	// missing broker evidence is ambiguous, not permission to republish.
+	if err := HandleMessage(ctx, repository, js, nextMessage(t, consumer), cfg, journal); !errors.Is(err, ErrDLQPublishUncertain) {
+		t.Fatalf("ambiguous publish incorrectly auto-retried or ACKed: %v", err)
+	}
+	var started, published bool
+	if err := pool.QueryRow(ctx, "SELECT publish_started,published FROM poc_dlq_dispositions").Scan(&started, &published); err != nil {
+		t.Fatal(err)
+	}
+	info, err = dlq.Info(ctx)
+	if err != nil || info.State.Msgs != 0 || !started || published {
+		t.Fatalf("unsafe ambiguous replay: DLQ=%+v started=%v published=%v err=%v", info, started, published, err)
+	}
+}
