@@ -136,8 +136,8 @@ func NewClient(originRaw, expectedRuntimeSPIFFE string, roots *x509.CertPool, cl
 	return &Client{
 		base: originRaw,
 		client: &http.Client{
-			Transport: transport,
-			Timeout:   12 * time.Second,
+			Transport:     transport,
+			Timeout:       12 * time.Second,
 			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 				return http.ErrUseLastResponse
 			},
