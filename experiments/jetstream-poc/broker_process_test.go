@@ -81,7 +81,7 @@ func TestRealJetStreamSIGKILLChild(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	msg, err := consumer.Next(jetstream.FetchMaxWait(5*time.Second))
+	msg, err := consumer.Next(jetstream.FetchMaxWait(5 * time.Second))
 	if err != nil {
 		t.Fatal(err)
 	}
