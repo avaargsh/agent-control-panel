@@ -541,7 +541,6 @@ func TestMigrationRejectsWeakenedCriticalCheckPredicates(t *testing.T) {
 	}
 }
 
-
 // A valid-looking receipt generated with the worker's old local time cannot
 // commit once PostgreSQL considers the dispatch lease expired.
 func TestCASRejectsExpiredDispatchReceiptUsingDatabaseClock(t *testing.T) {
