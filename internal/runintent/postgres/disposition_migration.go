@@ -66,21 +66,37 @@ func verifyInboxDLQDispositionSchema(ctx context.Context, tx pgx.Tx, source []by
 	if !complete {
 		return ErrSchemaDrift
 	}
-	// A retained event_id is mandatory for immutable broker-origin evidence.
-	// Checking only the journal PK does not detect a dropped NOT NULL fence.
-	var eventBound bool
+	// Every immutable source, tenant and evidence attribute must retain its
+	// reviewed type and NOT NULL fence. A checksum-only check misses post-
+	// migration DROP NOT NULL or ALTER COLUMN TYPE tampering.
+	var columnsBound bool
 	if err := tx.QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1 FROM pg_attribute a
-			WHERE a.attrelid=to_regclass('inbox_dlq_dispositions')
-			  AND a.attname='event_id'
-			  AND a.atttypid='pg_catalog.uuid'::regtype
-			  AND a.attnotnull AND NOT a.attisdropped
+		WITH expected(name, typ) AS (
+			VALUES
+			  ('tenant_id', 'pg_catalog.text'::regtype),
+			  ('consumer_name', 'pg_catalog.text'::regtype),
+			  ('source_stream', 'pg_catalog.text'::regtype),
+			  ('source_consumer', 'pg_catalog.text'::regtype),
+			  ('source_sequence', 'pg_catalog.int8'::regtype),
+			  ('event_id', 'pg_catalog.uuid'::regtype),
+			  ('delivery_sha256', 'pg_catalog.text'::regtype),
+			  ('reason', 'pg_catalog.text'::regtype),
+			  ('dlq_stream', 'pg_catalog.text'::regtype),
+			  ('dlq_subject', 'pg_catalog.text'::regtype),
+			  ('evidence', 'pg_catalog.bytea'::regtype),
+			  ('publish_started', 'pg_catalog.bool'::regtype),
+			  ('published', 'pg_catalog.bool'::regtype),
+			  ('created_at', 'pg_catalog.timestamptz'::regtype)
 		)
-	`).Scan(&eventBound); err != nil {
-		return fmt.Errorf("verify immutable disposition event identity: %w", err)
+		SELECT count(*)=(SELECT count(*) FROM expected)
+		FROM expected e
+		JOIN pg_attribute a ON a.attrelid=to_regclass('inbox_dlq_dispositions')
+		  AND a.attname=e.name AND a.atttypid=e.typ
+		  AND a.attnotnull AND NOT a.attisdropped
+	`).Scan(&columnsBound); err != nil {
+		return fmt.Errorf("verify immutable disposition column bindings: %w", err)
 	}
-	if !eventBound {
+	if !columnsBound {
 		return ErrSchemaDrift
 	}
 	var pk int
@@ -192,8 +208,16 @@ func verifyInboxDLQDispositionSchema(ctx context.Context, tx pgx.Tx, source []by
 	}{
 		{name: "inbox_dlq_published_at_check"},
 		{name: "inbox_dlq_requires_attempt"},
+		{name: "inbox_dlq_dispositions_tenant_id_check", predicate: "tenant_id <> '' AND tenant_id = btrim(tenant_id)"},
+		{name: "inbox_dlq_dispositions_consumer_name_check", predicate: "consumer_name <> '' AND consumer_name = btrim(consumer_name)"},
+		{name: "inbox_dlq_dispositions_source_stream_check", predicate: "source_stream <> ''"},
+		{name: "inbox_dlq_dispositions_source_consumer_check", predicate: "source_consumer <> ''"},
+		{name: "inbox_dlq_dispositions_source_sequence_check", predicate: "source_sequence > 0"},
 		{name: "inbox_dlq_dispositions_delivery_sha256_check", predicate: "delivery_sha256 ~ '^[a-f0-9]{64}$'"},
 		{name: "inbox_dlq_dispositions_reason_check", predicate: "reason IN ('EVENT_ID_CONFLICT','INBOX_QUARANTINED')"},
+		{name: "inbox_dlq_dispositions_dlq_stream_check", predicate: "dlq_stream <> ''"},
+		{name: "inbox_dlq_dispositions_dlq_subject_check", predicate: "dlq_subject <> ''"},
+		{name: "inbox_dlq_dispositions_evidence_check", predicate: "octet_length(evidence) > 0"},
 	}
 	for _, check := range checks {
 		name, predicate := check.name, check.predicate
