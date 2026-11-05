@@ -735,7 +735,7 @@ func TestCASRejectsExpiredReconciliationResultUsingDatabaseClock(t *testing.T) {
 
 // Positive path: a receipt applied before the DB lease expires commits the
 // canonical Runtime identity and exactly one transition Outbox event.
-func TestCASAcceptsUnexpiredAuthenticatedBoundaryReceipt(t *testing.T) {
+func TestCASAcceptsUnexpiredSyntheticRuntimeReceipt(t *testing.T) {
 	repository, pool := testRepository(t)
 	ctx := context.Background()
 	intent := testIntent(814)
