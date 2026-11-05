@@ -130,7 +130,7 @@ func (d *Delivery) DeadLetter(ctx context.Context, reason string) error {
 		hash: evidence.DeliveryHash, reason: reason, dlq: d.cfg.DLQStream,
 		subject: subject, evidence: data,
 	}
-	confirmed, err := d.journal.ensure(ctx, record)
+	confirmed, attempted, err := d.journal.ensure(ctx, record)
 	if err != nil {
 		return err
 	}
@@ -145,6 +145,12 @@ func (d *Delivery) DeadLetter(ctx context.Context, reason string) error {
 		}
 		if confirmed {
 			return ErrDLQEvidenceMissing
+		}
+		if attempted {
+			return ErrDLQPublishUncertain
+		}
+		if err := d.journal.markPublishAttempt(ctx, record); err != nil {
+			return err
 		}
 		pub, publishErr := d.js.Publish(ctx, subject, data,
 			jetstream.WithMsgID(dispositionID),
