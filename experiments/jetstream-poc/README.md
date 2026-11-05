@@ -50,10 +50,13 @@ checksum-recorded PostgreSQL v1/v2 migrations.
   per disposition with `DiscardNewPerSubject` and `MaxMsgsPerSubject=1`,
   retaining just one record even after the `Nats-Msg-Id` dedup window.
 - A crash after a successful DLQ PubAck **but before journal confirmation**
-  leaves an ambiguous intent. If the broker record remains, the next worker
-  can verify and confirm it. If it was deleted/expired while the journal
-  remained unconfirmed, another publication could be attempted; an explicit
-  durable publish-attempt fence/manual-UNKNOWN recovery gate is still needed.
+  now retains a PostgreSQL `publish_started` fence written before any
+  JetStream publish attempt. On retry, an existing exact retained broker
+  record is verified and marked confirmed; if it has vanished, the worker
+  returns `ErrDLQPublishUncertain` and does **not** republish or ACK.
+  A PostgreSQL trigger-injected failure between real PubAck and journal
+  confirmation verifies this fail-closed behavior. Operator resolution for
+  the indefinite UNKNOWN state is still an unimplemented governance gate.
 - Privileged broker deletion/purge, DLQ stream recreation, journal/catalog
   tampering, multi-worker races, retention expiry and network partition are
   not independently accepted by these tests. The table is a disposable POC
