@@ -149,10 +149,14 @@ func TestAmbiguousDLQPublishThenEvidenceLossFailsClosed(t *testing.T) {
 		BEGIN
 			RAISE EXCEPTION 'injected PG failure after JetStream PubAck';
 		END; $$;
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
 		CREATE TRIGGER poc_fail_publish_confirm
 		BEFORE UPDATE ON poc_dlq_dispositions
 		FOR EACH ROW WHEN (NEW.published AND NOT OLD.published)
-		EXECUTE FUNCTION reject_poc_journal_confirm();
+		EXECUTE FUNCTION reject_poc_journal_confirm()
 	`); err != nil {
 		t.Fatal(err)
 	}
