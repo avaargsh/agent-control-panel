@@ -43,10 +43,10 @@ func TestDispositionV3MigrationLedgerAndImmutability(t *testing.T) {
 
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO inbox_dlq_dispositions(
-			tenant_id,consumer_name,source_stream,source_sequence,event_id,
+			tenant_id,consumer_name,source_stream,source_consumer,source_sequence,event_id,
 			delivery_sha256,reason,dlq_stream,dlq_subject,evidence
 		) VALUES (
-			'tenant-a','consumer-a','stream-a',42,
+			'tenant-a','consumer-a','stream-a','jetstream-durable-a',42,
 			'00000000-0000-4000-8000-000000000042'::uuid,
 			$1,'EVENT_ID_CONFLICT','dlq-a','dlq.a.42','{}'::bytea
 		)`, strings.Repeat("a", 64)); err != nil {
@@ -54,6 +54,7 @@ func TestDispositionV3MigrationLedgerAndImmutability(t *testing.T) {
 	}
 	for _, tc := range []struct{ name, query string }{
 		{"identity tamper", "UPDATE inbox_dlq_dispositions SET tenant_id='tenant-other'"},
+		{"broker consumer tamper", "UPDATE inbox_dlq_dispositions SET source_consumer='other-durable'"},
 		{"payload tamper", "UPDATE inbox_dlq_dispositions SET evidence='tampered'::bytea"},
 		{"delete", "DELETE FROM inbox_dlq_dispositions"},
 		{"truncate", "TRUNCATE inbox_dlq_dispositions"},
