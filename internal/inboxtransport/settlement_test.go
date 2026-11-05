@@ -10,9 +10,9 @@ import (
 )
 
 type receiveFixture struct {
-	result postgres.InboxReceiveResult
-	err    error
-	calls  int
+	result    postgres.InboxReceiveResult
+	err       error
+	calls     int
 	committed bool
 }
 
