@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/avaargsh/agent-control-panel/migrations"
-	"github.com/jackc/pgx/v5"
 )
 
 const dlqDispositionV3Name = "0003_dlq_dispositions.sql"
@@ -139,7 +138,7 @@ func TestMigrationV3RejectsOrphanedLedgerAndHistoryTampering(t *testing.T) {
 	ctx := context.Background()
 	if _, err := pool.Exec(ctx,
 		"UPDATE schema_migrations SET checksum=$1 WHERE version=3",
-		strings.Repeat("0",64)); err != nil {
+		strings.Repeat("0", 64)); err != nil {
 		t.Fatal(err)
 	}
 	if err := Migrate(ctx, pool); !errors.Is(err, ErrSchemaDrift) {
@@ -172,7 +171,5 @@ func TestMigrationV3RecordedV2UpgradePreservesInbox(t *testing.T) {
 	}
 }
 
-// The exact column role mapping and separate deployment credential are not
-// part of v3 schema installation. No service code may claim production grants
-// from these migration-only checks.
-var _ = pgx.ErrNoRows
+// This test verifies the migration schema only; independently provisioned
+// production credentials and grants require a separate acceptance gate.
