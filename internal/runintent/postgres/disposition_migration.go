@@ -50,9 +50,17 @@ func ensureInboxDLQDispositionMigration(ctx context.Context, tx pgx.Tx, applied 
 // trigger, narrowed UPDATE OF trigger or changed guard-function body must
 // reject startup. This does NOT protect against privileged drift after startup.
 func verifyInboxDLQDispositionSchema(ctx context.Context, tx pgx.Tx, source []byte) error {
+	// Evidence must live in the owned schema as an ordinary durable table.
+	// An UNLOGGED relation cannot satisfy post-crash DLQ recovery.
 	var complete bool
-	if err := tx.QueryRow(ctx,
-		"SELECT to_regclass('inbox_dlq_dispositions') IS NOT NULL").Scan(&complete); err != nil {
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM pg_class r
+			WHERE r.oid=to_regclass('inbox_dlq_dispositions')
+			  AND r.relkind='r' AND r.relpersistence='p'
+			  AND r.relnamespace=current_schema()::regnamespace
+		)
+	`).Scan(&complete); err != nil {
 		return fmt.Errorf("verify v3 disposition relation: %w", err)
 	}
 	if !complete {
