@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/avaargsh/agent-control-panel/migrations"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -172,6 +171,5 @@ func verifyInboxDLQDispositionSchema(ctx context.Context, tx pgx.Tx, source []by
 
 	// Keep production migration ownership explicit: the actual runtime
 	// database role remains external and must receive column-scoped grants.
-	_ = migrations.FS
 	return nil
 }
