@@ -65,8 +65,8 @@ func TestDispositionV3RestrictedDatabaseRole(t *testing.T) {
 		return tx.Commit(ctx)
 	}
 	insert := fmt.Sprintf(
-		"INSERT INTO inbox_dlq_dispositions(tenant_id,consumer_name,source_stream,source_sequence,event_id,delivery_sha256,reason,dlq_stream,dlq_subject,evidence) "+
-			"VALUES ('tenant-a','consumer-a','stream-a',42,'00000000-0000-4000-8000-000000000042'::uuid,'%s','EVENT_ID_CONFLICT','dlq-a','dlq.a.42','{}'::bytea)",
+		"INSERT INTO inbox_dlq_dispositions(tenant_id,consumer_name,source_stream,source_consumer,source_sequence,event_id,delivery_sha256,reason,dlq_stream,dlq_subject,evidence) "+
+			"VALUES ('tenant-a','consumer-a','stream-a','jetstream-durable-a',42,'00000000-0000-4000-8000-000000000042'::uuid,'%s','EVENT_ID_CONFLICT','dlq-a','dlq.a.42','{}'::bytea)",
 		strings.Repeat("a", 64))
 	if err := asWorker(insert); err != nil {
 		t.Fatalf("restricted role could not insert journal identity: %v", err)
