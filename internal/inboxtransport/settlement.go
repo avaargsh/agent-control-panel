@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 
 	"github.com/avaargsh/agent-control-panel/internal/runintent/postgres"
 )
@@ -47,7 +48,7 @@ const (
 // DLQ transfer establishes that the source delivery was consumed. Replayed
 // delivery identity and DLQ operations must be idempotent at the real adapter.
 func HandleDelivery(ctx context.Context, receiver Receiver, delivery Delivery, consumer string, event postgres.Event) error {
-	if receiver == nil || delivery == nil {
+	if absentDependency(receiver) || absentDependency(delivery) {
 		return ErrInvalidDelivery
 	}
 
@@ -78,4 +79,20 @@ func HandleDelivery(ctx context.Context, receiver Receiver, delivery Delivery, c
 		return fmt.Errorf("ACK committed Inbox delivery: %w", err)
 	}
 	return nil
+}
+
+// An interface containing a typed-nil pointer is non-nil in Go. Reject it
+// before calling either the database receiver or broker settlement callback,
+// otherwise malformed adapter wiring could panic after a durable commit.
+func absentDependency(value any) bool {
+	if value == nil {
+		return true
+	}
+	v := reflect.ValueOf(value)
+	switch v.Kind() {
+	case reflect.Pointer, reflect.Map, reflect.Slice, reflect.Func, reflect.Chan, reflect.Interface:
+		return v.IsNil()
+	default:
+		return false
+	}
 }
