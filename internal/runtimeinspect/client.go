@@ -110,7 +110,9 @@ func NewClient(originRaw, expectedRuntimeSPIFFE string, roots *x509.CertPool, cl
 		Certificates: []tls.Certificate{clientIdentity},
 		ServerName:   origin.Hostname(),
 		VerifyConnection: func(state tls.ConnectionState) error {
-			if !state.HandshakeComplete || state.Version < tls.VersionTLS13 ||
+			// VerifyConnection runs during the handshake, before
+			// ConnectionState.HandshakeComplete becomes true.
+			if state.Version < tls.VersionTLS13 ||
 				len(state.PeerCertificates) == 0 || len(state.VerifiedChains) == 0 {
 				return ErrInvalidResponse
 			}
