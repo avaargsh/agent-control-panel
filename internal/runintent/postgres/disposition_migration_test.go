@@ -126,3 +126,41 @@ func TestDispositionV3RejectsUnversionedPreexistingJournal(t *testing.T) {
 		t.Fatalf("unversioned existing v3 journal was silently adopted: %v",err)
 	}
 }
+
+func TestDispositionV3UpgradesRecordedV2AndIsIdempotent(t *testing.T) {
+	_, pool := testRepository(t)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, "DROP TABLE inbox_dlq_dispositions"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, "DROP FUNCTION reject_inbox_dlq_disposition_mutation()"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, "DELETE FROM schema_migrations WHERE version=3"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Migrate(ctx, pool); err != nil {
+		t.Fatalf("recorded v2 -> v3 upgrade failed: %v", err)
+	}
+	var present bool
+	if err := pool.QueryRow(ctx, `
+		SELECT to_regclass('inbox_dlq_dispositions') IS NOT NULL
+		       AND EXISTS(SELECT 1 FROM schema_migrations WHERE version=3)
+	`).Scan(&present); err != nil || !present {
+		t.Fatalf("additive v3 upgrade did not commit: %v, %v", present, err)
+	}
+	if err := Migrate(ctx, pool); err != nil {
+		t.Fatalf("v3 checksum and guard recheck failed: %v", err)
+	}
+}
+
+func TestDispositionV3LedgerCannotSkipV2(t *testing.T) {
+	_, pool := testRepository(t)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, "DELETE FROM schema_migrations WHERE version=2"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Migrate(ctx, pool); !errors.Is(err, ErrSchemaDrift) {
+		t.Fatalf("v3 ledger accepted without v2: %v", err)
+	}
+}
