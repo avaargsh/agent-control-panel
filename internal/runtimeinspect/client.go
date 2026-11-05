@@ -105,10 +105,10 @@ func NewClient(originRaw, expectedRuntimeSPIFFE string, roots *x509.CertPool, cl
 		return nil, ErrInvalidConfig
 	}
 	config := &tls.Config{
-		MinVersion:   tls.VersionTLS13,
-		RootCAs:      roots,
-		Certificates: []tls.Certificate{clientIdentity},
-		ServerName:   origin.Hostname(),
+		MinVersion:       tls.VersionTLS13,
+		RootCAs:          roots,
+		Certificates:     []tls.Certificate{clientIdentity},
+		ServerName:       origin.Hostname(),
 		VerifyConnection: func(state tls.ConnectionState) error {
 			if !state.HandshakeComplete || state.Version < tls.VersionTLS13 ||
 				len(state.PeerCertificates) == 0 || len(state.VerifiedChains) == 0 {
