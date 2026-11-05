@@ -138,6 +138,34 @@ func verifyDLQDispositionSchema(ctx context.Context, tx pgx.Tx, source []byte) e
 		return ErrSchemaDrift
 	}
 
+	// No role grant is conferred by migration. In particular, PUBLIC must
+	// never regain table access or EXECUTE on the mutation guard through
+	// later operator grants. Compare native ACL entries, not names/strings.
+	var publicGrants bool
+	err = tx.QueryRow(ctx, `
+		SELECT
+			EXISTS (
+				SELECT 1
+				FROM pg_class c,
+				     LATERAL aclexplode(coalesce(c.relacl, acldefault('r',c.relowner))) grant_entry
+				WHERE c.oid=to_regclass('dlq_dispositions')
+				  AND grant_entry.grantee=0
+			)
+			OR EXISTS (
+				SELECT 1
+				FROM pg_proc p,
+				     LATERAL aclexplode(coalesce(p.proacl, acldefault('f',p.proowner))) grant_entry
+				WHERE p.oid=to_regprocedure('reject_dlq_disposition_mutation()')
+				  AND grant_entry.grantee=0
+			)
+	`).Scan(&publicGrants)
+	if err != nil {
+		return fmt.Errorf("verify DLQ disposition PUBLIC privilege boundary: %w", err)
+	}
+	if publicGrants {
+		return ErrSchemaDrift
+	}
+
 	// PostgreSQL itself compiles both expected named predicates from the
 	// immutable version-3 source, so changed CHECK(TRUE) with the original
 	// name/type/validated state cannot pass migration verification.
