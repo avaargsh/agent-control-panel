@@ -14,6 +14,7 @@ var (
 	ErrDispositionConflict        = errors.New("conflicting DLQ disposition identity or evidence")
 	ErrDLQEvidenceMissing         = errors.New("confirmed DLQ evidence is missing from broker")
 	ErrDLQEvidenceConflict        = errors.New("broker DLQ evidence differs from immutable disposition")
+	ErrDLQPublishUncertain       = errors.New("prior DLQ publication attempt is ambiguous and needs reconciliation")
 )
 
 // DispositionJournal is an isolated POC table, deliberately NOT an ACP
@@ -51,6 +52,7 @@ func (j *DispositionJournal) Migrate(ctx context.Context) error {
 			dlq_stream text NOT NULL CHECK (dlq_stream <> ''),
 			dlq_subject text NOT NULL CHECK (dlq_subject <> ''),
 			evidence bytea NOT NULL,
+			publish_started boolean NOT NULL DEFAULT false,
 			published boolean NOT NULL DEFAULT false,
 			created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
 			published_at timestamptz,
@@ -81,9 +83,9 @@ type dispositionRecord struct {
 // closed if a same-sequence redelivery changes disposition contents. The
 // published bit is only a hint; the broker record is always checked again
 // before source ACK, and missing evidence is never recreated blindly.
-func (j *DispositionJournal) ensure(ctx context.Context, record dispositionRecord) (bool, error) {
+func (j *DispositionJournal) ensure(ctx context.Context, record dispositionRecord) (bool, bool, error) {
 	if _, err := ValidateDispositionJournal(j); err != nil {
-		return false, err
+		return false, false, err
 	}
 	_, err := j.pool.Exec(ctx, `
 		INSERT INTO poc_dlq_dispositions (
@@ -94,25 +96,48 @@ func (j *DispositionJournal) ensure(ctx context.Context, record dispositionRecor
 	`, record.stream, record.consumer, record.sequence, record.hash,
 		record.reason, record.dlq, record.subject, record.evidence)
 	if err != nil {
-		return false, fmt.Errorf("persist immutable DLQ disposition intent: %w", err)
+		return false, false, fmt.Errorf("persist immutable DLQ disposition intent: %w", err)
 	}
 	var hash, reason, dlq, subject string
 	var data []byte
-	var published bool
+	var published, publishStarted bool
 	err = j.pool.QueryRow(ctx, `
-		SELECT delivery_hash,reason,dlq_stream,dlq_subject,evidence,published
+		SELECT delivery_hash,reason,dlq_stream,dlq_subject,evidence,publish_started,published
 		FROM poc_dlq_dispositions
 		WHERE source_stream=$1 AND source_consumer=$2 AND source_sequence=$3
 	`, record.stream, record.consumer, record.sequence).Scan(
-		&hash, &reason, &dlq, &subject, &data, &published)
+		&hash, &reason, &dlq, &subject, &data, &publishStarted, &published)
 	if err != nil {
-		return false, fmt.Errorf("read immutable DLQ disposition intent: %w", err)
+		return false, false, fmt.Errorf("read immutable DLQ disposition intent: %w", err)
 	}
 	if hash != record.hash || reason != record.reason || dlq != record.dlq ||
 		subject != record.subject || !bytes.Equal(data, record.evidence) {
-		return false, ErrDispositionConflict
+		return false, false, ErrDispositionConflict
 	}
-	return published, nil
+	return published, publishStarted, nil
+}
+
+// markPublishAttempt is durable BEFORE issuing JetStream Publish.
+// If this step succeeds and PubAck/PG confirm is later lost, a missing
+// retained broker record means UNKNOWN and must NOT be auto-republished.
+func (j *DispositionJournal) markPublishAttempt(ctx context.Context, record dispositionRecord) error {
+	if _, err := ValidateDispositionJournal(j); err != nil {
+		return err
+	}
+	tag, err := j.pool.Exec(ctx, `
+		UPDATE poc_dlq_dispositions SET publish_started=TRUE
+		WHERE source_stream=$1 AND source_consumer=$2 AND source_sequence=$3
+		  AND delivery_hash=$4 AND reason=$5 AND dlq_stream=$6
+		  AND dlq_subject=$7 AND evidence=$8 AND NOT published
+	`, record.stream, record.consumer, record.sequence, record.hash,
+		record.reason, record.dlq, record.subject, record.evidence)
+	if err != nil {
+		return fmt.Errorf("persist DLQ publish attempt fence: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return ErrDispositionConflict
+	}
+	return nil
 }
 
 // confirm records a broker-verified, stream/subject-matched DLQ message.
