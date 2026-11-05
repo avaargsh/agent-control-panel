@@ -111,3 +111,23 @@ func TestHandleDeliveryRejectsMissingDependenciesWithoutSettlement(t *testing.T)
 		t.Fatalf("invalid handler performed side effects: received=%d settlement=%v", receiver.calls, delivery.calls)
 	}
 }
+
+func TestHandleDeliveryRejectsTypedNilDependenciesBeforeDatabaseWrite(t *testing.T) {
+	event := postgres.Event{ID: "00000000-0000-4000-8000-000000000101"}
+	receiver := &receiveFixture{result: postgres.InboxReceiveResult{Inserted: true}}
+	var missingDelivery *settlementFixture
+	if err := HandleDelivery(context.Background(), receiver, missingDelivery, "billing-consumer", event); !errors.Is(err, ErrInvalidDelivery) {
+		t.Fatalf("typed-nil delivery accepted: %v", err)
+	}
+	if receiver.calls != 0 {
+		t.Fatalf("typed-nil delivery caused database write: %d", receiver.calls)
+	}
+	var missingReceiver *receiveFixture
+	delivery := &settlementFixture{receiver: receiver}
+	if err := HandleDelivery(context.Background(), missingReceiver, delivery, "billing-consumer", event); !errors.Is(err, ErrInvalidDelivery) {
+		t.Fatalf("typed-nil receiver accepted: %v", err)
+	}
+	if len(delivery.calls) != 0 {
+		t.Fatalf("typed-nil receiver caused broker settlement: %v", delivery.calls)
+	}
+}
