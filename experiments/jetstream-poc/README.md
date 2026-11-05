@@ -41,6 +41,34 @@ checksum-recorded PostgreSQL v1/v2 migrations.
   connected process observes actual JetStream redelivery, keeps one Inbox
   record and applies exactly one ordered cursor version.
 
+## PostgreSQL journal integrity and restricted-role test
+
+The isolated POC migration now uses one PostgreSQL transaction for first
+creation and installs a row-level `BEFORE UPDATE OR DELETE` trigger and
+statement-level `BEFORE TRUNCATE` trigger. Allowed state changes are monotonic
+only (`publish_started=false→true`, then `published=false→true`).
+Immutable identity, digest, evidence payload, creation and confirmation
+timestamps cannot be overwritten. The broker adapter still independently
+verifies retained DLQ evidence before the source ACK.
+
+When `Migrate` finds an **existing** journal table it does not recreate or
+silently repair any guard. It checks the PostgreSQL catalog for the exact
+primary-key column order, both pinned CHECK predicates, enabled trigger event
+bitmaps, unrestricted update column scope, absent `WHEN` clauses and the
+expected PL/pgSQL function source/security attributes. A mismatch yields
+`ErrDispositionSchemaDrift`.
+
+A PostgreSQL 16 test-only `NOLOGIN` worker role with schema `USAGE`,
+table `SELECT/INSERT` and column-specific
+`UPDATE(publish_started,published,published_at)` proves that routine
+settlement state writes are possible while direct evidence edits, DELETE,
+TRUNCATE and DDL fail with insufficient privilege. An attempted state rollback
+also fails through the database trigger. This uses `SET LOCAL ROLE` from the
+test administrator, **not** a deployed service credential. The guard verifies
+catalog state when the POC migration is called; a privileged actor could still
+alter or disable guards afterward unless real deployment IAM and operational
+reverification are implemented.
+
 ## Explicitly not proven
 
 - **DLQ publish + source ACK remains non-atomic across JetStream and PG.**
@@ -57,10 +85,13 @@ checksum-recorded PostgreSQL v1/v2 migrations.
   A PostgreSQL trigger-injected failure between real PubAck and journal
   confirmation verifies this fail-closed behavior. Operator resolution for
   the indefinite UNKNOWN state is still an unimplemented governance gate.
-- Privileged broker deletion/purge, DLQ stream recreation, journal/catalog
-  tampering, multi-worker races, retention expiry and network partition are
-  not independently accepted by these tests. The table is a disposable POC
-  schema, not a production ACP migration or least-privilege role contract.
+- Privileged broker deletion/purge, DLQ stream recreation, administrative
+  journal/catalog tampering **after startup verification**, multi-worker
+  races, retention expiry and network partition are not independently accepted.
+  The journal table, trigger migration and test role all live in disposable
+  POC schemas. No production ACP migration, independently provisioned DB
+  identity, grant-revocation/restore drill or hardened least-privilege contract
+  exists yet.
 - A second real receiver-process SIGKILL test kills the worker **after
   DLQ PubAck and PostgreSQL publication confirmation but before source ACK**.
   A newly connected process receives real JetStream redelivery more than one
