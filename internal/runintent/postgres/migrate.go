@@ -380,7 +380,6 @@ func verifyRunIntentSchema(ctx context.Context, tx pgx.Tx) error {
 	return verifyPinnedCheckPredicates(ctx, tx)
 }
 
-
 // verifyPinnedCheckPredicates compares the live v1 CHECK expressions with the
 // immutable migration source, parsed by the *same PostgreSQL server*. Compiling
 // the reviewed predicate on an empty temporary LIKE table avoids hard-coding
@@ -423,7 +422,7 @@ func verifyPinnedCheckPredicates(ctx context.Context, tx pgx.Tx) error {
 			return fmt.Errorf("compile pinned CHECK %s: %w", guard.constraint, err)
 		}
 		var matches bool
-		err = tx.QueryRow(ctx, 
+		err = tx.QueryRow(ctx,
 			`SELECT pg_get_expr(actual.conbin, actual.conrelid, false) =
 			           pg_get_expr(expected.conbin, expected.conrelid, false)
 			  FROM pg_constraint AS actual
