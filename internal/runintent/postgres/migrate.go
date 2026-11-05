@@ -377,5 +377,108 @@ func verifyRunIntentSchema(ctx context.Context, tx pgx.Tx) error {
 	if len(missing) > 0 {
 		return fmt.Errorf("%w: missing, misbound or unvalidated constraints: %s", ErrSchemaDrift, strings.Join(missing, ", "))
 	}
+	return verifyPinnedCheckPredicates(ctx, tx)
+}
+
+
+// verifyPinnedCheckPredicates compares the live v1 CHECK expressions with the
+// immutable migration source, parsed by the *same PostgreSQL server*. Compiling
+// the reviewed predicate on an empty temporary LIKE table avoids hard-coding
+// version-dependent pg_get_expr output or altering production tables. These
+// temporary objects are dropped automatically when Migrate commits.
+func verifyPinnedCheckPredicates(ctx context.Context, tx pgx.Tx) error {
+	source, err := migrations.FS.ReadFile(initialMigrationName)
+	if err != nil {
+		return fmt.Errorf("read pinned v1 CHECK contract: %w", err)
+	}
+	type checkGuard struct{ relation, temporary, constraint string }
+	guards := []checkGuard{
+		{"run_intents", "acp_expected_run_intents_checks", "run_intents_lease_consistency"},
+		{"run_intents", "acp_expected_run_intents_checks", "run_intents_state_payload_consistency"},
+		{"outbox_events", "acp_expected_outbox_events_checks", "outbox_lease_consistency"},
+		{"outbox_events", "acp_expected_outbox_events_checks", "outbox_published_consistency"},
+		{"inbox_events", "acp_expected_inbox_events_checks", "inbox_applied_consistency"},
+	}
+	// Relation names are an internal, fixed allowlist. Never interpolate
+	// request-controlled schema names or identifiers into these DDL statements.
+	created := make(map[string]bool)
+	for _, guard := range guards {
+		if !created[guard.temporary] {
+			_, err := tx.Exec(ctx, fmt.Sprintf(
+				"CREATE TEMP TABLE %s (LIKE %s) ON COMMIT DROP",
+				guard.temporary, guard.relation))
+			if err != nil {
+				return fmt.Errorf("compile pinned CHECK table %s: %w", guard.relation, err)
+			}
+			created[guard.temporary] = true
+		}
+		predicate, err := pinnedMigrationCheckPredicate(string(source), guard.constraint)
+		if err != nil {
+			return fmt.Errorf("%w: pinned v1 CHECK %s: %v", ErrSchemaDrift, guard.constraint, err)
+		}
+		_, err = tx.Exec(ctx, fmt.Sprintf(
+			"ALTER TABLE pg_temp.%s ADD CONSTRAINT %s CHECK (%s)",
+			guard.temporary, guard.constraint, predicate))
+		if err != nil {
+			return fmt.Errorf("compile pinned CHECK %s: %w", guard.constraint, err)
+		}
+		var matches bool
+		err = tx.QueryRow(ctx, 
+			`SELECT pg_get_expr(actual.conbin, actual.conrelid, false) =
+			           pg_get_expr(expected.conbin, expected.conrelid, false)
+			  FROM pg_constraint AS actual
+			  JOIN pg_constraint AS expected ON actual.conname = expected.conname
+			  WHERE actual.conrelid = to_regclass($1)
+			    AND expected.conrelid = to_regclass($2)
+			    AND actual.conname = $3
+			    AND actual.contype = 'c' AND expected.contype = 'c'`,
+			guard.relation, "pg_temp."+guard.temporary, guard.constraint,
+		).Scan(&matches)
+		if errors.Is(err, pgx.ErrNoRows) || err == nil && !matches {
+			return fmt.Errorf("%w: changed CHECK predicate for %s.%s",
+				ErrSchemaDrift, guard.relation, guard.constraint)
+		}
+		if err != nil {
+			return fmt.Errorf("compare pinned CHECK %s: %w", guard.constraint, err)
+		}
+	}
 	return nil
+}
+
+// pinnedMigrationCheckPredicate extracts only named, checksum-pinned v1 CHECK
+// clauses. It does not parse caller SQL and deliberately fails closed on a
+// missing/duplicate clause or malformed balanced parentheses/quoted literals.
+func pinnedMigrationCheckPredicate(sql, name string) (string, error) {
+	marker := "CONSTRAINT " + name + " CHECK ("
+	if strings.Count(sql, marker) != 1 {
+		return "", ErrSchemaDrift
+	}
+	from := strings.Index(sql, marker) + len(marker)
+	depth, quoted := 1, false
+	for i := from; i < len(sql); i++ {
+		switch sql[i] {
+		case '\'':
+			if quoted && i+1 < len(sql) && sql[i+1] == '\'' {
+				i++
+			} else {
+				quoted = !quoted
+			}
+		case '(':
+			if !quoted {
+				depth++
+			}
+		case ')':
+			if !quoted {
+				depth--
+				if depth == 0 {
+					predicate := strings.TrimSpace(sql[from:i])
+					if predicate == "" {
+						return "", ErrSchemaDrift
+					}
+					return predicate, nil
+				}
+			}
+		}
+	}
+	return "", ErrSchemaDrift
 }
