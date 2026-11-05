@@ -59,11 +59,11 @@ func settlementPostgres(t *testing.T) (*postgres.Repository, *pgxpool.Pool) {
 }
 
 type databaseObservingDelivery struct {
-	pool      *pgxpool.Pool
-	eventID   string
-	ackCalls  int
-	dlqCalls  int
-	failAck   error
+	pool     *pgxpool.Pool
+	eventID  string
+	ackCalls int
+	dlqCalls int
+	failAck  error
 }
 
 func (d *databaseObservingDelivery) Ack(ctx context.Context) error {
@@ -110,17 +110,17 @@ func TestSettlementPostgresCommitLostACKAndConflictingAppliedReplay(t *testing.T
 	repository, pool := settlementPostgres(t)
 	ctx := context.Background()
 	event := postgres.Event{
-		ID: "00000000-0000-4000-8000-000000000101",
-		Producer: "test-producer",
-		Type: "agent.test.changed",
-		SchemaVersion: 1,
-		TenantID: "tenant-a",
-		AggregateType: "agent",
-		AggregateID: "agent-a",
+		ID:               "00000000-0000-4000-8000-000000000101",
+		Producer:         "test-producer",
+		Type:             "agent.test.changed",
+		SchemaVersion:    1,
+		TenantID:         "tenant-a",
+		AggregateType:    "agent",
+		AggregateID:      "agent-a",
 		AggregateVersion: 1,
-		OccurredAt: time.Now().UTC(),
-		CorrelationID: "settlement-test",
-		Payload: json.RawMessage(`{"version":1}`),
+		OccurredAt:       time.Now().UTC(),
+		CorrelationID:    "settlement-test",
+		Payload:          json.RawMessage(`{"version":1}`),
 	}
 	lostAck := errors.New("simulated ACK loss")
 	delivery := &databaseObservingDelivery{pool: pool, eventID: event.ID, failAck: lostAck}
