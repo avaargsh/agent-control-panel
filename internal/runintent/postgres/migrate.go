@@ -22,6 +22,9 @@ const (
 const conflictMigrationVersion int64 = 2
 const conflictMigrationName = "0002_inbox_conflict_evidence.sql"
 
+const dispositionMigrationVersion int64 = 3
+const dispositionMigrationName = "0003_dlq_dispositions.sql"
+
 var (
 	ErrSchemaDrift       = errors.New("RunIntent schema migration checksum or relation drift")
 	ErrUnversionedSchema = errors.New("RunIntent schema exists without migration history")
@@ -75,12 +78,17 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 		return fmt.Errorf("read embedded Inbox conflict migration: %w", err)
 	}
 	conflictChecksum := fmt.Sprintf("%x", sha256.Sum256(conflictSource))
+	dispositionSource, err := migrations.FS.ReadFile(dispositionMigrationName)
+	if err != nil {
+		return fmt.Errorf("read embedded DLQ disposition migration: %w", err)
+	}
+	dispositionChecksum := fmt.Sprintf("%x", sha256.Sum256(dispositionSource))
 
 	rows, err := tx.Query(ctx, "SELECT version, name, checksum FROM schema_migrations")
 	if err != nil {
 		return fmt.Errorf("read schema migration history: %w", err)
 	}
-	var appliedVersion, conflictApplied bool
+	var appliedVersion, conflictApplied, dispositionApplied bool
 	for rows.Next() {
 		var version int64
 		var name, appliedChecksum string
@@ -101,6 +109,12 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 				return ErrSchemaDrift
 			}
 			conflictApplied = true
+		case dispositionMigrationVersion:
+			if name != dispositionMigrationName || appliedChecksum != dispositionChecksum || dispositionApplied {
+				rows.Close()
+				return ErrSchemaDrift
+			}
+			dispositionApplied = true
 		default:
 			rows.Close()
 			return ErrSchemaDrift
@@ -111,7 +125,7 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 		return fmt.Errorf("iterate schema migration history: %w", err)
 	}
 	rows.Close()
-	if conflictApplied && !appliedVersion {
+	if (conflictApplied && !appliedVersion) || (dispositionApplied && !conflictApplied) {
 		return ErrSchemaDrift
 	}
 
@@ -120,6 +134,9 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 			return err
 		}
 		if err := ensureInboxConflictMigration(ctx, tx, conflictApplied, conflictSource, conflictChecksum); err != nil {
+			return err
+		}
+		if err := ensureDLQDispositionMigration(ctx, tx, dispositionApplied, dispositionSource, dispositionChecksum); err != nil {
 			return err
 		}
 		if err := tx.Commit(ctx); err != nil {
@@ -165,6 +182,9 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 		return fmt.Errorf("record RunIntent migration checksum: %w", err)
 	}
 	if err := ensureInboxConflictMigration(ctx, tx, false, conflictSource, conflictChecksum); err != nil {
+		return err
+	}
+	if err := ensureDLQDispositionMigration(ctx, tx, false, dispositionSource, dispositionChecksum); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
