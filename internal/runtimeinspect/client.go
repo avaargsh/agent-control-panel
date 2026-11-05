@@ -44,7 +44,7 @@ const (
 
 var (
 	canonicalUUID = regexp.MustCompile("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
-	digestSHA256   = regexp.MustCompile("^sha256:[0-9a-f]{64}$")
+	digestSHA256  = regexp.MustCompile("^sha256:[0-9a-f]{64}$")
 )
 
 type InspectRequest struct {
@@ -105,10 +105,10 @@ func NewClient(originRaw, expectedRuntimeSPIFFE string, roots *x509.CertPool, cl
 		return nil, ErrInvalidConfig
 	}
 	config := &tls.Config{
-		MinVersion:       tls.VersionTLS13,
-		RootCAs:          roots,
-		Certificates:     []tls.Certificate{clientIdentity},
-		ServerName:       origin.Hostname(),
+		MinVersion:   tls.VersionTLS13,
+		RootCAs:      roots,
+		Certificates: []tls.Certificate{clientIdentity},
+		ServerName:   origin.Hostname(),
 		VerifyConnection: func(state tls.ConnectionState) error {
 			if !state.HandshakeComplete || state.Version < tls.VersionTLS13 ||
 				len(state.PeerCertificates) == 0 || len(state.VerifiedChains) == 0 {
@@ -136,8 +136,8 @@ func NewClient(originRaw, expectedRuntimeSPIFFE string, roots *x509.CertPool, cl
 	return &Client{
 		base: originRaw,
 		client: &http.Client{
-			Transport:     transport,
-			Timeout:       12 * time.Second,
+			Transport: transport,
+			Timeout:   12 * time.Second,
 			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 				return http.ErrUseLastResponse
 			},
