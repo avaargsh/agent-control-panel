@@ -221,7 +221,7 @@ func TestConcurrentIdempotencyClaimsCreateOneRecordAndEvent(t *testing.T) {
 }
 
 func TestCompareAndSwapRequiresNewFenceForNewLease(t *testing.T) {
-	repository, _ := testRepository(t)
+	repository, pool := testRepository(t)
 	ctx := context.Background()
 	intent := testIntent(5)
 	created, inserted, err := repository.Create(ctx, intent, testEvent(intent, 1, 501, eventCreated))
@@ -237,6 +237,13 @@ func TestCompareAndSwapRequiresNewFenceForNewLease(t *testing.T) {
 		testEvent(dispatching, dispatching.Version, 502, "agent.run-intent.dispatching"))
 	if err != nil {
 		t.Fatalf("persist dispatch lease: %v", err)
+	}
+	// Simulate expiration in PostgreSQL, not merely by advancing the
+	// caller's local clock. CAS now checks the database clock at UPDATE.
+	if _, err := pool.Exec(ctx,
+		"UPDATE run_intents SET lease_expires_at = clock_timestamp() - interval '1 second' WHERE id = $1::uuid",
+		intent.ID); err != nil {
+		t.Fatal(err)
 	}
 	unknown, err := dispatching.ExpireLease(dispatching.Version, now.Add(2*time.Second))
 	if err != nil {
@@ -538,5 +545,295 @@ func TestMigrationRejectsWeakenedCriticalCheckPredicates(t *testing.T) {
 				t.Fatalf("weakened CHECK accepted: %v, want ErrSchemaDrift", err)
 			}
 		})
+	}
+}
+
+// A valid-looking receipt generated with the worker's old local time cannot
+// commit once PostgreSQL considers the dispatch lease expired.
+func TestCASRejectsExpiredDispatchReceiptUsingDatabaseClock(t *testing.T) {
+	repository, pool := testRepository(t)
+	ctx := context.Background()
+	intent := testIntent(810)
+	created, inserted, err := repository.Create(ctx, intent, testEvent(intent, 1, 8101, eventCreated))
+	if err != nil || !inserted {
+		t.Fatalf("create RunIntent: inserted=%v err=%v", inserted, err)
+	}
+	dispatching, err := created.ClaimDispatch(created.Version, "worker-old", time.Now().UTC(), time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dispatching, err = repository.CompareAndSwap(ctx, intent.TenantID, intent.ID, created.Version, dispatching,
+		testEvent(dispatching, dispatching.Version, 8102, "agent.run-intent.dispatching"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx,
+		"UPDATE run_intents SET lease_expires_at = clock_timestamp() - interval '1 second' WHERE id = $1::uuid",
+		intent.ID); err != nil {
+		t.Fatal(err)
+	}
+	// An old worker has no authority to claim that its original clock is
+	// still valid, even if the in-memory domain transition passes.
+	accepted, err := dispatching.RecordDispatchOutcome(dispatching.Version, "worker-old",
+		dispatching.FenceToken, time.Now().UTC(), runintent.DispatchOutcome{
+			TenantID: intent.TenantID, RunIntentID: intent.ID,
+			RequestDigest: intent.RequestDigest, Kind: runintent.DispatchAccepted,
+			RunID: "runtime-run-810", WorkflowID: "agent-run/v1/runtime-run-810",
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = repository.CompareAndSwap(ctx, intent.TenantID, intent.ID, dispatching.Version, accepted,
+		testEvent(accepted, accepted.Version, 8103, "agent.run-intent.accepted"))
+	if !errors.Is(err, runintent.ErrLeaseExpired) {
+		t.Fatalf("post-expiry ACCEPTED CAS: %v, want ErrLeaseExpired", err)
+	}
+	stored, err := repository.Get(ctx, intent.TenantID, intent.ID)
+	if err != nil || stored.Status != runintent.Dispatching || countOutbox(t, pool, intent.ID) != 2 {
+		t.Fatalf("stale receipt mutated durable state or Outbox: stored=%+v err=%v", stored, err)
+	}
+}
+
+func TestCASRejectsPrematureLeaseExpiryUsingDatabaseClock(t *testing.T) {
+	repository, pool := testRepository(t)
+	ctx := context.Background()
+	intent := testIntent(811)
+	created, _, err := repository.Create(ctx, intent, testEvent(intent, 1, 8111, eventCreated))
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimedAt := time.Now().UTC()
+	dispatching, err := created.ClaimDispatch(created.Version, "worker-811", claimedAt, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dispatching, err = repository.CompareAndSwap(ctx, intent.TenantID, intent.ID, created.Version, dispatching,
+		testEvent(dispatching, dispatching.Version, 8112, "agent.run-intent.dispatching"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	expired, err := dispatching.ExpireLease(dispatching.Version, claimedAt.Add(2*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = repository.CompareAndSwap(ctx, intent.TenantID, intent.ID, dispatching.Version, expired,
+		testEvent(expired, expired.Version, 8113, "agent.run-intent.unknown"))
+	if !errors.Is(err, runintent.ErrLeaseActive) {
+		t.Fatalf("future-dated worker prematurely expired active lease: %v, want ErrLeaseActive", err)
+	}
+	if _, err := pool.Exec(ctx,
+		"UPDATE run_intents SET lease_expires_at = clock_timestamp() - interval '1 second' WHERE id = $1::uuid",
+		intent.ID); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := repository.CompareAndSwap(ctx, intent.TenantID, intent.ID, dispatching.Version, expired,
+		testEvent(expired, expired.Version, 8114, "agent.run-intent.unknown"))
+	if err != nil || updated.Status != runintent.Unknown {
+		t.Fatalf("genuinely expired lease should be recoverable: updated=%+v err=%v", updated, err)
+	}
+}
+
+func TestCASRejectsForgedFenceIncreaseOnAcceptedReceipt(t *testing.T) {
+	repository, pool := testRepository(t)
+	ctx := context.Background()
+	intent := testIntent(812)
+	created, _, err := repository.Create(ctx, intent, testEvent(intent, 1, 8121, eventCreated))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dispatching, err := created.ClaimDispatch(created.Version, "worker-812", time.Now().UTC(), time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dispatching, err = repository.CompareAndSwap(ctx, intent.TenantID, intent.ID, created.Version, dispatching,
+		testEvent(dispatching, dispatching.Version, 8122, "agent.run-intent.dispatching"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	accepted, err := dispatching.RecordDispatchOutcome(dispatching.Version, "worker-812",
+		dispatching.FenceToken, time.Now().UTC(), runintent.DispatchOutcome{
+			TenantID: intent.TenantID, RunIntentID: intent.ID,
+			RequestDigest: intent.RequestDigest, Kind: runintent.DispatchAccepted,
+			RunID: "runtime-run-812", WorkflowID: "agent-run/v1/runtime-run-812",
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	accepted.FenceToken++ // only lease acquisition/expiry may advance the fence
+	_, err = repository.CompareAndSwap(ctx, intent.TenantID, intent.ID, dispatching.Version, accepted,
+		testEvent(accepted, accepted.Version, 8123, "agent.run-intent.accepted"))
+	if !errors.Is(err, ErrFenceRegression) {
+		t.Fatalf("forged accepted-receipt fence increment: %v, want ErrFenceRegression", err)
+	}
+	if got := countOutbox(t, pool, intent.ID); got != 2 {
+		t.Fatalf("forged receipt appended an Outbox event: %d", got)
+	}
+}
+
+func TestCASRejectsExpiredReconciliationResultUsingDatabaseClock(t *testing.T) {
+	repository, pool := testRepository(t)
+	ctx := context.Background()
+	intent := testIntent(813)
+	created, _, err := repository.Create(ctx, intent, testEvent(intent, 1, 8131, eventCreated))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dispatching, err := created.ClaimDispatch(created.Version, "worker-813", time.Now().UTC(), time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dispatching, err = repository.CompareAndSwap(ctx, intent.TenantID, intent.ID, created.Version, dispatching,
+		testEvent(dispatching, dispatching.Version, 8132, "agent.run-intent.dispatching"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ambiguous, err := dispatching.RecordDispatchOutcome(dispatching.Version, "worker-813",
+		dispatching.FenceToken, time.Now().UTC(), runintent.DispatchOutcome{
+			TenantID: intent.TenantID, RunIntentID: intent.ID,
+			RequestDigest: intent.RequestDigest, Kind: runintent.DispatchAmbiguous,
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	unknown, err := repository.CompareAndSwap(ctx, intent.TenantID, intent.ID, dispatching.Version, ambiguous,
+		testEvent(ambiguous, ambiguous.Version, 8133, "agent.run-intent.unknown"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reconciling, err := unknown.BeginReconciliation(unknown.Version, "reconciler-813", time.Now().UTC(), time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reconciling, err = repository.CompareAndSwap(ctx, intent.TenantID, intent.ID, unknown.Version, reconciling,
+		testEvent(reconciling, reconciling.Version, 8134, "agent.run-intent.reconciling"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx,
+		"UPDATE run_intents SET lease_expires_at = clock_timestamp() - interval '1 second' WHERE id = $1::uuid",
+		intent.ID); err != nil {
+		t.Fatal(err)
+	}
+	retry, err := reconciling.ApplyReconciliationResult(reconciling.Version, "reconciler-813",
+		reconciling.FenceToken, time.Now().UTC(), runintent.ReconciliationResult{
+			TenantID: intent.TenantID, RunIntentID: intent.ID,
+			RequestDigest: intent.RequestDigest, Kind: runintent.RuntimeNotFoundFinal,
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = repository.CompareAndSwap(ctx, intent.TenantID, intent.ID, reconciling.Version, retry,
+		testEvent(retry, retry.Version, 8135, "agent.run-intent.pending"))
+	if !errors.Is(err, runintent.ErrLeaseExpired) {
+		t.Fatalf("expired reconciler could authorize another StartRun: %v, want ErrLeaseExpired", err)
+	}
+	stored, err := repository.Get(ctx, intent.TenantID, intent.ID)
+	if err != nil || stored.Status != runintent.Reconciling || countOutbox(t, pool, intent.ID) != 4 {
+		t.Fatalf("stale reconciliation result mutated durable state: stored=%+v err=%v", stored, err)
+	}
+}
+
+// Positive path: a receipt applied before the DB lease expires commits the
+// canonical Runtime identity and exactly one transition Outbox event.
+func TestCASAcceptsUnexpiredSyntheticRuntimeReceipt(t *testing.T) {
+	repository, pool := testRepository(t)
+	ctx := context.Background()
+	intent := testIntent(814)
+	created, _, err := repository.Create(ctx, intent, testEvent(intent, 1, 8141, eventCreated))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dispatching, err := created.ClaimDispatch(created.Version, "worker-814", time.Now().UTC(), time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dispatching, err = repository.CompareAndSwap(ctx, intent.TenantID, intent.ID, created.Version, dispatching,
+		testEvent(dispatching, dispatching.Version, 8142, "agent.run-intent.dispatching"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	accepted, err := dispatching.RecordDispatchOutcome(dispatching.Version, "worker-814",
+		dispatching.FenceToken, time.Now().UTC(), runintent.DispatchOutcome{
+			TenantID: intent.TenantID, RunIntentID: intent.ID,
+			RequestDigest: intent.RequestDigest, Kind: runintent.DispatchAccepted,
+			RunID: "runtime-run-814", WorkflowID: "agent-run/v1/runtime-run-814",
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	accepted, err = repository.CompareAndSwap(ctx, intent.TenantID, intent.ID, dispatching.Version, accepted,
+		testEvent(accepted, accepted.Version, 8143, "agent.run-intent.accepted"))
+	if err != nil || accepted.Status != runintent.Accepted || accepted.RunID != "runtime-run-814" ||
+		countOutbox(t, pool, intent.ID) != 3 {
+		t.Fatalf("active lease acceptance not durable: accepted=%+v err=%v", accepted, err)
+	}
+}
+
+// A typed authoritative NOT_FOUND_FINAL result permits the same logical intent
+// to return to PENDING; no new idempotency key or request digest is minted.
+// This does not replace an authenticated Runtime lookup.
+func TestCASAllowsReconciledRetryWithoutNewIdentity(t *testing.T) {
+	repository, pool := testRepository(t)
+	ctx := context.Background()
+	intent := testIntent(815)
+	created, _, err := repository.Create(ctx, intent, testEvent(intent, 1, 8151, eventCreated))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dispatching, err := created.ClaimDispatch(created.Version, "worker-815", time.Now().UTC(), time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dispatching, err = repository.CompareAndSwap(ctx, intent.TenantID, intent.ID, created.Version, dispatching,
+		testEvent(dispatching, dispatching.Version, 8152, "agent.run-intent.dispatching"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ambiguous, err := dispatching.RecordDispatchOutcome(dispatching.Version, "worker-815",
+		dispatching.FenceToken, time.Now().UTC(), runintent.DispatchOutcome{
+			TenantID: intent.TenantID, RunIntentID: intent.ID,
+			RequestDigest: intent.RequestDigest, Kind: runintent.DispatchAmbiguous,
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	unknown, err := repository.CompareAndSwap(ctx, intent.TenantID, intent.ID, dispatching.Version, ambiguous,
+		testEvent(ambiguous, ambiguous.Version, 8153, "agent.run-intent.unknown"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reconciling, err := unknown.BeginReconciliation(unknown.Version, "reconciler-815", time.Now().UTC(), time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reconciling, err = repository.CompareAndSwap(ctx, intent.TenantID, intent.ID, unknown.Version, reconciling,
+		testEvent(reconciling, reconciling.Version, 8154, "agent.run-intent.reconciling"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending, err := reconciling.ApplyReconciliationResult(reconciling.Version, "reconciler-815",
+		reconciling.FenceToken, time.Now().UTC(), runintent.ReconciliationResult{
+			TenantID: intent.TenantID, RunIntentID: intent.ID,
+			RequestDigest: intent.RequestDigest, Kind: runintent.RuntimeNotFoundFinal,
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending, err = repository.CompareAndSwap(ctx, intent.TenantID, intent.ID, reconciling.Version, pending,
+		testEvent(pending, pending.Version, 8155, "agent.run-intent.pending"))
+	if err != nil || pending.Status != runintent.Pending {
+		t.Fatalf("authoritative not-found did not permit pending: %+v, %v", pending, err)
+	}
+	reclaimed, err := pending.ClaimDispatch(pending.Version, "worker-815-retry", time.Now().UTC(), time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reclaimed, err = repository.CompareAndSwap(ctx, intent.TenantID, intent.ID, pending.Version, reclaimed,
+		testEvent(reclaimed, reclaimed.Version, 8156, "agent.run-intent.dispatching"))
+	if err != nil || reclaimed.Status != runintent.Dispatching ||
+		reclaimed.FenceToken != dispatching.FenceToken+2 ||
+		reclaimed.IdempotencyKey != created.IdempotencyKey ||
+		reclaimed.RequestDigest != created.RequestDigest || countOutbox(t, pool, intent.ID) != 6 {
+		t.Fatalf("replay changed immutable request or fencing: %+v, %v", reclaimed, err)
 	}
 }
