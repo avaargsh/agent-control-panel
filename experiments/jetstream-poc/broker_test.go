@@ -75,12 +75,12 @@ func pocNATS(t *testing.T) (jetstream.JetStream, jetstream.Consumer, jetstream.S
 	defer cancel()
 	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
 	cfg := Config{
-		ConsumerName: consumerID,
-		SourceStream: "ACP_POC_SOURCE_" + suffix,
+		ConsumerName:   consumerID,
+		SourceStream:   "ACP_POC_SOURCE_" + suffix,
 		SourceConsumer: "ACP_POC",
-		SourceSubject: "acp.poc.source." + suffix,
-		DLQStream: "ACP_POC_DLQ_" + suffix,
-		DLQSubject: "acp.poc.dlq." + suffix,
+		SourceSubject:  "acp.poc.source." + suffix,
+		DLQStream:      "ACP_POC_DLQ_" + suffix,
+		DLQSubject:     "acp.poc.dlq." + suffix,
 	}
 	source, err := js.CreateStream(ctx, jetstream.StreamConfig{
 		Name: cfg.SourceStream, Subjects: []string{cfg.SourceSubject}, Storage: jetstream.FileStorage,
@@ -110,7 +110,7 @@ func pocNATS(t *testing.T) (jetstream.JetStream, jetstream.Consumer, jetstream.S
 
 func pocEvent(id int, value int) postgres.Event {
 	return postgres.Event{
-		ID: fmt.Sprintf("00000000-0000-4000-8000-%012d", id),
+		ID:       fmt.Sprintf("00000000-0000-4000-8000-%012d", id),
 		Producer: "poc-producer", Type: "agent.test.changed",
 		SchemaVersion: 1, TenantID: "tenant-a", AggregateType: "agent",
 		AggregateID: "jetstream-agent", AggregateVersion: 1,
@@ -144,10 +144,12 @@ type ackBlackhole struct {
 	*Delivery
 	err error
 }
+
 func (f ackBlackhole) Ack(context.Context) error { return f.err }
 
 type allowPOCProjection struct{}
-func (allowPOCProjection) Supports(postgres.InboxEvent) bool { return true }
+
+func (allowPOCProjection) Supports(postgres.InboxEvent) bool                        { return true }
 func (allowPOCProjection) Apply(context.Context, pgx.Tx, postgres.InboxEvent) error { return nil }
 
 func TestJetStreamRealBrokerAckLossConflictAndDLQFailure(t *testing.T) {
