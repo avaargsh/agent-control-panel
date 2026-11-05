@@ -43,11 +43,27 @@ checksum-recorded PostgreSQL v1/v2 migrations.
 
 ## Explicitly not proven
 
-- **DLQ publish + source ACK cannot be atomic across JetStream and PG.** A
-  crash in between can duplicate DLQ records after the JetStream
-  `Nats-Msg-Id` duplicate window. Permanent, operator-verified
-  dispositions require an ACP-owned durable journal with unique identity,
-  reconciliation and retention policy; the current POC does not implement it.
+- **DLQ publish + source ACK remains non-atomic across JetStream and PG.**
+  This POC now includes a schema-local PostgreSQL disposition journal keyed by
+  `(source_stream,source_consumer,source_sequence)`, immutable evidence bytes,
+  and a confirmed publication state. JetStream DLQ uses one hashed subject
+  per disposition with `DiscardNewPerSubject` and `MaxMsgsPerSubject=1`,
+  retaining just one record even after the `Nats-Msg-Id` dedup window.
+- A crash after a successful DLQ PubAck **but before journal confirmation**
+  leaves an ambiguous intent. If the broker record remains, the next worker
+  can verify and confirm it. If it was deleted/expired while the journal
+  remained unconfirmed, another publication could be attempted; an explicit
+  durable publish-attempt fence/manual-UNKNOWN recovery gate is still needed.
+- Privileged broker deletion/purge, DLQ stream recreation, journal/catalog
+  tampering, multi-worker races, retention expiry and network partition are
+  not independently accepted by these tests. The table is a disposable POC
+  schema, not a production ACP migration or least-privilege role contract.
+- A second real receiver-process SIGKILL test kills the worker **after
+  DLQ PubAck and PostgreSQL publication confirmation but before source ACK**.
+  A newly connected process receives real JetStream redelivery more than one
+  configured broker dedup window later and confirms exactly one DLQ record.
+  Separately, deleting a previously confirmed DLQ record causes fail-closed
+  `ErrDLQEvidenceMissing`, not a source ACK or silent republish.
 - The tests use a **single unauthenticated NATS container** and a privileged
   disposable PostgreSQL user. They do not demonstrate TLS/mTLS, SPIFFE,
   real tenant-scoped broker ACLs, role grants, external WORM evidence, JetStream
