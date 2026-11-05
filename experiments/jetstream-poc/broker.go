@@ -87,13 +87,13 @@ func (d *Delivery) DeadLetter(ctx context.Context, reason string) error {
 	}
 	bodyHash := sha256.Sum256(d.msg.Data())
 	evidence := DLQEvidence{
-		Version: 1,
-		Reason: reason,
-		SourceStream: d.meta.Stream,
+		Version:        1,
+		Reason:         reason,
+		SourceStream:   d.meta.Stream,
 		SourceConsumer: d.meta.Consumer,
-		SourceSubject: d.msg.Subject(),
+		SourceSubject:  d.msg.Subject(),
 		SourceSequence: d.meta.Sequence.Stream,
-		DeliveryHash: fmt.Sprintf("%x", bodyHash),
+		DeliveryHash:   fmt.Sprintf("%x", bodyHash),
 	}
 	data, err := json.Marshal(evidence)
 	if err != nil {
