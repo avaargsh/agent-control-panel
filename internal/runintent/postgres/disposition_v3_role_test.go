@@ -74,7 +74,7 @@ func TestMigrationV3IsolatedColumnScopedDatabaseWriter(t *testing.T) {
 		tenant_id,consumer_name,source_stream,source_consumer,source_sequence,
 		delivery_sha256,reason,dlq_stream,dlq_subject,evidence)
 		VALUES('tenant-a','billing-consumer','source','consumer',1,
-		'%s','EVENT_ID_CONFLICT','dlq','dlq.subject.1','{}'::bytea)`, 
+		'%s','EVENT_ID_CONFLICT','dlq','dlq.subject.1','{}'::bytea)`,
 		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 	if err := execAsRole(insert); err != nil {
 		t.Fatalf("limited writer cannot persist immutable event: %v", err)
@@ -87,7 +87,7 @@ func TestMigrationV3IsolatedColumnScopedDatabaseWriter(t *testing.T) {
 	}
 	for _, tc := range []struct {
 		name string
-		sql string
+		sql  string
 		code string
 	}{
 		{"insert forged state", "INSERT INTO dlq_dispositions(tenant_id,consumer_name,source_stream,source_consumer,source_sequence,delivery_sha256,reason,dlq_stream,dlq_subject,evidence,publish_started,published,published_at) VALUES('tenant-a','billing-consumer','source','consumer',2,'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','EVENT_ID_CONFLICT','dlq','dlq.subject.2','{}'::bytea,true,true,clock_timestamp())", "42501"},
