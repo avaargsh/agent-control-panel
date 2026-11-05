@@ -53,6 +53,9 @@ func pocRepository(t *testing.T) (*postgres.Repository, *pgxpool.Pool) {
 	if err := postgres.Migrate(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
+	if err := NewDispositionJournal(pool).Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
 	return postgres.New(pool), pool
 }
 
@@ -89,7 +92,9 @@ func pocNATS(t *testing.T) (jetstream.JetStream, jetstream.Consumer, jetstream.S
 		t.Fatal(err)
 	}
 	dlq, err := js.CreateStream(ctx, jetstream.StreamConfig{
-		Name: cfg.DLQStream, Subjects: []string{cfg.DLQSubject}, Storage: jetstream.FileStorage,
+		Name: cfg.DLQStream, Subjects: []string{cfg.DLQSubject + ".*"}, Storage: jetstream.FileStorage,
+		Discard: jetstream.DiscardNew, DiscardNewPerSubject: true,
+		MaxMsgsPerSubject: 1, Duplicates: time.Second,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -155,13 +160,14 @@ func (allowPOCProjection) Apply(context.Context, pgx.Tx, postgres.InboxEvent) er
 func TestJetStreamRealBrokerAckLossConflictAndDLQFailure(t *testing.T) {
 	repository, pool := pocRepository(t)
 	js, consumer, dlq, cfg := pocNATS(t)
+	journal := NewDispositionJournal(pool)
 	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
 	defer cancel()
 
 	original := pocEvent(8101, 1)
 	publishEvent(t, ctx, js, cfg.SourceSubject, original)
 	msg := nextMessage(t, consumer)
-	delivery, err := NewDelivery(js, msg, cfg)
+	delivery, err := NewDelivery(js, msg, cfg, journal)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +180,7 @@ func TestJetStreamRealBrokerAckLossConflictAndDLQFailure(t *testing.T) {
 	if err != nil || meta.NumDelivered < 2 {
 		t.Fatalf("JetStream did not redeliver unacked source: %+v err=%v", meta, err)
 	}
-	if err := HandleMessage(ctx, repository, js, redelivered, cfg); err != nil {
+	if err := HandleMessage(ctx, repository, js, redelivered, cfg, journal); err != nil {
 		t.Fatalf("recover committed delivery via real JetStream ACK: %v", err)
 	}
 	var count int
@@ -189,7 +195,7 @@ func TestJetStreamRealBrokerAckLossConflictAndDLQFailure(t *testing.T) {
 	changed := original
 	changed.Payload = json.RawMessage(`{"version":999}`)
 	publishEvent(t, ctx, js, cfg.SourceSubject, changed)
-	if err := HandleMessage(ctx, repository, js, nextMessage(t, consumer), cfg); err != nil {
+	if err := HandleMessage(ctx, repository, js, nextMessage(t, consumer), cfg, journal); err != nil {
 		t.Fatalf("durable conflict DLQ confirmation: %v", err)
 	}
 	info, err := dlq.Info(ctx)
@@ -221,10 +227,10 @@ func TestJetStreamRealBrokerAckLossConflictAndDLQFailure(t *testing.T) {
 	publishEvent(t, ctx, js, cfg.SourceSubject, changedAgain)
 	failedCfg := cfg
 	failedCfg.DLQStream = "ACP_WRONG_STREAM"
-	if err := HandleMessage(ctx, repository, js, nextMessage(t, consumer), failedCfg); err == nil {
+	if err := HandleMessage(ctx, repository, js, nextMessage(t, consumer), failedCfg, journal); err == nil {
 		t.Fatal("non-durable DLQ publish was wrongly treated as terminal ACK")
 	}
-	if err := HandleMessage(ctx, repository, js, nextMessage(t, consumer), cfg); err != nil {
+	if err := HandleMessage(ctx, repository, js, nextMessage(t, consumer), cfg, journal); err != nil {
 		t.Fatalf("recover DLQ after failed confirmed publication: %v", err)
 	}
 	info, err = dlq.Info(ctx)
