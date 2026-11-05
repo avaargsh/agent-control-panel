@@ -38,6 +38,7 @@ jobs:
           files="$(gofmt -l .)"
           if [ -n "$files" ]; then
             echo "$files"
+            gofmt -d .
             exit 1
           fi
       - name: Verify module graph and checksums
