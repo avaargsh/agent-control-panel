@@ -42,28 +42,58 @@ func (j *DispositionJournal) Migrate(ctx context.Context) error {
 	if _, err := ValidateDispositionJournal(j); err != nil {
 		return err
 	}
-	_, err := j.pool.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS poc_dlq_dispositions (
-			source_stream text NOT NULL CHECK (source_stream <> ''),
-			source_consumer text NOT NULL CHECK (source_consumer <> ''),
-			source_sequence bigint NOT NULL CHECK (source_sequence > 0),
-			delivery_hash text NOT NULL CHECK (delivery_hash ~ '^[a-f0-9]{64}$'),
-			reason text NOT NULL CHECK (reason <> ''),
-			dlq_stream text NOT NULL CHECK (dlq_stream <> ''),
-			dlq_subject text NOT NULL CHECK (dlq_subject <> ''),
-			evidence bytea NOT NULL,
-			publish_started boolean NOT NULL DEFAULT false,
-			published boolean NOT NULL DEFAULT false,
-			created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
-			published_at timestamptz,
-			PRIMARY KEY (source_stream, source_consumer, source_sequence),
-			CONSTRAINT poc_dlq_published_at_check CHECK (
-				(published AND published_at IS NOT NULL) OR
-				(NOT published AND published_at IS NULL)
-			)
-		)`)
+	tx, err := j.pool.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("create isolated POC disposition journal: %w", err)
+		return fmt.Errorf("begin journal schema verification: %w", err)
+	}
+	defer tx.Rollback(context.Background())
+
+	// POC schema-scoped lock serializes concurrent first migration. If a
+	// relation already exists, never repair or replace missing guards.
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended(current_schema() || '.poc_dlq_dispositions', 0))"); err != nil {
+		return fmt.Errorf("lock disposition journal schema: %w", err)
+	}
+	var exists bool
+	if err := tx.QueryRow(ctx,
+		"SELECT to_regclass('poc_dlq_dispositions') IS NOT NULL",
+	).Scan(&exists); err != nil {
+		return fmt.Errorf("inspect disposition journal schema: %w", err)
+	}
+	if !exists {
+		_, err = tx.Exec(ctx, `
+			CREATE TABLE poc_dlq_dispositions (
+				source_stream text NOT NULL CHECK (source_stream <> ''),
+				source_consumer text NOT NULL CHECK (source_consumer <> ''),
+				source_sequence bigint NOT NULL CHECK (source_sequence > 0),
+				delivery_hash text NOT NULL CHECK (delivery_hash ~ '^[a-f0-9]{64}$'),
+				reason text NOT NULL CHECK (reason <> ''),
+				dlq_stream text NOT NULL CHECK (dlq_stream <> ''),
+				dlq_subject text NOT NULL CHECK (dlq_subject <> ''),
+				evidence bytea NOT NULL,
+				publish_started boolean NOT NULL DEFAULT false,
+				published boolean NOT NULL DEFAULT false,
+				created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+				published_at timestamptz,
+				PRIMARY KEY (source_stream, source_consumer, source_sequence),
+				CONSTRAINT poc_dlq_published_at_check CHECK (
+					(published AND published_at IS NOT NULL) OR
+					(NOT published AND published_at IS NULL)
+				),
+				CONSTRAINT poc_dlq_requires_attempt CHECK (NOT published OR publish_started)
+			)
+		`)
+		if err != nil {
+			return fmt.Errorf("create POC disposition journal: %w", err)
+		}
+		if err := installDispositionGuards(ctx, tx); err != nil {
+			return err
+		}
+	}
+	if err := verifyDispositionGuards(ctx, tx); err != nil {
+		return fmt.Errorf("verify POC journal fail-closed guards: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit POC disposition journal migration: %w", err)
 	}
 	return nil
 }
