@@ -116,6 +116,13 @@ func TestMigrationV3RejectsCatalogGuardDrift(t *testing.T) {
 			"ALTER TABLE dlq_dispositions DROP CONSTRAINT dlq_requires_attempt",
 			"ALTER TABLE dlq_dispositions ADD CONSTRAINT dlq_requires_attempt CHECK (TRUE)",
 		}},
+		{"delivery SHA256 CHECK removed", []string{
+			"ALTER TABLE dlq_dispositions DROP CONSTRAINT dlq_dispositions_delivery_sha256_check",
+		}},
+		{"reason CHECK bypassed", []string{
+			"ALTER TABLE dlq_dispositions DROP CONSTRAINT dlq_dispositions_reason_check",
+			"ALTER TABLE dlq_dispositions ADD CONSTRAINT dlq_dispositions_reason_check CHECK (TRUE)",
+		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
