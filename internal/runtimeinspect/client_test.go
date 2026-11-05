@@ -101,7 +101,7 @@ func TestInspectRejectsMalformedLookupIdentifiers(t *testing.T) {
 		{TenantID: testTenant, RunIntentID: "not-a-uuid", RequestDigest: testDigest},
 		{TenantID: "tenant/\nother", RunIntentID: testIntent, RequestDigest: testDigest},
 		{TenantID: testTenant, RunIntentID: testIntent, RequestDigest: strings.Repeat("a", 64)},
-		{TenantID: testTenant, RunIntentID: testIntent, RequestDigest: "sha256:"+strings.Repeat("A", 64)},
+		{TenantID: testTenant, RunIntentID: testIntent, RequestDigest: "sha256:" + strings.Repeat("A", 64)},
 		{TenantID: "", RunIntentID: testIntent, RequestDigest: testDigest},
 	} {
 		if err := request.Validate(); !errors.Is(err, ErrInvalidRequest) {
