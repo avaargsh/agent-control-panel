@@ -25,6 +25,16 @@ func TestCanonicalDLQV3RejectsCriticalCatalogDrift(t *testing.T) {
 		{"journal converted to UNLOGGED", []string{
 			"ALTER TABLE inbox_dlq_dispositions SET UNLOGGED",
 		}},
+		{"tenant NOT NULL removed", []string{
+			"ALTER TABLE inbox_dlq_dispositions ALTER COLUMN tenant_id DROP NOT NULL",
+		}},
+		{"tenant validation CHECK bypassed", []string{
+			"ALTER TABLE inbox_dlq_dispositions DROP CONSTRAINT inbox_dlq_dispositions_tenant_id_check",
+			"ALTER TABLE inbox_dlq_dispositions ADD CONSTRAINT inbox_dlq_dispositions_tenant_id_check CHECK (TRUE)",
+		}},
+		{"evidence payload CHECK dropped", []string{
+			"ALTER TABLE inbox_dlq_dispositions DROP CONSTRAINT inbox_dlq_dispositions_evidence_check",
+		}},
 		{"event ID NOT NULL removed", []string{
 			"ALTER TABLE inbox_dlq_dispositions ALTER COLUMN event_id DROP NOT NULL",
 		}},
