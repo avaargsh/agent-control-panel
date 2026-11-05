@@ -47,14 +47,18 @@ jobs:
           done
           docker logs acp-jetstream
           exit 1
-      - name: Resolve isolated POC dependencies (capture hashes)
+      - name: Check POC Go formatting with actionable diff
+        run: |
+          if [ -n "$(gofmt -l experiments/jetstream-poc/*.go)" ]; then
+            gofmt -d experiments/jetstream-poc/*.go
+            exit 1
+          fi
+      - name: Verify pinned POC dependencies
         working-directory: experiments/jetstream-poc
         run: |
+          go mod verify
           go mod tidy
-          echo '--- GENERATED GO MOD ---'
-          cat go.mod
-          echo '--- GENERATED GO SUM ---'
-          cat go.sum
+          git diff --exit-code -- go.mod go.sum
       - name: Execute actual broker and PostgreSQL race tests
         working-directory: experiments/jetstream-poc
         run: go test -race -count=1 -v ./...
