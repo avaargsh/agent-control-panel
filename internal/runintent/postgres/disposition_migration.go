@@ -58,6 +58,23 @@ func verifyInboxDLQDispositionSchema(ctx context.Context, tx pgx.Tx, source []by
 	if !complete {
 		return ErrSchemaDrift
 	}
+	// A retained event_id is mandatory for immutable broker-origin evidence.
+	// Checking only the journal PK does not detect a dropped NOT NULL fence.
+	var eventBound bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM pg_attribute a
+			WHERE a.attrelid=to_regclass('inbox_dlq_dispositions')
+			  AND a.attname='event_id'
+			  AND a.atttypid='pg_catalog.uuid'::regtype
+			  AND a.attnotnull AND NOT a.attisdropped
+		)
+	`).Scan(&eventBound); err != nil {
+		return fmt.Errorf("verify immutable disposition event identity: %w", err)
+	}
+	if !eventBound {
+		return ErrSchemaDrift
+	}
 	var pk int
 	if err := tx.QueryRow(ctx, `
 		SELECT count(*) FROM pg_constraint c
@@ -133,16 +150,51 @@ func verifyInboxDLQDispositionSchema(ctx context.Context, tx pgx.Tx, source []by
 		return ErrSchemaDrift
 	}
 
+	// Public grants bypass the isolated worker role/tenant evidence fence.
+	// Verify both relation and trigger function, including implicit defaults.
+	var publicGrants bool
+	err = tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM pg_class c,
+			     LATERAL aclexplode(coalesce(c.relacl, acldefault('r', c.relowner))) e
+			WHERE c.oid=to_regclass('inbox_dlq_dispositions') AND e.grantee=0
+		) OR EXISTS (
+			SELECT 1 FROM pg_proc p,
+			     LATERAL aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) e
+			WHERE p.oid=to_regprocedure('reject_inbox_dlq_disposition_mutation()')
+			  AND e.grantee=0
+		)
+	`).Scan(&publicGrants)
+	if err != nil {
+		return fmt.Errorf("verify disposition PUBLIC grants: %w", err)
+	}
+	if publicGrants {
+		return ErrSchemaDrift
+	}
+
 	// Compile each pinned CHECK on a temporary copy using *this PostgreSQL*
 	// server and compare pg_get_expr. Constraint names alone are insufficient.
 	_, err = tx.Exec(ctx, "CREATE TEMP TABLE acp_expected_dlq_checks (LIKE inbox_dlq_dispositions) ON COMMIT DROP")
 	if err != nil {
 		return fmt.Errorf("create expected disposition predicate relation: %w", err)
 	}
-	for _, name := range []string{"inbox_dlq_published_at_check", "inbox_dlq_requires_attempt"} {
-		predicate, err := pinnedMigrationCheckPredicate(migrationSQL, name)
-		if err != nil {
-			return fmt.Errorf("%w: missing pinned v3 CHECK %s", ErrSchemaDrift, name)
+	checks := []struct {
+		name      string
+		predicate string
+	}{
+		{name: "inbox_dlq_published_at_check"},
+		{name: "inbox_dlq_requires_attempt"},
+		{name: "inbox_dlq_dispositions_delivery_sha256_check", predicate: "delivery_sha256 ~ '^[a-f0-9]{64}$'"},
+		{name: "inbox_dlq_dispositions_reason_check", predicate: "reason IN ('EVENT_ID_CONFLICT','INBOX_QUARANTINED')"},
+	}
+	for _, check := range checks {
+		name, predicate := check.name, check.predicate
+		if predicate == "" {
+			var err error
+			predicate, err = pinnedMigrationCheckPredicate(migrationSQL, name)
+			if err != nil {
+				return fmt.Errorf("%w: missing pinned v3 CHECK %s", ErrSchemaDrift, name)
+			}
 		}
 		if _, err := tx.Exec(ctx, fmt.Sprintf(
 			"ALTER TABLE pg_temp.acp_expected_dlq_checks ADD CONSTRAINT %s CHECK (%s)",
