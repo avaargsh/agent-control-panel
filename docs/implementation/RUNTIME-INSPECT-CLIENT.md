@@ -1,6 +1,11 @@
-# Read-only Runtime Inspect boundary — stacked Draft PR #14
+# Read-only Runtime Inspect boundary — Draft PR #14, based on Inbox PR #7
 
-Status: **implemented locally; no deployed service wiring, StartRun or cross-service production acceptance**.
+Status: **local code and mTLS simulation verified; no deployed Runtime wiring, StartRun or cross-service production acceptance**.
+
+Parent convergence: ACP PR #13 was merged on 2026-11-05 into the still-Draft
+Inbox PR #7 branch. PR #14 was retargeted from the merged #13 branch to
+`feat/inbox-consumer` (PR #7). This does not merge either PR into `main`.
+Revalidate PR #14 against the current PR #7 exact head whenever the parent changes.
 
 ## Compatibility baseline
 
@@ -59,5 +64,5 @@ write route or production listener in this PR.
   `agent-runtime`, principal/policy snapshot integrity, Runtime temporal
   crash recovery, broker ACK/DLQ, quorum final-absence lookup or staging
   golden-path acceptance.
-- Do not merge before stacked #13 / #7 and upstream contract G01–G05
+- Do not merge before parent #7 and upstream contract G01–G05
   acceptance. Evidence stays scoped to the exact PR head and CI run.
