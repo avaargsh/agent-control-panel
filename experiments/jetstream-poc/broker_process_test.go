@@ -100,6 +100,7 @@ func TestRealJetStreamSIGKILLChild(t *testing.T) {
 func TestRealJetStreamCrashAfterPGCommitBeforeBrokerACK(t *testing.T) {
 	repository, pool := pocRepository(t)
 	js, consumer, _, cfg := pocNATS(t)
+	journal := NewDispositionJournal(pool)
 	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
 	defer cancel()
 	event := pocEvent(8191, 1)
@@ -132,7 +133,7 @@ func TestRealJetStreamCrashAfterPGCommitBeforeBrokerACK(t *testing.T) {
 	if err != nil || meta.NumDelivered < 2 {
 		t.Fatalf("no actual broker redelivery after receiver SIGKILL: %+v err=%v", meta, err)
 	}
-	if err := HandleMessage(ctx, repository, js, msg, cfg); err != nil {
+	if err := HandleMessage(ctx, repository, js, msg, cfg, journal); err != nil {
 		t.Fatalf("restart did not safely double-ACK source: %v", err)
 	}
 	applied, err := repository.ApplyNextInboxEvent(ctx, cfg.ConsumerName, allowPOCProjection{})
