@@ -221,7 +221,7 @@ func TestConcurrentIdempotencyClaimsCreateOneRecordAndEvent(t *testing.T) {
 }
 
 func TestCompareAndSwapRequiresNewFenceForNewLease(t *testing.T) {
-	repository, _ := testRepository(t)
+	repository, pool := testRepository(t)
 	ctx := context.Background()
 	intent := testIntent(5)
 	created, inserted, err := repository.Create(ctx, intent, testEvent(intent, 1, 501, eventCreated))
@@ -237,6 +237,13 @@ func TestCompareAndSwapRequiresNewFenceForNewLease(t *testing.T) {
 		testEvent(dispatching, dispatching.Version, 502, "agent.run-intent.dispatching"))
 	if err != nil {
 		t.Fatalf("persist dispatch lease: %v", err)
+	}
+	// Simulate expiration in PostgreSQL, not merely by advancing the
+	// caller's local clock. CAS now checks the database clock at UPDATE.
+	if _, err := pool.Exec(ctx,
+		"UPDATE run_intents SET lease_expires_at = clock_timestamp() - interval '1 second' WHERE id = $1::uuid",
+		intent.ID); err != nil {
+		t.Fatal(err)
 	}
 	unknown, err := dispatching.ExpireLease(dispatching.Version, now.Add(2*time.Second))
 	if err != nil {
