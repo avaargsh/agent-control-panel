@@ -81,6 +81,61 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 		return ErrSchemaDrift
 	}
 
+	// Do not trust a durable ledger whose uniqueness or checksum predicate
+	// has been dropped or replaced with a same-name weaker constraint.
+	var ledgerKeysBound bool
+	if err := tx.QueryRow(ctx, `
+		WITH expected(name, kind, cols) AS (
+			VALUES
+			  ('schema_migrations_pkey', 'p', ARRAY['version']::text[]),
+			  ('schema_migrations_name_key', 'u', ARRAY['name']::text[])
+		)
+		SELECT count(*)=(SELECT count(*) FROM expected)
+		FROM expected e
+		JOIN pg_constraint c ON c.conrelid=to_regclass('schema_migrations')
+		  AND c.conname=e.name AND c.contype::text=e.kind AND c.convalidated
+		WHERE (SELECT array_agg(a.attname::text ORDER BY k.ordinality)
+		       FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ordinality)
+		       JOIN pg_attribute a ON a.attrelid=c.conrelid AND a.attnum=k.attnum)=e.cols
+	`).Scan(&ledgerKeysBound); err != nil {
+		return fmt.Errorf("verify migration ledger key constraints: %w", err)
+	}
+	if !ledgerKeysBound {
+		return ErrSchemaDrift
+	}
+
+	// Compile the reviewed CHECK predicates on this exact PostgreSQL server;
+	// compare normalized pg_get_expr output, not merely constraint names.
+	_, err = tx.Exec(ctx, `
+		CREATE TEMP TABLE acp_expected_migration_ledger_checks (
+			version BIGINT, checksum TEXT
+		) ON COMMIT DROP;
+		ALTER TABLE pg_temp.acp_expected_migration_ledger_checks
+		  ADD CONSTRAINT schema_migrations_version_check CHECK (version > 0);
+		ALTER TABLE pg_temp.acp_expected_migration_ledger_checks
+		  ADD CONSTRAINT schema_migrations_checksum_check
+		  CHECK (checksum ~ '^[0-9a-f]{64}$');
+	`, pgx.QueryExecModeSimpleProtocol)
+	if err != nil {
+		return fmt.Errorf("compile expected migration ledger CHECKs: %w", err)
+	}
+	var ledgerChecksBound bool
+	if err := tx.QueryRow(ctx, `
+		SELECT count(*)=2 FROM pg_constraint actual
+		JOIN pg_constraint expected ON expected.conname=actual.conname
+		WHERE actual.conrelid=to_regclass('schema_migrations')
+		  AND expected.conrelid=to_regclass('pg_temp.acp_expected_migration_ledger_checks')
+		  AND actual.conname IN ('schema_migrations_version_check','schema_migrations_checksum_check')
+		  AND actual.contype='c' AND expected.contype='c' AND actual.convalidated
+		  AND pg_get_expr(actual.conbin,actual.conrelid,false)=
+		      pg_get_expr(expected.conbin,expected.conrelid,false)
+	`).Scan(&ledgerChecksBound); err != nil {
+		return fmt.Errorf("verify migration ledger CHECK predicates: %w", err)
+	}
+	if !ledgerChecksBound {
+		return ErrSchemaDrift
+	}
+
 	source, err := migrations.FS.ReadFile(initialMigrationName)
 	if err != nil {
 		return fmt.Errorf("read embedded RunIntent migration: %w", err)
