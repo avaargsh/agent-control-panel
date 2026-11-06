@@ -81,16 +81,23 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 		return ErrSchemaDrift
 	}
 
-	// Migration history belongs exclusively to the schema owner: other
-	// roles, even when granted individually instead of through PUBLIC, must
-	// not be able to read or rewrite the authoritative checksum ledger.
-	// Verify explicit and implicit ACL entries before trusting its rows.
+	// Migration history belongs exclusively to its table owner. Table ACLs
+	// (pg_class.relacl) and column ACLs (pg_attribute.attacl) are independent:
+	// either can give PUBLIC or a named non-owner access to the checksum.
+	// Inspect both before trusting migration history.
 	var nonOwnerLedgerGrants bool
 	if err := tx.QueryRow(ctx, `
 		SELECT EXISTS (
 			SELECT 1 FROM pg_class c,
 			     LATERAL aclexplode(coalesce(c.relacl, acldefault('r', c.relowner))) acl
 			WHERE c.oid=to_regclass('schema_migrations') AND acl.grantee<>c.relowner
+		) OR EXISTS (
+			SELECT 1 FROM pg_class c
+			JOIN pg_attribute a ON a.attrelid=c.oid
+			CROSS JOIN LATERAL aclexplode(a.attacl) acl
+			WHERE c.oid=to_regclass('schema_migrations')
+			  AND a.attnum>0 AND NOT a.attisdropped
+			  AND acl.grantee<>c.relowner
 		)
 	`).Scan(&nonOwnerLedgerGrants); err != nil {
 		return fmt.Errorf("verify migration ledger non-owner grants: %w", err)
