@@ -109,6 +109,9 @@ func TestMigrationLedgerRejectsColumnLevelGrants(t *testing.T) {
 		{"named role UPDATE checksum", "UPDATE (checksum)", false},
 		{"PUBLIC SELECT checksum", "SELECT (checksum)", true},
 		{"PUBLIC UPDATE checksum", "UPDATE (checksum)", true},
+		{"named role SELECT version", "SELECT (version)", false},
+		{"named role UPDATE applied_at", "UPDATE (applied_at)", false},
+		{"PUBLIC REFERENCES version", "REFERENCES (version)", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -137,5 +140,26 @@ func TestMigrationLedgerRejectsColumnLevelGrants(t *testing.T) {
 				t.Fatalf("column-level non-owner grant accepted (%s): %v", tc.name, err)
 			}
 		})
+	}
+}
+
+// A table owner may explicitly grant itself a column permission. This must
+// not be confused with a PUBLIC or another role's grant in attacl.
+func TestMigrationLedgerAllowsOwnerColumnGrants(t *testing.T) {
+	_, pool := testRepository(t)
+	ctx := context.Background()
+	var isOwner bool
+	if err := pool.QueryRow(ctx, `SELECT c.relowner = (SELECT oid FROM pg_roles WHERE rolname=current_user)
+		FROM pg_class c WHERE c.oid=to_regclass('schema_migrations')`).Scan(&isOwner); err != nil {
+		t.Fatalf("inspect ledger owner: %v", err)
+	}
+	if !isOwner {
+		t.Fatal("test connection must be ledger owner")
+	}
+	if _, err := pool.Exec(ctx, "GRANT SELECT (checksum), UPDATE (name) ON schema_migrations TO CURRENT_USER"); err != nil {
+		t.Fatalf("grant owner-only column privileges: %v", err)
+	}
+	if err := Migrate(ctx, pool); err != nil {
+		t.Fatalf("owner-only column grants rejected: %v", err)
 	}
 }
