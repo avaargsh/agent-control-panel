@@ -3,7 +3,9 @@ package postgres
 import (
 	"context"
 	"errors"
+	"strconv"
 	"testing"
+	"time"
 )
 
 // The migration ledger must survive a PostgreSQL crash. A checksum alone
@@ -61,6 +63,34 @@ func TestMigrationLedgerRejectsPublicGrants(t *testing.T) {
 			}
 			if err := Migrate(ctx, pool); !errors.Is(err, ErrSchemaDrift) {
 				t.Fatalf("PUBLIC %s on checksum ledger accepted: %v", privilege, err)
+			}
+		})
+	}
+}
+
+func TestMigrationLedgerRejectsExplicitNonOwnerRoleGrants(t *testing.T) {
+	for _, privilege := range []string{"SELECT", "UPDATE"} {
+		t.Run(privilege, func(t *testing.T) {
+			_, pool := testRepository(t)
+			ctx := context.Background()
+			role := "acp_ledger_probe_" + strconv.FormatInt(time.Now().UnixNano(), 10)
+			if _, err := pool.Exec(ctx, "CREATE ROLE "+role+" NOLOGIN"); err != nil {
+				t.Fatalf("create non-owner role: %v", err)
+			}
+			t.Cleanup(func() {
+				if _, err := pool.Exec(context.Background(), "DROP OWNED BY "+role); err != nil {
+					t.Errorf("drop non-owner grants: %v", err)
+					return
+				}
+				if _, err := pool.Exec(context.Background(), "DROP ROLE "+role); err != nil {
+					t.Errorf("drop non-owner role: %v", err)
+				}
+			})
+			if _, err := pool.Exec(ctx, "GRANT "+privilege+" ON TABLE schema_migrations TO "+role); err != nil {
+				t.Fatalf("inject non-owner ledger privilege: %v", err)
+			}
+			if err := Migrate(ctx, pool); !errors.Is(err, ErrSchemaDrift) {
+				t.Fatalf("non-owner %s on migration ledger was accepted: %v", privilege, err)
 			}
 		})
 	}
