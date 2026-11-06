@@ -18,6 +18,21 @@ const (
 // single-transaction checksum ledger as v1/v2. A preexisting unrecorded table
 // is never silently adopted, and failed verification rolls back the upgrade.
 func ensureInboxDLQDispositionMigration(ctx context.Context, tx pgx.Tx, applied bool, source []byte, checksum string) error {
+	// Competing Draft v3 implementations used the same migration version but
+	// different journal relations. A legacy unversioned relation can survive
+	// an out-of-band or interrupted rollout; never create a second authority
+	// beside it, even if no v3 checksum was recorded.
+	var competingJournal bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (
+		SELECT 1 FROM pg_class c
+		WHERE c.relnamespace=current_schema()::regnamespace
+		  AND c.relname='dlq_dispositions'
+	)`).Scan(&competingJournal); err != nil {
+		return fmt.Errorf("inspect competing v3 disposition relation: %w", err)
+	}
+	if competingJournal {
+		return ErrSchemaDrift
+	}
 	if !applied {
 		var exists bool
 		if err := tx.QueryRow(ctx, "SELECT to_regclass('inbox_dlq_dispositions') IS NOT NULL").Scan(&exists); err != nil {
