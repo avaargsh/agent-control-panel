@@ -96,7 +96,6 @@ func TestMigrationLedgerRejectsExplicitNonOwnerRoleGrants(t *testing.T) {
 	}
 }
 
- 
 // Column-level privileges are stored in pg_attribute.attacl, not the table's
 // pg_class.relacl. A non-owner must not read or rewrite migration checksums
 // through a column grant even when table-level ACLs are owner-only.
