@@ -81,20 +81,21 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 		return ErrSchemaDrift
 	}
 
-	// Migration history is authoritative only if untrusted roles cannot
-	// read or change it via PUBLIC grants. Verify the live ACL, including
-	// PostgreSQL's implicit default grants, before trusting a ledger row.
-	var publicLedgerGrants bool
+	// Migration history belongs exclusively to the schema owner: other
+	// roles, even when granted individually instead of through PUBLIC, must
+	// not be able to read or rewrite the authoritative checksum ledger.
+	// Verify explicit and implicit ACL entries before trusting its rows.
+	var nonOwnerLedgerGrants bool
 	if err := tx.QueryRow(ctx, `
 		SELECT EXISTS (
 			SELECT 1 FROM pg_class c,
 			     LATERAL aclexplode(coalesce(c.relacl, acldefault('r', c.relowner))) acl
-			WHERE c.oid=to_regclass('schema_migrations') AND acl.grantee=0
+			WHERE c.oid=to_regclass('schema_migrations') AND acl.grantee<>c.relowner
 		)
-	`).Scan(&publicLedgerGrants); err != nil {
-		return fmt.Errorf("verify migration ledger PUBLIC grants: %w", err)
+	`).Scan(&nonOwnerLedgerGrants); err != nil {
+		return fmt.Errorf("verify migration ledger non-owner grants: %w", err)
 	}
-	if publicLedgerGrants {
+	if nonOwnerLedgerGrants {
 		return ErrSchemaDrift
 	}
 
