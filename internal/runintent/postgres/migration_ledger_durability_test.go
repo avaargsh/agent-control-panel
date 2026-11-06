@@ -18,3 +18,36 @@ func TestMigrationLedgerRejectsUnloggedStorage(t *testing.T) {
 		t.Fatalf("unlogged schema_migrations was accepted: %v", err)
 	}
 }
+
+
+func TestMigrationLedgerRejectsConstraintDrift(t *testing.T) {
+	cases := []struct {
+		name string
+		statements []string
+	}{
+		{"missing version PK", []string{
+			"ALTER TABLE schema_migrations DROP CONSTRAINT schema_migrations_pkey",
+		}},
+		{"missing migration name uniqueness", []string{
+			"ALTER TABLE schema_migrations DROP CONSTRAINT schema_migrations_name_key",
+		}},
+		{"same name weakened checksum CHECK", []string{
+			"ALTER TABLE schema_migrations DROP CONSTRAINT schema_migrations_checksum_check",
+			"ALTER TABLE schema_migrations ADD CONSTRAINT schema_migrations_checksum_check CHECK (TRUE)",
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, pool := testRepository(t)
+			ctx := context.Background()
+			for _, statement := range tc.statements {
+				if _, err := pool.Exec(ctx, statement); err != nil {
+					t.Fatalf("inject ledger drift %s: %v", tc.name, err)
+				}
+			}
+			if err := Migrate(ctx, pool); !errors.Is(err, ErrSchemaDrift) {
+				t.Fatalf("migration ledger constraint drift accepted (%s): %v", tc.name, err)
+			}
+		})
+	}
+}
