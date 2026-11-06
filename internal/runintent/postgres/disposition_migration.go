@@ -99,6 +99,34 @@ func verifyInboxDLQDispositionSchema(ctx context.Context, tx pgx.Tx, source []by
 	if !columnsBound {
 		return ErrSchemaDrift
 	}
+	// Default-value drift can forge a started publication attempt without
+	// recording an actual attempt, or fabricate a fixed evidence timestamp.
+	// Keep the nullable publication timestamp type and absence of a default.
+	var stateDefaultsBound bool
+	if err := tx.QueryRow(ctx, `
+		WITH expected(name, typ, required, default_sql) AS (
+			VALUES
+			  ('publish_started', 'pg_catalog.bool'::regtype, true, 'false'::text),
+			  ('published', 'pg_catalog.bool'::regtype, true, 'false'::text),
+			  ('created_at', 'pg_catalog.timestamptz'::regtype, true, 'clock_timestamp()'::text),
+			  ('published_at', 'pg_catalog.timestamptz'::regtype, false, NULL::text)
+		)
+		SELECT count(*)=(SELECT count(*) FROM expected)
+		FROM expected e
+		JOIN pg_attribute a ON a.attrelid=to_regclass('inbox_dlq_dispositions')
+		  AND a.attname=e.name AND a.atttypid=e.typ
+		  AND a.attnotnull=e.required AND NOT a.attisdropped
+		LEFT JOIN pg_attrdef d ON d.adrelid=a.attrelid AND d.adnum=a.attnum
+		WHERE (e.default_sql IS NULL AND d.oid IS NULL)
+		   OR (e.default_sql IS NOT NULL
+		       AND pg_get_expr(d.adbin,d.adrelid,false)=e.default_sql)
+	`).Scan(&stateDefaultsBound); err != nil {
+		return fmt.Errorf("verify disposition publication state defaults: %w", err)
+	}
+	if !stateDefaultsBound {
+		return ErrSchemaDrift
+	}
+
 	var pk int
 	if err := tx.QueryRow(ctx, `
 		SELECT count(*) FROM pg_constraint c
