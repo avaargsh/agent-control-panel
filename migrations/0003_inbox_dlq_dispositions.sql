@@ -63,4 +63,10 @@ FOR EACH ROW EXECUTE FUNCTION reject_inbox_dlq_disposition_mutation();
 CREATE TRIGGER inbox_dlq_no_truncate
 BEFORE TRUNCATE ON inbox_dlq_dispositions
 FOR EACH STATEMENT EXECUTE FUNCTION reject_inbox_dlq_disposition_mutation();
+
+-- v3 is still Draft. A production installation that recorded an earlier
+-- v3 checksum must receive an independently reviewed v4 forward migration;
+-- it must never be silently rewritten or adopted.
+REVOKE ALL ON TABLE inbox_dlq_dispositions FROM PUBLIC;
+REVOKE ALL ON FUNCTION reject_inbox_dlq_disposition_mutation() FROM PUBLIC;
 COMMIT;

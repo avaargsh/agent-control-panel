@@ -18,6 +18,21 @@ const (
 // single-transaction checksum ledger as v1/v2. A preexisting unrecorded table
 // is never silently adopted, and failed verification rolls back the upgrade.
 func ensureInboxDLQDispositionMigration(ctx context.Context, tx pgx.Tx, applied bool, source []byte, checksum string) error {
+	// Competing Draft v3 implementations used the same migration version but
+	// different journal relations. A legacy unversioned relation can survive
+	// an out-of-band or interrupted rollout; never create a second authority
+	// beside it, even if no v3 checksum was recorded.
+	var competingJournal bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (
+		SELECT 1 FROM pg_class c
+		WHERE c.relnamespace=current_schema()::regnamespace
+		  AND c.relname='dlq_dispositions'
+	)`).Scan(&competingJournal); err != nil {
+		return fmt.Errorf("inspect competing v3 disposition relation: %w", err)
+	}
+	if competingJournal {
+		return ErrSchemaDrift
+	}
 	if !applied {
 		var exists bool
 		if err := tx.QueryRow(ctx, "SELECT to_regclass('inbox_dlq_dispositions') IS NOT NULL").Scan(&exists); err != nil {
@@ -50,14 +65,83 @@ func ensureInboxDLQDispositionMigration(ctx context.Context, tx pgx.Tx, applied 
 // trigger, narrowed UPDATE OF trigger or changed guard-function body must
 // reject startup. This does NOT protect against privileged drift after startup.
 func verifyInboxDLQDispositionSchema(ctx context.Context, tx pgx.Tx, source []byte) error {
+	// Evidence must live in the owned schema as an ordinary durable table.
+	// An UNLOGGED relation cannot satisfy post-crash DLQ recovery.
 	var complete bool
-	if err := tx.QueryRow(ctx,
-		"SELECT to_regclass('inbox_dlq_dispositions') IS NOT NULL").Scan(&complete); err != nil {
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM pg_class r
+			WHERE r.oid=to_regclass('inbox_dlq_dispositions')
+			  AND r.relkind='r' AND r.relpersistence='p'
+			  AND r.relnamespace=current_schema()::regnamespace
+		)
+	`).Scan(&complete); err != nil {
 		return fmt.Errorf("verify v3 disposition relation: %w", err)
 	}
 	if !complete {
 		return ErrSchemaDrift
 	}
+	// Every immutable source, tenant and evidence attribute must retain its
+	// reviewed type and NOT NULL fence. A checksum-only check misses post-
+	// migration DROP NOT NULL or ALTER COLUMN TYPE tampering.
+	var columnsBound bool
+	if err := tx.QueryRow(ctx, `
+		WITH expected(name, typ) AS (
+			VALUES
+			  ('tenant_id', 'pg_catalog.text'::regtype),
+			  ('consumer_name', 'pg_catalog.text'::regtype),
+			  ('source_stream', 'pg_catalog.text'::regtype),
+			  ('source_consumer', 'pg_catalog.text'::regtype),
+			  ('source_sequence', 'pg_catalog.int8'::regtype),
+			  ('event_id', 'pg_catalog.uuid'::regtype),
+			  ('delivery_sha256', 'pg_catalog.text'::regtype),
+			  ('reason', 'pg_catalog.text'::regtype),
+			  ('dlq_stream', 'pg_catalog.text'::regtype),
+			  ('dlq_subject', 'pg_catalog.text'::regtype),
+			  ('evidence', 'pg_catalog.bytea'::regtype),
+			  ('publish_started', 'pg_catalog.bool'::regtype),
+			  ('published', 'pg_catalog.bool'::regtype),
+			  ('created_at', 'pg_catalog.timestamptz'::regtype)
+		)
+		SELECT count(*)=(SELECT count(*) FROM expected)
+		FROM expected e
+		JOIN pg_attribute a ON a.attrelid=to_regclass('inbox_dlq_dispositions')
+		  AND a.attname=e.name AND a.atttypid=e.typ
+		  AND a.attnotnull AND NOT a.attisdropped
+	`).Scan(&columnsBound); err != nil {
+		return fmt.Errorf("verify immutable disposition column bindings: %w", err)
+	}
+	if !columnsBound {
+		return ErrSchemaDrift
+	}
+	// Default-value drift can forge a started publication attempt without
+	// recording an actual attempt, or fabricate a fixed evidence timestamp.
+	// Keep the nullable publication timestamp type and absence of a default.
+	var stateDefaultsBound bool
+	if err := tx.QueryRow(ctx, `
+		WITH expected(name, typ, required, default_sql) AS (
+			VALUES
+			  ('publish_started', 'pg_catalog.bool'::regtype, true, 'false'::text),
+			  ('published', 'pg_catalog.bool'::regtype, true, 'false'::text),
+			  ('created_at', 'pg_catalog.timestamptz'::regtype, true, 'clock_timestamp()'::text),
+			  ('published_at', 'pg_catalog.timestamptz'::regtype, false, NULL::text)
+		)
+		SELECT count(*)=(SELECT count(*) FROM expected)
+		FROM expected e
+		JOIN pg_attribute a ON a.attrelid=to_regclass('inbox_dlq_dispositions')
+		  AND a.attname=e.name AND a.atttypid=e.typ
+		  AND a.attnotnull=e.required AND NOT a.attisdropped
+		LEFT JOIN pg_attrdef d ON d.adrelid=a.attrelid AND d.adnum=a.attnum
+		WHERE (e.default_sql IS NULL AND d.oid IS NULL)
+		   OR (e.default_sql IS NOT NULL
+		       AND pg_get_expr(d.adbin,d.adrelid,false)=e.default_sql)
+	`).Scan(&stateDefaultsBound); err != nil {
+		return fmt.Errorf("verify disposition publication state defaults: %w", err)
+	}
+	if !stateDefaultsBound {
+		return ErrSchemaDrift
+	}
+
 	var pk int
 	if err := tx.QueryRow(ctx, `
 		SELECT count(*) FROM pg_constraint c
@@ -133,16 +217,59 @@ func verifyInboxDLQDispositionSchema(ctx context.Context, tx pgx.Tx, source []by
 		return ErrSchemaDrift
 	}
 
+	// Public grants bypass the isolated worker role/tenant evidence fence.
+	// Verify both relation and trigger function, including implicit defaults.
+	var publicGrants bool
+	err = tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM pg_class c,
+			     LATERAL aclexplode(coalesce(c.relacl, acldefault('r', c.relowner))) e
+			WHERE c.oid=to_regclass('inbox_dlq_dispositions') AND e.grantee=0
+		) OR EXISTS (
+			SELECT 1 FROM pg_proc p,
+			     LATERAL aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) e
+			WHERE p.oid=to_regprocedure('reject_inbox_dlq_disposition_mutation()')
+			  AND e.grantee=0
+		)
+	`).Scan(&publicGrants)
+	if err != nil {
+		return fmt.Errorf("verify disposition PUBLIC grants: %w", err)
+	}
+	if publicGrants {
+		return ErrSchemaDrift
+	}
+
 	// Compile each pinned CHECK on a temporary copy using *this PostgreSQL*
 	// server and compare pg_get_expr. Constraint names alone are insufficient.
 	_, err = tx.Exec(ctx, "CREATE TEMP TABLE acp_expected_dlq_checks (LIKE inbox_dlq_dispositions) ON COMMIT DROP")
 	if err != nil {
 		return fmt.Errorf("create expected disposition predicate relation: %w", err)
 	}
-	for _, name := range []string{"inbox_dlq_published_at_check", "inbox_dlq_requires_attempt"} {
-		predicate, err := pinnedMigrationCheckPredicate(migrationSQL, name)
-		if err != nil {
-			return fmt.Errorf("%w: missing pinned v3 CHECK %s", ErrSchemaDrift, name)
+	checks := []struct {
+		name      string
+		predicate string
+	}{
+		{name: "inbox_dlq_published_at_check"},
+		{name: "inbox_dlq_requires_attempt"},
+		{name: "inbox_dlq_dispositions_tenant_id_check", predicate: "tenant_id <> '' AND tenant_id = btrim(tenant_id)"},
+		{name: "inbox_dlq_dispositions_consumer_name_check", predicate: "consumer_name <> '' AND consumer_name = btrim(consumer_name)"},
+		{name: "inbox_dlq_dispositions_source_stream_check", predicate: "source_stream <> ''"},
+		{name: "inbox_dlq_dispositions_source_consumer_check", predicate: "source_consumer <> ''"},
+		{name: "inbox_dlq_dispositions_source_sequence_check", predicate: "source_sequence > 0"},
+		{name: "inbox_dlq_dispositions_delivery_sha256_check", predicate: "delivery_sha256 ~ '^[a-f0-9]{64}$'"},
+		{name: "inbox_dlq_dispositions_reason_check", predicate: "reason IN ('EVENT_ID_CONFLICT','INBOX_QUARANTINED')"},
+		{name: "inbox_dlq_dispositions_dlq_stream_check", predicate: "dlq_stream <> ''"},
+		{name: "inbox_dlq_dispositions_dlq_subject_check", predicate: "dlq_subject <> ''"},
+		{name: "inbox_dlq_dispositions_evidence_check", predicate: "octet_length(evidence) > 0"},
+	}
+	for _, check := range checks {
+		name, predicate := check.name, check.predicate
+		if predicate == "" {
+			var err error
+			predicate, err = pinnedMigrationCheckPredicate(migrationSQL, name)
+			if err != nil {
+				return fmt.Errorf("%w: missing pinned v3 CHECK %s", ErrSchemaDrift, name)
+			}
 		}
 		if _, err := tx.Exec(ctx, fmt.Sprintf(
 			"ALTER TABLE pg_temp.acp_expected_dlq_checks ADD CONSTRAINT %s CHECK (%s)",
