@@ -19,10 +19,9 @@ func TestMigrationLedgerRejectsUnloggedStorage(t *testing.T) {
 	}
 }
 
-
 func TestMigrationLedgerRejectsConstraintDrift(t *testing.T) {
 	cases := []struct {
-		name string
+		name       string
 		statements []string
 	}{
 		{"missing version PK", []string{
