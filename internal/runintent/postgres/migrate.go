@@ -65,6 +65,22 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 		return fmt.Errorf("create schema migration ledger: %w", err)
 	}
 
+	// The checksum ledger is itself durable evidence. If a privileged actor
+	// replaces it with an UNLOGGED or shadow relation, a crash can erase the
+	// history and make an otherwise recorded migration appear unversioned.
+	var ledgerDurable bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (
+		SELECT 1 FROM pg_class c
+		WHERE c.oid=to_regclass('schema_migrations')
+		  AND c.relkind='r' AND c.relpersistence='p'
+		  AND c.relnamespace=current_schema()::regnamespace
+	)`).Scan(&ledgerDurable); err != nil {
+		return fmt.Errorf("verify migration ledger storage: %w", err)
+	}
+	if !ledgerDurable {
+		return ErrSchemaDrift
+	}
+
 	source, err := migrations.FS.ReadFile(initialMigrationName)
 	if err != nil {
 		return fmt.Errorf("read embedded RunIntent migration: %w", err)
