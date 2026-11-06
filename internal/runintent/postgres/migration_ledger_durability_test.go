@@ -50,3 +50,18 @@ func TestMigrationLedgerRejectsConstraintDrift(t *testing.T) {
 		})
 	}
 }
+
+func TestMigrationLedgerRejectsPublicGrants(t *testing.T) {
+	for _, privilege := range []string{"SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE"} {
+		t.Run(privilege, func(t *testing.T) {
+			_, pool := testRepository(t)
+			ctx := context.Background()
+			if _, err := pool.Exec(ctx, "GRANT "+privilege+" ON TABLE schema_migrations TO PUBLIC"); err != nil {
+				t.Fatalf("inject PUBLIC %s: %v", privilege, err)
+			}
+			if err := Migrate(ctx, pool); !errors.Is(err, ErrSchemaDrift) {
+				t.Fatalf("PUBLIC %s on checksum ledger accepted: %v", privilege, err)
+			}
+		})
+	}
+}
