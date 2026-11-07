@@ -202,16 +202,60 @@ func (r *Repository) CompareAndSwap(ctx context.Context, tenantID, id string, ex
 		return runintent.Intent{}, ErrInvalidEvent
 	}
 
+	// The caller's clock is not authoritative for the lease. Check the
+	// database clock under the row lock so a stale receipt cannot bypass
+	// ExpireLease by supplying an old local timestamp.
+	var dbNow time.Time
+	if err := tx.QueryRow(ctx, "SELECT clock_timestamp()").Scan(&dbNow); err != nil {
+		return runintent.Intent{}, fmt.Errorf("read RunIntent lease clock: %w", err)
+	}
+	if acquiringLease {
+		if !dbNow.Before(next.LeaseExpiresAt) {
+			return runintent.Intent{}, runintent.ErrLeaseExpired
+		}
+	} else {
+		active := dbNow.Before(current.LeaseExpiresAt)
+		if next.Status == runintent.Unknown {
+			// An ambiguous receipt releases an active lease without changing
+			// its fence; an expired lease must be reclaimed with fence + 1.
+			if active && next.FenceToken != current.FenceToken {
+				return runintent.Intent{}, runintent.ErrLeaseActive
+			}
+			if !active && next.FenceToken != current.FenceToken+1 {
+				return runintent.Intent{}, runintent.ErrLeaseExpired
+			}
+		} else {
+			// A Runtime receipt or reconciliation result never mints a fence.
+			if next.FenceToken != current.FenceToken {
+				return runintent.Intent{}, ErrFenceRegression
+			}
+			if !active {
+				return runintent.Intent{}, runintent.ErrLeaseExpired
+			}
+		}
+	}
+
 	updated, err := scanIntent(tx.QueryRow(ctx,
 		"UPDATE run_intents SET status = $3, version = $4, fence_token = $5, lease_owner = $6, "+
 			"lease_expires_at = $7, runtime_run_id = $8, workflow_id = $9, rejection_code = $10, "+
 			"manual_review_code = $11, updated_at = now() "+
-			"WHERE id = $1::uuid AND tenant_id = $2 AND version = $12 RETURNING "+selectIntentColumns,
+			// Repeat the check at UPDATE time: a lease may expire even between
+			// the clock read and this statement. No Outbox event is emitted
+			// when the guarded UPDATE finds no eligible row.
+			"WHERE id = $1::uuid AND tenant_id = $2 AND version = $12 "+
+			"AND ((status IN ('PENDING','UNKNOWN') AND $7::timestamptz > clock_timestamp()) "+
+			"OR (status IN ('DISPATCHING','RECONCILING') AND ("+
+			"(lease_expires_at > clock_timestamp() AND fence_token = $5) "+
+			"OR (lease_expires_at <= clock_timestamp() AND $3 = 'UNKNOWN' AND fence_token + 1 = $5)))) "+
+			"RETURNING "+selectIntentColumns,
 		id, tenantID, string(next.Status), int64(next.Version), int64(next.FenceToken),
 		nullableString(next.LeaseOwner), nullableTime(next.LeaseExpiresAt),
 		nullableString(next.RunID), nullableString(next.WorkflowID),
 		nullableString(next.RejectionCode), nullableString(next.ManualReviewCode), int64(expectedVersion),
 	))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return runintent.Intent{}, runintent.ErrLeaseExpired
+	}
 	if err != nil {
 		return runintent.Intent{}, fmt.Errorf("update RunIntent: %w", err)
 	}
