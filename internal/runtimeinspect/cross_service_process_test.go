@@ -157,7 +157,7 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 			"version": "acp-principal/v1", "project_id": intent.ProjectID,
 			"subject_id": "subject-1", "actor_id": "actor-1",
 			"policy_revision": "policy-revision-1",
-			"config_digest": "sha256:" + strings.Repeat("b", 64),
+			"config_digest":   "sha256:" + strings.Repeat("b", 64),
 		},
 	})
 	if err != nil {
