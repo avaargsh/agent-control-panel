@@ -71,6 +71,8 @@ Direct Run capacity: Runtime → Compute CP. Sandbox capacity: Runtime → Sandb
 
 See [PR integration plan](./PR-STACK-AND-GATES.md), [ADR-0001](./ADR-0001-PROTOCOL-AUTHORITY.md) and machine-readable [contract registry](../../governance/contract-registry.v0.3.json).
 
+For behavior reuse from the former `agent-control-plane` and the disposable `temp-runner` acceptance harness, see [legacy reuse and two-stage Golden Path](./LEGACY-REUSE-AND-GOLDEN-PATH.md). This is a migration/acceptance proposal only; it does not claim the legacy lock is accessible, or that G01–G05 is passing.
+
 
 ## Guard wire/internal contract split (P0 G03)
 
