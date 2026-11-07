@@ -98,6 +98,7 @@ func NewClient(originRaw, expectedRuntimeSPIFFE string, roots *x509.CertPool, cl
 	}
 	spiffe, err := url.Parse(expectedRuntimeSPIFFE)
 	if err != nil || spiffe.Scheme != "spiffe" || spiffe.Host == "" ||
+		spiffe.Port() != "" || // SPIFFE trust domains are DNS names, not host:port origins.
 		spiffe.Path == "" || spiffe.Path == "/" || spiffe.User != nil ||
 		spiffe.Opaque != "" || spiffe.RawPath != "" ||
 		spiffe.RawQuery != "" || spiffe.ForceQuery || spiffe.Fragment != "" ||
