@@ -148,9 +148,23 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 	proc := start()
 	_ = wait(AbsentUncertain)
 
-	payload := []byte("{\"tenant_id\":\"" + intent.TenantID + "\",\"run_intent_id\":\"" + intent.ID + "\",\"request_digest\":\"" + intent.RequestDigest + "\",\"agent_id\":\"" + intent.AgentID + "\",\"agent_release_id\":\"" + intent.ReleaseID + "\",\"session_id\":\"" + intent.SessionID + "\",\"input\":{\"message\":\"replay\"}}")
+	payload, err := json.Marshal(map[string]any{
+		"tenant_id": intent.TenantID, "run_intent_id": intent.ID,
+		"request_digest": intent.RequestDigest, "agent_id": intent.AgentID,
+		"agent_release_id": intent.ReleaseID, "session_id": intent.SessionID,
+		"input": map[string]string{"message": "replay"},
+		"principal_context": map[string]string{
+			"version": "acp-principal/v1", "project_id": intent.ProjectID,
+			"subject_id": "subject-1", "actor_id": "actor-1",
+			"policy_revision": "policy-revision-1",
+			"config_digest": "sha256:" + strings.Repeat("b", 64),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	send := func(data []byte) (*http.Response, error) {
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, origin+"/internal/v1/run-intents:accept", bytes.NewReader(data))
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, origin+"/internal/v2/run-intents:accept", bytes.NewReader(data))
 		if err != nil {
 			return nil, err
 		}
@@ -204,8 +218,20 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 		if err := runtimePool.QueryRow(ctx, "SELECT count(*) FROM runtime_outbox WHERE aggregate_id=$1::uuid AND event_type='RUN_START_REQUESTED'", id).Scan(&starts); err != nil {
 			t.Fatal(err)
 		}
-		if runs != 1 || starts != 1 {
-			t.Fatalf("duplicate Runtime Run/outbox: %d/%d", runs, starts)
+		var snapshots int
+		if err := runtimePool.QueryRow(ctx, `
+			SELECT count(*) FROM runtime_run_principal_snapshots
+			WHERE run_id=$1::uuid AND tenant_id=$2
+			  AND issuer_spiffe_id='spiffe://example.org/acp'
+			  AND project_id=$3 AND subject_id='subject-1'
+			  AND actor_id='actor-1' AND policy_revision='policy-revision-1'
+			  AND config_digest=$4
+		`, id, intent.TenantID, intent.ProjectID,
+			"sha256:"+strings.Repeat("b", 64)).Scan(&snapshots); err != nil {
+			t.Fatal(err)
+		}
+		if runs != 1 || starts != 1 || snapshots != 1 {
+			t.Fatalf("duplicate or unbound Runtime Run/outbox/principal: %d/%d/%d", runs, starts, snapshots)
 		}
 		return id
 	}
