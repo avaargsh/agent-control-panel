@@ -85,6 +85,9 @@ func TestInspectClientRequiresHTTPSAndMutualTLSConfiguration(t *testing.T) {
 		{"https://runtime.local", "spiffe://example.org/runtime", nil, clientIdentity},
 		{"https://runtime.local", "spiffe://example.org/runtime", roots, tls.Certificate{}},
 		{"https://runtime.local", "spiffe://example.org/", roots, clientIdentity},
+		// SPIFFE identities are URI SANs, not URLs with fragments or network ports.
+		{"https://runtime.local", "spiffe://example.org/runtime#delegated", roots, clientIdentity},
+		{"https://runtime.local", "spiffe://example.org:8443/runtime", roots, clientIdentity},
 		{"https://runtime.local", "https://runtime.local", roots, clientIdentity},
 	} {
 		if _, err := NewClient(tc.origin, tc.id, tc.roots, tc.cert); !errors.Is(err, ErrInvalidConfig) {
