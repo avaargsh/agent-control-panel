@@ -1,0 +1,34 @@
+name: governance-manifest
+
+on:
+  pull_request:
+    paths:
+      - "governance/**"
+      - "scripts/audit_pr_topology.py"
+      - "tests/test_pr_topology.py"
+      - "scripts/check_governance.py"
+      - "tests/test_governance.py"
+      - ".github/workflows/governance.yml"
+      - "docs/governance/**"
+  push:
+    branches: [main, governance/platform-v0.3]
+    paths:
+      - "governance/**"
+      - "scripts/check_governance.py"
+      - "tests/test_governance.py"
+      - ".github/workflows/governance.yml"
+      - "docs/governance/**"
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python scripts/check_governance.py
+      - run: python -m unittest discover -s tests -p 'test_*.py' -v

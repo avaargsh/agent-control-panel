@@ -1,0 +1,36 @@
+# Summary
+
+What user-visible or architectural behavior changes, and why?
+
+## Governance metadata
+
+- Affected domain / sole authoritative writer:
+- Public API/Schema source repository + pinned source commit:
+- Governance gate(s): G01 / G02 / G03 / G04 / G05 / none (explain)
+- Linked blocking Issue and prerequisite PRs:
+- Base branch and PR stack dependency:
+- Migration or compatibility version; client impact:
+
+## Evidence (link real CI runs)
+
+- [ ] Unit tests and negative-path assertions, with source SHA
+- [ ] Contract/schema fixtures shared with actual consumers
+- [ ] Integration tests (DB, Temporal, Guard, provider) where changed
+- [ ] Lost ACK / UNKNOWN / restart / fencing / cancellation cases as applicable
+- [ ] Tenant authorization and revocation checks where changed
+- [ ] No evidence extrapolated from tests that were not executed
+
+## Execution and side-effect safety
+
+- [ ] No duplicate authority writer or cross-service DB mutation
+- [ ] Idempotency identity and request digest persist before network effect
+- [ ] Unknown external result never causes blind dispatch
+- [ ] New ActionHash version / canonicalization changes have golden vectors
+- [ ] Protected actions use Guard Permit and trusted enforcement point
+- [ ] Not applicable (explain)
+
+## Delivery / rollback
+
+- Remaining blockers and explicit non-goals:
+- Backward compatibility and rollback:
+- Draft until owner/consumer cross-repo gates are met:
