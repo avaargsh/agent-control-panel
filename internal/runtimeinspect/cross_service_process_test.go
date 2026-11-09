@@ -95,17 +95,7 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 	if err != nil || !inserted || created.ID != intent.ID {
 		t.Fatalf("ACP Create: inserted=%v %+v %v", inserted, created, err)
 	}
-	leased, err := created.ClaimDispatch(created.Version, "worker-1", time.Now().UTC(), 3*time.Minute)
-	if err != nil {
-		t.Fatal(err)
-	}
-	leased, err = repo.CompareAndSwap(ctx, intent.TenantID, intent.ID, created.Version, leased, event(leased.Version, 2, "agent.run-intent.dispatching"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertACPOutbox(intent.TenantID, intent.ID,
-		"1:agent.run-intent.created",
-		"2:agent.run-intent.dispatching")
+	assertACPOutbox(intent.TenantID, intent.ID, "1:agent.run-intent.created")
 
 	roots, serverCert, acpCert := testSPIFFECertificates(t)
 	dir := t.TempDir()
@@ -223,16 +213,35 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 		}
 	}))
 	defer drop.Close()
-	lost, err := http.Post(drop.URL, "application/json", bytes.NewReader(payload))
-	if lost != nil {
-		_ = lost.Body.Close()
-	}
-	if err == nil {
-		t.Fatal("unexpected ACK after injected loss")
+	// The ACP dispatch boundary owns the durable claim and ambiguous ACK
+	// transition. Only the injected test adapter provides a Runtime Accept;
+	// no production issuer or StartRun worker is enabled here.
+	acceptCalls := 0
+	unknown, dispatchErr := DispatchOnce(ctx, repo, acceptFunc(func(_ context.Context, claimed runintent.Intent) (runintent.DispatchOutcome, error) {
+		acceptCalls++
+		if claimed.ID != intent.ID || claimed.Status != runintent.Dispatching ||
+			claimed.RequestDigest != intent.RequestDigest {
+			t.Fatalf("unexpected committed dispatch identity: %+v", claimed)
+		}
+		lost, err := http.Post(drop.URL, "application/json", bytes.NewReader(payload))
+		if lost != nil {
+			_ = lost.Body.Close()
+		}
+		if err == nil {
+			t.Fatal("unexpected ACK after injected loss")
+		}
+		return runintent.DispatchOutcome{}, err
+	}), intent.TenantID, intent.ID, "worker-1", 3*time.Minute)
+	if dispatchErr == nil || unknown.Status != runintent.Unknown || acceptCalls != 1 {
+		t.Fatalf("lost ACK did not persist UNKNOWN exactly once: %+v %v, sends=%d", unknown, dispatchErr, acceptCalls)
 	}
 	if err := <-upstream; err != nil {
 		t.Fatalf("Runtime did not commit before ACK loss: %v", err)
 	}
+	assertACPOutbox(intent.TenantID, intent.ID,
+		"1:agent.run-intent.created",
+		"2:agent.run-intent.dispatching",
+		"3:agent.run-intent.unknown")
 
 	runtimePool, err := pgxpool.New(ctx, runtimeDSN)
 	if err != nil {
@@ -276,20 +285,6 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 	if _, inspectErr := inspector.Inspect(ctx, InspectRequest{TenantID: intent.TenantID, RunIntentID: intent.ID, RequestDigest: intent.RequestDigest}); !errors.Is(inspectErr, ErrUnavailable) {
 		t.Fatalf("offline inspect was promoted to an authoritative result: %v", inspectErr)
 	}
-	unknown, err := leased.RecordDispatchOutcome(leased.Version, leased.LeaseOwner, leased.FenceToken, time.Now().UTC(), runintent.DispatchOutcome{
-		TenantID: intent.TenantID, RunIntentID: intent.ID, RequestDigest: intent.RequestDigest, Kind: runintent.DispatchAmbiguous,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	unknown, err = repo.CompareAndSwap(ctx, intent.TenantID, intent.ID, leased.Version, unknown, event(unknown.Version, 3, "agent.run-intent.unknown"))
-	if err != nil || unknown.Status != runintent.Unknown {
-		t.Fatalf("lost ACK did not persist UNKNOWN: %+v %v", unknown, err)
-	}
-	assertACPOutbox(intent.TenantID, intent.ID,
-		"1:agent.run-intent.created",
-		"2:agent.run-intent.dispatching",
-		"3:agent.run-intent.unknown")
 	_ = start()
 	found := wait(Found)
 	if found.RunID != runID || found.WorkflowID != "agent-run/v1/"+runID {
