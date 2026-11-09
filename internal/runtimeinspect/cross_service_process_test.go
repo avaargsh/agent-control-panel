@@ -295,17 +295,52 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 	if found.RunID != runID || found.WorkflowID != "agent-run/v1/"+runID {
 		t.Fatalf("restarted Runtime minted another Run: %+v", found)
 	}
-	// Simulate a reconciler process dying after it committed its lease but
-	// before Inspect. A second worker must fence it using PostgreSQL time.
-	abandoned, err := unknown.BeginReconciliation(unknown.Version, "crashed-reconciler", time.Now().UTC(), 200*time.Millisecond)
-	if err != nil {
+	// A distinct OS process performs the real PostgreSQL lease claim using
+	// ReconcileOnce, then blocks at Inspect. SIGKILL must leave the lease
+	// durable so the restarted worker can fence it after database expiry.
+	crash := exec.Command(os.Args[0], "-test.run=^TestCrashReconcilerAfterClaimChild$")
+	crash.Env = append(os.Environ(),
+		"ACP_RECOVERY_CRASH_CHILD=1",
+		"ACP_DATABASE_URL="+acpDSN,
+		"ACP_RECOVERY_TENANT="+intent.TenantID,
+		"ACP_RECOVERY_INTENT="+intent.ID,
+	)
+	if err := crash.Start(); err != nil {
 		t.Fatal(err)
 	}
-	abandoned, err = repo.CompareAndSwap(ctx, intent.TenantID, intent.ID, unknown.Version, abandoned, event(abandoned.Version, 4, "agent.run-intent.reconciling"))
-	if err != nil {
-		t.Fatal(err)
+	t.Cleanup(func() {
+		if crash.ProcessState == nil {
+			_ = crash.Process.Kill()
+			_ = crash.Wait()
+		}
+	})
+	var abandoned runintent.Intent
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); {
+		observed, lookupErr := repo.Get(ctx, intent.TenantID, intent.ID)
+		if lookupErr != nil {
+			t.Fatal(lookupErr)
+		}
+		if observed.Status == runintent.Reconciling {
+			abandoned = observed
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
-	time.Sleep(450 * time.Millisecond)
+	if abandoned.Status != runintent.Reconciling {
+		t.Fatal("separate worker did not commit RECONCILING before SIGKILL")
+	}
+	if err := crash.Process.Kill(); err != nil {
+		t.Fatalf("SIGKILL recovery worker: %v", err)
+	}
+	_ = crash.Wait()
+	stillAbandoned, err := repo.Get(ctx, intent.TenantID, intent.ID)
+	if err != nil || stillAbandoned.Status != runintent.Reconciling ||
+		stillAbandoned.Version != abandoned.Version || stillAbandoned.FenceToken != abandoned.FenceToken {
+		t.Fatalf("crashed worker did not preserve its committed lease: %+v %v", stillAbandoned, err)
+	}
+	if delay := time.Until(abandoned.LeaseExpiresAt) + 150*time.Millisecond; delay > 0 {
+		time.Sleep(delay)
+	}
 	// Two independently scheduled callers race over the same PostgreSQL row.
 	// Only one may advance the version/fence; both share the real Runtime mTLS
 	// Inspect boundary and neither has a StartRun capability.
@@ -424,4 +459,35 @@ func writeProcessCertificate(t *testing.T, certFile, keyFile string, identity tl
 	if err := os.WriteFile(keyFile, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: key}), 0600); err != nil {
 		t.Fatal(err)
 	}
+}
+
+type blockedReconciliationInspector struct{}
+
+func (blockedReconciliationInspector) Inspect(ctx context.Context, _ InspectRequest) (Inspection, error) {
+	<-ctx.Done()
+	return Inspection{}, ctx.Err()
+}
+
+// This helper is executed only by the parent test as a distinct, killable OS
+// process. It claims real PostgreSQL state but cannot call Runtime StartRun.
+func TestCrashReconcilerAfterClaimChild(t *testing.T) {
+	if os.Getenv("ACP_RECOVERY_CRASH_CHILD") != "1" {
+		t.Skip("only the real-process crash test starts this worker")
+	}
+	dsn := os.Getenv("ACP_DATABASE_URL")
+	tenantID := os.Getenv("ACP_RECOVERY_TENANT")
+	intentID := os.Getenv("ACP_RECOVERY_INTENT")
+	if dsn == "" || tenantID == "" || intentID == "" {
+		t.Fatal("child recovery scope is missing")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	_, err = ReconcileOnce(ctx, runpg.New(pool), blockedReconciliationInspector{},
+		tenantID, intentID, "crashed-reconciler", 600*time.Millisecond)
+	t.Fatalf("reconciler exited before injected SIGKILL: %v", err)
 }
