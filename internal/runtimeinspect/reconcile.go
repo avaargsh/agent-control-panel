@@ -49,6 +49,25 @@ func ReconcileOnce(ctx context.Context, store reconcileStore, inspector reconcil
 	if current.Status == runintent.Accepted {
 		return current, nil
 	}
+	// A previous worker may have crashed after persisting its reconciliation
+	// claim but before storing the Runtime lookup result. Fence that expired
+	// lease first; the existing PostgreSQL CAS uses clock_timestamp() under a
+	// row lock to reject premature takeovers and stale workers.
+	if current.Status == runintent.Reconciling && !time.Now().UTC().Before(current.LeaseExpiresAt) {
+		expired, err := current.ExpireLease(current.Version, time.Now().UTC())
+		if err != nil {
+			return current, err
+		}
+		ev, err := reconcileEvent(expired)
+		if err != nil {
+			return current, err
+		}
+		expired, err = store.CompareAndSwap(ctx, tenantID, intentID, current.Version, expired, ev)
+		if err != nil {
+			return current, err
+		}
+		current = expired
+	}
 	if current.Status != runintent.Unknown {
 		return current, ErrNotReconcilable
 	}
