@@ -182,8 +182,8 @@ func TestCompareAndSwapAndOutboxShareTransaction(t *testing.T) {
 // durable RunIntent still says DISPATCHING, nor forge another producer.
 func TestCompareAndSwapRejectsMislabelledOutboxEvidence(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		producer string
+		name      string
+		producer  string
 		eventType string
 	}{
 		{name: "wrong state event", producer: "agent-control-panel", eventType: "agent.run-intent.accepted"},
