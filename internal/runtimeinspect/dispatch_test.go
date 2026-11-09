@@ -94,3 +94,30 @@ func TestDispatchOnceMismatchedReceiptEntersManualReview(t *testing.T) {
 		t.Fatalf("foreign Runtime receipt accepted: %+v %v", got, err)
 	}
 }
+
+func TestDispatchOnceUnrecognizedReceiptKindPersistsUnknown(t *testing.T) {
+	intent := pendingDispatchFixture(t)
+	store := &recoveryStoreFixture{intent: intent}
+	calls := 0
+	acceptor := acceptFunc(func(_ context.Context, got runintent.Intent) (runintent.DispatchOutcome, error) {
+		calls++
+		return runintent.DispatchOutcome{
+			TenantID: got.TenantID, RunIntentID: got.ID, RequestDigest: got.RequestDigest,
+			Kind: runintent.DispatchOutcomeKind("UNRECOGNIZED"),
+			RunID: "caller-controlled-run", WorkflowID: "agent-run/v1/caller-controlled-run",
+		}, nil
+	})
+	got, err := DispatchOnce(context.Background(), store, acceptor,
+		intent.TenantID, intent.ID, "dispatcher-1", time.Minute)
+	if !errors.Is(err, ErrInvalidResponse) || got.Status != runintent.Unknown ||
+		store.intent.Status != runintent.Unknown || got.RunID != "" || got.WorkflowID != "" ||
+		len(store.events) != 2 || store.events[1].Type != "agent.run-intent.unknown" {
+		t.Fatalf("unknown Runtime receipt escaped fail-closed UNKNOWN persistence: %+v %+v events=%+v err=%v",
+			got, store.intent, store.events, err)
+	}
+	replay, err := DispatchOnce(context.Background(), store, acceptor,
+		intent.TenantID, intent.ID, "dispatcher-2", time.Minute)
+	if !errors.Is(err, ErrNotDispatchable) || replay.Status != runintent.Unknown || calls != 1 {
+		t.Fatalf("unknown receipt permitted a second StartRun: %+v err=%v calls=%d", replay, err, calls)
+	}
+}
