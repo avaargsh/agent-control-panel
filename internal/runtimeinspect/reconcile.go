@@ -4,27 +4,27 @@
 package runtimeinspect
 
 import (
-    "context"
-    "crypto/rand"
-    "encoding/json"
-    "errors"
-    "fmt"
-    "strings"
-    "time"
+	"context"
+	"crypto/rand"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
 
-    "github.com/avaargsh/agent-control-panel/internal/runintent"
-    runpg "github.com/avaargsh/agent-control-panel/internal/runintent/postgres"
+	"github.com/avaargsh/agent-control-panel/internal/runintent"
+	runpg "github.com/avaargsh/agent-control-panel/internal/runintent/postgres"
 )
 
 var ErrNotReconcilable = errors.New("RunIntent is not UNKNOWN and cannot be reconciled")
 
 type reconcileStore interface {
-    Get(context.Context, string, string) (runintent.Intent, error)
-    CompareAndSwap(context.Context, string, string, uint64, runintent.Intent, runpg.Event) (runintent.Intent, error)
+	Get(context.Context, string, string) (runintent.Intent, error)
+	CompareAndSwap(context.Context, string, string, uint64, runintent.Intent, runpg.Event) (runintent.Intent, error)
 }
 
 type reconcileInspector interface {
-    Inspect(context.Context, InspectRequest) (Inspection, error)
+	Inspect(context.Context, InspectRequest) (Inspection, error)
 }
 
 // ReconcileOnce is an explicit, bounded unit of recovery against the
@@ -36,96 +36,96 @@ type reconcileInspector interface {
 // refused. An unavailable or uncertain Runtime lookup returns the intent to
 // UNKNOWN, never PENDING, so another StartRun cannot be triggered by absence.
 func ReconcileOnce(ctx context.Context, store reconcileStore, inspector reconcileInspector, tenantID, intentID, owner string, ttl time.Duration) (runintent.Intent, error) {
-    if store == nil || inspector == nil || strings.TrimSpace(owner) == "" || ttl <= 0 {
-        return runintent.Intent{}, ErrInvalidConfig
-    }
-    current, err := store.Get(ctx, tenantID, intentID)
-    if err != nil {
-        return runintent.Intent{}, err
-    }
-    if err := current.Validate(); err != nil || current.ID != intentID || current.TenantID != tenantID {
-        return runintent.Intent{}, ErrInvalidResponse
-    }
-    if current.Status == runintent.Accepted {
-        return current, nil
-    }
-    if current.Status != runintent.Unknown {
-        return current, ErrNotReconcilable
-    }
+	if store == nil || inspector == nil || strings.TrimSpace(owner) == "" || ttl <= 0 {
+		return runintent.Intent{}, ErrInvalidConfig
+	}
+	current, err := store.Get(ctx, tenantID, intentID)
+	if err != nil {
+		return runintent.Intent{}, err
+	}
+	if err := current.Validate(); err != nil || current.ID != intentID || current.TenantID != tenantID {
+		return runintent.Intent{}, ErrInvalidResponse
+	}
+	if current.Status == runintent.Accepted {
+		return current, nil
+	}
+	if current.Status != runintent.Unknown {
+		return current, ErrNotReconcilable
+	}
 
-    claimed, err := current.BeginReconciliation(current.Version, owner, time.Now().UTC(), ttl)
-    if err != nil {
-        return current, err
-    }
-    ev, err := reconcileEvent(claimed)
-    if err != nil {
-        return current, err
-    }
-    claimed, err = store.CompareAndSwap(ctx, tenantID, intentID, current.Version, claimed, ev)
-    if err != nil {
-        return current, err
-    }
+	claimed, err := current.BeginReconciliation(current.Version, owner, time.Now().UTC(), ttl)
+	if err != nil {
+		return current, err
+	}
+	ev, err := reconcileEvent(claimed)
+	if err != nil {
+		return current, err
+	}
+	claimed, err = store.CompareAndSwap(ctx, tenantID, intentID, current.Version, claimed, ev)
+	if err != nil {
+		return current, err
+	}
 
-    inspected, inspectErr := inspector.Inspect(ctx, InspectRequest{
-        TenantID: current.TenantID, RunIntentID: current.ID, RequestDigest: current.RequestDigest,
-    })
-    result := runintent.ReconciliationResult{
-        TenantID: current.TenantID, RunIntentID: current.ID, RequestDigest: current.RequestDigest,
-        Kind: runintent.RuntimeIndeterminate,
-    }
-    if inspectErr == nil {
-        switch inspected.Status {
-        case Found:
-            result.Kind = runintent.RuntimeFound
-            result.TenantID = inspected.TenantID
-            result.RunIntentID = inspected.RunIntentID
-            result.RequestDigest = inspected.RequestDigest
-            result.RunID = inspected.RunID
-            result.WorkflowID = inspected.WorkflowID
-        case AbsentUncertain:
-            // No final-absence proof exists in this Runtime protocol.
-        default:
-            inspectErr = ErrInvalidResponse
-        }
-    }
+	inspected, inspectErr := inspector.Inspect(ctx, InspectRequest{
+		TenantID: current.TenantID, RunIntentID: current.ID, RequestDigest: current.RequestDigest,
+	})
+	result := runintent.ReconciliationResult{
+		TenantID: current.TenantID, RunIntentID: current.ID, RequestDigest: current.RequestDigest,
+		Kind: runintent.RuntimeIndeterminate,
+	}
+	if inspectErr == nil {
+		switch inspected.Status {
+		case Found:
+			result.Kind = runintent.RuntimeFound
+			result.TenantID = inspected.TenantID
+			result.RunIntentID = inspected.RunIntentID
+			result.RequestDigest = inspected.RequestDigest
+			result.RunID = inspected.RunID
+			result.WorkflowID = inspected.WorkflowID
+		case AbsentUncertain:
+			// No final-absence proof exists in this Runtime protocol.
+		default:
+			inspectErr = ErrInvalidResponse
+		}
+	}
 
-    next, err := claimed.ApplyReconciliationResult(
-        claimed.Version, claimed.LeaseOwner, claimed.FenceToken, time.Now().UTC(), result,
-    )
-    if err != nil {
-        return claimed, err
-    }
-    ev, err = reconcileEvent(next)
-    if err != nil {
-        return claimed, err
-    }
-    persisted, err := store.CompareAndSwap(ctx, tenantID, intentID, claimed.Version, next, ev)
-    if err != nil {
-        return claimed, err
-    }
-    return persisted, inspectErr
+	next, err := claimed.ApplyReconciliationResult(
+		claimed.Version, claimed.LeaseOwner, claimed.FenceToken, time.Now().UTC(), result,
+	)
+	if err != nil {
+		return claimed, err
+	}
+	ev, err = reconcileEvent(next)
+	if err != nil {
+		return claimed, err
+	}
+	persisted, err := store.CompareAndSwap(ctx, tenantID, intentID, claimed.Version, next, ev)
+	if err != nil {
+		return claimed, err
+	}
+	return persisted, inspectErr
 }
 
 // Each state change is durably paired with one immutable Outbox envelope in
 // the same PostgreSQL transaction by the existing Repository.CompareAndSwap.
 func reconcileEvent(intent runintent.Intent) (runpg.Event, error) {
-    var id [16]byte
-    if _, err := rand.Read(id[:]); err != nil {
-        return runpg.Event{}, fmt.Errorf("create reconciliation event identity: %w", err)
-    }
-    id[6] = id[6]&0x0f | 0x40
-    id[8] = id[8]&0x3f | 0x80
-    payload, err := json.Marshal(map[string]string{"run_intent_id": intent.ID})
-    if err != nil {
-        return runpg.Event{}, err
-    }
-    return runpg.Event{
-        ID: fmt.Sprintf("%x-%x-%x-%x-%x", id[0:4], id[4:6], id[6:8], id[8:10], id[10:16]),
-        Producer: "agent-control-panel",
-        Type: "agent.run-intent." + strings.ReplaceAll(strings.ToLower(string(intent.Status)), "_", "-"),
-        SchemaVersion: 1, TenantID: intent.TenantID, AggregateType: "run_intent",
-        AggregateID: intent.ID, AggregateVersion: intent.Version,
-        OccurredAt: time.Now().UTC(), CorrelationID: intent.ID,
-        Payload: payload,
-    }, nil
+	var id [16]byte
+	if _, err := rand.Read(id[:]); err != nil {
+		return runpg.Event{}, fmt.Errorf("create reconciliation event identity: %w", err)
+	}
+	id[6] = id[6]&0x0f | 0x40
+	id[8] = id[8]&0x3f | 0x80
+	payload, err := json.Marshal(map[string]string{"run_intent_id": intent.ID})
+	if err != nil {
+		return runpg.Event{}, err
+	}
+	return runpg.Event{
+		ID:            fmt.Sprintf("%x-%x-%x-%x-%x", id[0:4], id[4:6], id[6:8], id[8:10], id[10:16]),
+		Producer:      "agent-control-panel",
+		Type:          "agent.run-intent." + strings.ReplaceAll(strings.ToLower(string(intent.Status)), "_", "-"),
+		SchemaVersion: 1, TenantID: intent.TenantID, AggregateType: "run_intent",
+		AggregateID: intent.ID, AggregateVersion: intent.Version,
+		OccurredAt: time.Now().UTC(), CorrelationID: intent.ID,
+		Payload: payload,
+	}, nil
 }
