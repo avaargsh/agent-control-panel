@@ -84,7 +84,13 @@ func DispatchOnce(ctx context.Context, store reconcileStore, acceptor dispatchAc
 	if err != nil {
 		return claimed, err
 	}
-	persisted, err := store.CompareAndSwap(ctx, tenantID, intentID, claimed.Version, next, ev)
+	// An ambiguous network response can cancel the caller context after Runtime
+	// has committed the Run. Keep finalization independent and bounded so the
+	// authoritative UNKNOWN/receipt plus Outbox can still commit. Lease expiry
+	// and fencing remain enforced by PostgreSQL; process death is not masked.
+	persistCtx, cancelPersist := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancelPersist()
+	persisted, err := store.CompareAndSwap(persistCtx, tenantID, intentID, claimed.Version, next, ev)
 	if err != nil {
 		// The state is uncertain until a fresh authoritative read.
 		return claimed, err
