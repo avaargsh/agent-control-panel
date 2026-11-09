@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/avaargsh/agent-control-panel/internal/runintent"
@@ -269,7 +270,7 @@ func (r *Repository) CompareAndSwap(ctx context.Context, tenantID, id string, ex
 }
 
 func validateEvent(event Event, intent runintent.Intent, requiredType string) error {
-	if event.ID == "" || event.Producer == "" || event.Type == "" || event.SchemaVersion <= 0 ||
+	if event.ID == "" || event.Producer != "agent-control-panel" || event.Type == "" || event.SchemaVersion <= 0 ||
 		event.TenantID != intent.TenantID || event.AggregateType != aggregateType ||
 		event.AggregateID != intent.ID || event.AggregateVersion != intent.Version ||
 		event.OccurredAt.IsZero() || event.CorrelationID == "" {
@@ -278,8 +279,11 @@ func validateEvent(event Event, intent runintent.Intent, requiredType string) er
 	if requiredType != "" && event.Type != requiredType {
 		return ErrInvalidEvent
 	}
-	if requiredType == "" && event.Type == eventCreated {
-		return ErrInvalidEvent
+	if requiredType == "" {
+		wantType := "agent.run-intent." + strings.ReplaceAll(strings.ToLower(string(intent.Status)), "_", "-")
+		if event.Type != wantType {
+			return ErrInvalidEvent
+		}
 	}
 	var object map[string]json.RawMessage
 	if len(event.Payload) == 0 || json.Unmarshal(event.Payload, &object) != nil || object == nil {
