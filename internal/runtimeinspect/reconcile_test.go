@@ -141,3 +141,52 @@ func TestReconcileOnceRequiresUnknownAndNoSecondStart(t *testing.T) {
 		t.Fatalf("non-UNKNOWN was reconciled: %v", err)
 	}
 }
+
+func TestReconcileOnceExpiredLeaseReclaimsWithNewFence(t *testing.T) {
+	unknown := unknownRecoveryFixture(t)
+	abandoned, err := unknown.BeginReconciliation(unknown.Version, "crashed-worker", time.Now().Add(-2*time.Minute), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &recoveryStoreFixture{intent: abandoned}
+	inspections := 0
+	inspect := inspectionFixture(func(_ context.Context, req InspectRequest) (Inspection, error) {
+		inspections++
+		return Inspection{
+			Status: Found, TenantID: req.TenantID, RunIntentID: req.RunIntentID,
+			RequestDigest: req.RequestDigest, RunID: "run-1", WorkflowID: "agent-run/v1/run-1",
+		}, nil
+	})
+	got, err := ReconcileOnce(context.Background(), store, inspect, abandoned.TenantID, abandoned.ID, "restarted-worker", time.Minute)
+	if err != nil || got.Status != runintent.Accepted || got.RunID != "run-1" {
+		t.Fatalf("abandoned reconciliation could not recover: %+v %v", got, err)
+	}
+	if got.Version != abandoned.Version+3 || got.FenceToken != abandoned.FenceToken+2 || inspections != 1 || len(store.events) != 3 {
+		t.Fatalf("lease takeover did not fence previous worker: got=%+v inspections=%d events=%+v", got, inspections, store.events)
+	}
+	for i, want := range []string{"agent.run-intent.unknown", "agent.run-intent.reconciling", "agent.run-intent.accepted"} {
+		if store.events[i].Type != want {
+			t.Fatalf("transition event %d: got %q want %q", i, store.events[i].Type, want)
+		}
+	}
+	if _, err := store.CompareAndSwap(context.Background(), abandoned.TenantID, abandoned.ID, abandoned.Version, abandoned, store.events[0]); err == nil {
+		t.Fatal("stale pre-crash lease overwrote newer reconciliation")
+	}
+}
+
+func TestReconcileOnceDoesNotStealLiveReconciliationLease(t *testing.T) {
+	unknown := unknownRecoveryFixture(t)
+	live, err := unknown.BeginReconciliation(unknown.Version, "live-worker", time.Now(), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &recoveryStoreFixture{intent: live}
+	inspect := inspectionFixture(func(context.Context, InspectRequest) (Inspection, error) {
+		t.Fatal("live lease must prevent a second Inspect")
+		return Inspection{}, nil
+	})
+	got, err := ReconcileOnce(context.Background(), store, inspect, live.TenantID, live.ID, "competing-worker", time.Minute)
+	if !errors.Is(err, ErrNotReconcilable) || got.Status != runintent.Reconciling || len(store.events) != 0 {
+		t.Fatalf("live lease was stolen: got=%+v events=%d err=%v", got, len(store.events), err)
+	}
+}
