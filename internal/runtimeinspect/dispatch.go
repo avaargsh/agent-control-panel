@@ -59,9 +59,13 @@ func DispatchOnce(ctx context.Context, store reconcileStore, acceptor dispatchAc
 	}
 
 	receipt, acceptErr := acceptor.Accept(ctx, claimed)
-	if acceptErr != nil || receipt.Kind == "" {
-		// No trustworthy receipt exists: do not interpret a missing ACK as
-		// rejection, and never invoke Accept for this UNKNOWN intent again.
+	knownKind := receipt.Kind == runintent.DispatchAccepted ||
+		receipt.Kind == runintent.DispatchRejected ||
+		receipt.Kind == runintent.DispatchAmbiguous
+	if acceptErr != nil || !knownKind {
+		// Lost ACK or unknown receipt kind is ambiguous, never a definitive
+		// rejection. Do not leave DISPATCHING waiting on an invalid receipt
+		// and do not reissue StartRun from UNKNOWN.
 		if acceptErr == nil {
 			acceptErr = ErrInvalidResponse
 		}
