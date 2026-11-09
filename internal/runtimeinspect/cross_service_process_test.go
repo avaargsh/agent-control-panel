@@ -485,6 +485,8 @@ func TestCrashReconcilerAfterClaimChild(t *testing.T) {
 	t.Fatalf("reconciler exited before injected SIGKILL: %v", err)
 }
 
+var errInjectedACKDelivered = errors.New("injected lost ACK unexpectedly delivered an HTTP response")
+
 type lostACKDispatchAdapter struct {
 	endpoint string
 	payload  []byte
@@ -506,7 +508,7 @@ func (a *lostACKDispatchAdapter) Accept(ctx context.Context, claimed runintent.I
 		_ = res.Body.Close()
 	}
 	if err == nil {
-		return runintent.DispatchOutcome{}, errors.New("injected lost ACK unexpectedly delivered an HTTP response")
+		return runintent.DispatchOutcome{}, errInjectedACKDelivered
 	}
 	return runintent.DispatchOutcome{}, err
 }
@@ -538,6 +540,9 @@ func TestDispatchLostACKChild(t *testing.T) {
 	defer pool.Close()
 	adapter := &lostACKDispatchAdapter{endpoint: endpoint, payload: payload}
 	got, dispatchErr := DispatchOnce(ctx, runpg.New(pool), adapter, tenantID, intentID, "worker-1", 3*time.Minute)
+	if errors.Is(dispatchErr, errInjectedACKDelivered) {
+		t.Fatal("the test proxy delivered an ACK instead of losing it")
+	}
 	if dispatchErr == nil || got.Status != runintent.Unknown || got.Version != 3 || adapter.calls != 1 {
 		t.Fatalf("subprocess must persist one ambiguous dispatch: %+v %v calls=%d", got, dispatchErr, adapter.calls)
 	}
