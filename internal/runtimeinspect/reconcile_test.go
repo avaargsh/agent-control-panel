@@ -271,3 +271,42 @@ func TestReconcileOnceRuntimeConflictRequiresManualReview(t *testing.T) {
 		t.Fatalf("Runtime identity conflict allowed second StartRun: %v", dispatchErr)
 	}
 }
+
+type contextAwareReconcileStore struct {
+	*recoveryStoreFixture
+}
+
+func (s *contextAwareReconcileStore) CompareAndSwap(ctx context.Context, tenantID, intentID string, version uint64, next runintent.Intent, event runpg.Event) (runintent.Intent, error) {
+	if err := ctx.Err(); err != nil {
+		return runintent.Intent{}, err
+	}
+	return s.recoveryStoreFixture.CompareAndSwap(ctx, tenantID, intentID, version, next, event)
+}
+
+// An Inspect timeout can follow a successful Runtime StartRun. Persist the
+// uncertain outcome with an independent, bounded finalization context so a
+// cancelled request does not strand a fresh RECONCILING lease.
+func TestReconcileOnceCancelledInspectPersistsUnknown(t *testing.T) {
+	intent := unknownRecoveryFixture(t)
+	store := &contextAwareReconcileStore{recoveryStoreFixture: &recoveryStoreFixture{intent: intent}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	calls := 0
+	inspect := inspectionFixture(func(context.Context, InspectRequest) (Inspection, error) {
+		calls++
+		if store.intent.Status != runintent.Reconciling {
+			t.Fatal("Inspect called before durable reconciliation lease")
+		}
+		cancel()
+		return Inspection{}, context.Canceled
+	})
+	got, err := ReconcileOnce(ctx, store, inspect, intent.TenantID, intent.ID, "reconciler-1", time.Minute)
+	if !errors.Is(err, context.Canceled) || got.Status != runintent.Unknown ||
+		store.intent.Status != runintent.Unknown || got.RunID != "" ||
+		len(store.events) != 2 || calls != 1 ||
+		store.events[0].Type != "agent.run-intent.reconciling" ||
+		store.events[1].Type != "agent.run-intent.unknown" {
+		t.Fatalf("cancelled Inspect did not persist UNKNOWN: got=%+v stored=%+v events=%+v calls=%d err=%v",
+			got, store.intent, store.events, calls, err)
+	}
+}
