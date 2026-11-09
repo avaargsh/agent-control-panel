@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/avaargsh/agent-control-panel/internal/runintent"
+	runpg "github.com/avaargsh/agent-control-panel/internal/runintent/postgres"
 )
 
 func TestReconcileOnceExpiredDispatchClaimRecoversWithoutSecondStart(t *testing.T) {
@@ -51,7 +52,7 @@ func TestReconcileOnceDoesNotStealLiveDispatchLease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store := &recoveryStoreFixture{intent: claimed}
+	store := &dispatchLeaseClockStore{recoveryStoreFixture: &recoveryStoreFixture{intent: claimed}, dbNow: time.Now().UTC()}
 	inspector := inspectionFixture(func(context.Context, InspectRequest) (Inspection, error) {
 		t.Fatal("reconcile must not call Inspect for a live dispatch lease")
 		return Inspection{}, nil
@@ -61,4 +62,18 @@ func TestReconcileOnceDoesNotStealLiveDispatchLease(t *testing.T) {
 	if !errors.Is(err, ErrNotReconcilable) || got.Status != runintent.Dispatching || len(store.events) != 0 {
 		t.Fatalf("live dispatch lease was stolen: %+v events=%d err=%v", got, len(store.events), err)
 	}
+}
+
+type dispatchLeaseClockStore struct {
+	*recoveryStoreFixture
+	dbNow time.Time
+}
+
+func (s *dispatchLeaseClockStore) CompareAndSwap(ctx context.Context, tenantID, intentID string,
+	version uint64, next runintent.Intent, event runpg.Event) (runintent.Intent, error) {
+	if s.intent.Status == runintent.Dispatching && next.Status == runintent.Unknown &&
+		s.dbNow.Before(s.intent.LeaseExpiresAt) {
+		return runintent.Intent{}, runintent.ErrLeaseActive
+	}
+	return s.recoveryStoreFixture.CompareAndSwap(ctx, tenantID, intentID, version, next, event)
 }
