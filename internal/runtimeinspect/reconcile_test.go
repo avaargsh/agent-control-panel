@@ -232,3 +232,42 @@ func TestReconcileOnceDoesNotStealLiveReconciliationLease(t *testing.T) {
 		t.Fatalf("live lease was stolen: got=%+v events=%d err=%v", got, len(store.events), err)
 	}
 }
+
+func TestReconcileOnceRuntimeConflictRequiresManualReview(t *testing.T) {
+	intent := unknownRecoveryFixture(t)
+	store := &recoveryStoreFixture{intent: intent}
+	calls := 0
+	inspect := inspectionFixture(func(_ context.Context, req InspectRequest) (Inspection, error) {
+		calls++
+		if req.TenantID != intent.TenantID || req.RunIntentID != intent.ID ||
+			req.RequestDigest != intent.RequestDigest {
+			t.Fatal("Runtime identity conflict was inspected without immutable scope")
+		}
+		return Inspection{}, ErrRemoteConflict // authenticated Runtime HTTP 409
+	})
+
+	got, err := ReconcileOnce(context.Background(), store, inspect,
+		intent.TenantID, intent.ID, "reconciler-1", time.Minute)
+	if !errors.Is(err, ErrRemoteConflict) ||
+		got.Status != runintent.ManualReview ||
+		got.ManualReviewCode != "RUNTIME_STATE_CONFLICT" ||
+		got.RunID != "" || got.WorkflowID != "" || got.Version != intent.Version+2 ||
+		len(store.events) != 2 || calls != 1 {
+		t.Fatalf("Runtime 409 did not persist an auditable MANUAL_REVIEW: %+v events=%+v calls=%d err=%v",
+			got, store.events, calls, err)
+	}
+	if store.events[0].Type != "agent.run-intent.reconciling" ||
+		store.events[1].Type != "agent.run-intent.manual-review" {
+		t.Fatalf("wrong recovery conflict Outbox events: %+v", store.events)
+	}
+	repeated, repeatErr := ReconcileOnce(context.Background(), store, inspect,
+		intent.TenantID, intent.ID, "reconciler-2", time.Minute)
+	if !errors.Is(repeatErr, ErrNotReconcilable) || repeated.Status != runintent.ManualReview ||
+		len(store.events) != 2 || calls != 1 {
+		t.Fatalf("manual review was retried instead of staying frozen: %+v events=%+v calls=%d err=%v",
+			repeated, store.events, calls, repeatErr)
+	}
+	if _, dispatchErr := got.ClaimDispatch(got.Version, "dispatcher-2", time.Now(), time.Minute); !errors.Is(dispatchErr, runintent.ErrTransition) {
+		t.Fatalf("Runtime identity conflict allowed second StartRun: %v", dispatchErr)
+	}
+}
