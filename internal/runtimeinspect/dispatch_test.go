@@ -103,7 +103,7 @@ func TestDispatchOnceUnrecognizedReceiptKindPersistsUnknown(t *testing.T) {
 		calls++
 		return runintent.DispatchOutcome{
 			TenantID: got.TenantID, RunIntentID: got.ID, RequestDigest: got.RequestDigest,
-			Kind: runintent.DispatchOutcomeKind("UNRECOGNIZED"),
+			Kind:  runintent.DispatchOutcomeKind("UNRECOGNIZED"),
 			RunID: "caller-controlled-run", WorkflowID: "agent-run/v1/caller-controlled-run",
 		}, nil
 	})
