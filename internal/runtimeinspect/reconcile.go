@@ -133,7 +133,12 @@ func ReconcileOnce(ctx context.Context, store reconcileStore, inspector reconcil
 	if err != nil {
 		return claimed, err
 	}
-	persisted, err := store.CompareAndSwap(ctx, tenantID, intentID, claimed.Version, next, ev)
+	// Inspect can time out or cancel the caller context after Runtime has
+	// accepted a Run. Independently and briefly finalize the authoritative
+	// outcome/UNKNOWN with its Outbox; PostgreSQL still fences expired leases.
+	persistCtx, cancelPersist := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancelPersist()
+	persisted, err := store.CompareAndSwap(persistCtx, tenantID, intentID, claimed.Version, next, ev)
 	if err != nil {
 		return claimed, err
 	}
