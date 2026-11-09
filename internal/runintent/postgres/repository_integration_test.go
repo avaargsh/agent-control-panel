@@ -177,6 +177,48 @@ func TestCompareAndSwapAndOutboxShareTransaction(t *testing.T) {
 	}
 }
 
+// The aggregate status, producer and public Outbox event type form one
+// authority-bound fact. A caller must not persist an ACCEPTED event while the
+// durable RunIntent still says DISPATCHING, nor forge another producer.
+func TestCompareAndSwapRejectsMislabelledOutboxEvidence(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		producer string
+		eventType string
+	}{
+		{name: "wrong state event", producer: "agent-control-panel", eventType: "agent.run-intent.accepted"},
+		{name: "forged producer", producer: "agent-runtime", eventType: "agent.run-intent.dispatching"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repository, pool := testRepository(t)
+			ctx := context.Background()
+			intent := testIntent(9060)
+			created, inserted, err := repository.Create(ctx, intent, testEvent(intent, 1, 9061, eventCreated))
+			if err != nil || !inserted {
+				t.Fatalf("create RunIntent: inserted=%v err=%v", inserted, err)
+			}
+			next, err := created.ClaimDispatch(created.Version, "dispatcher-1", time.Now().UTC(), time.Minute)
+			if err != nil {
+				t.Fatal(err)
+			}
+			event := testEvent(next, next.Version, 9062, tc.eventType)
+			event.Producer = tc.producer
+			if _, err := repository.CompareAndSwap(ctx, intent.TenantID, intent.ID, created.Version, next, event); !errors.Is(err, ErrInvalidEvent) {
+				t.Fatalf("mismatched Outbox evidence was accepted: %v", err)
+			}
+			persisted, err := repository.Get(ctx, intent.TenantID, intent.ID)
+			if err != nil || persisted.Status != runintent.Pending || persisted.Version != created.Version ||
+				countOutbox(t, pool, intent.ID) != 1 {
+				t.Fatalf("rejected evidence partially committed: %+v err=%v", persisted, err)
+			}
+			if _, err := repository.CompareAndSwap(ctx, intent.TenantID, intent.ID, created.Version, next,
+				testEvent(next, next.Version, 9063, "agent.run-intent.dispatching")); err != nil {
+				t.Fatalf("valid state-aligned evidence was rejected: %v", err)
+			}
+		})
+	}
+}
+
 func TestConcurrentIdempotencyClaimsCreateOneRecordAndEvent(t *testing.T) {
 	repository, pool := testRepository(t)
 	ctx := context.Background()
