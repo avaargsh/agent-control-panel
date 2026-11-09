@@ -49,12 +49,17 @@ func ReconcileOnce(ctx context.Context, store reconcileStore, inspector reconcil
 	if current.Status == runintent.Accepted {
 		return current, nil
 	}
-	// A previous worker may have crashed after persisting its reconciliation
-	// claim but before storing the Runtime lookup result. Fence that expired
-	// lease first; the existing PostgreSQL CAS uses clock_timestamp() under a
-	// row lock to reject premature takeovers and stale workers.
-	if current.Status == runintent.Reconciling && !time.Now().UTC().Before(current.LeaseExpiresAt) {
-		expired, err := current.ExpireLease(current.Version, time.Now().UTC())
+	// A worker may crash after dispatching or claiming reconciliation.
+	// PostgreSQL clock_timestamp() under the row lock is the sole authority
+	// for lease expiry, not this process's potentially skewed wall clock.
+	// Domain ExpireLease constructs a fenced proposal; a live lease is
+	// refused by the database CAS before any Outbox event is committed.
+	if current.Status == runintent.Dispatching || current.Status == runintent.Reconciling {
+		expirationCheck := time.Now().UTC()
+		if expirationCheck.Before(current.LeaseExpiresAt) {
+			expirationCheck = current.LeaseExpiresAt
+		}
+		expired, err := current.ExpireLease(current.Version, expirationCheck)
 		if err != nil {
 			return current, err
 		}
@@ -63,6 +68,9 @@ func ReconcileOnce(ctx context.Context, store reconcileStore, inspector reconcil
 			return current, err
 		}
 		expired, err = store.CompareAndSwap(ctx, tenantID, intentID, current.Version, expired, ev)
+		if errors.Is(err, runintent.ErrLeaseActive) {
+			return current, ErrNotReconcilable
+		}
 		if err != nil {
 			return current, err
 		}
