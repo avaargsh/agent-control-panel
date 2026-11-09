@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/avaargsh/agent-control-panel/internal/runintent"
+	runpg "github.com/avaargsh/agent-control-panel/internal/runintent/postgres"
 )
 
 type acceptFunc func(context.Context, runintent.Intent) (runintent.DispatchOutcome, error)
@@ -119,5 +120,45 @@ func TestDispatchOnceUnrecognizedReceiptKindPersistsUnknown(t *testing.T) {
 		intent.TenantID, intent.ID, "dispatcher-2", time.Minute)
 	if !errors.Is(err, ErrNotDispatchable) || replay.Status != runintent.Unknown || calls != 1 {
 		t.Fatalf("unknown receipt permitted a second StartRun: %+v err=%v calls=%d", replay, err, calls)
+	}
+}
+
+type cancellationAwareDispatchStore struct {
+	*recoveryStoreFixture
+}
+
+func (s *cancellationAwareDispatchStore) CompareAndSwap(ctx context.Context, tenantID, intentID string, version uint64, next runintent.Intent, event runpg.Event) (runintent.Intent, error) {
+	if err := ctx.Err(); err != nil {
+		return runintent.Intent{}, err
+	}
+	return s.recoveryStoreFixture.CompareAndSwap(ctx, tenantID, intentID, version, next, event)
+}
+
+// A network call may return context.Canceled after Runtime commits StartRun.
+// ACP must use a bounded cleanup context to persist UNKNOWN before returning,
+// rather than reuse the canceled network context for the authoritative CAS.
+func TestDispatchOnceCancellationAfterAcceptPersistsUnknown(t *testing.T) {
+	intent := pendingDispatchFixture(t)
+	store := &cancellationAwareDispatchStore{recoveryStoreFixture: &recoveryStoreFixture{intent: intent}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	calls := 0
+	acceptor := acceptFunc(func(_ context.Context, claimed runintent.Intent) (runintent.DispatchOutcome, error) {
+		calls++
+		if store.intent.Status != runintent.Dispatching {
+			t.Fatal("Accept before durable DISPATCHING claim")
+		}
+		cancel()
+		return runintent.DispatchOutcome{}, context.Canceled
+	})
+	got, err := DispatchOnce(ctx, store, acceptor, intent.TenantID, intent.ID, "worker-1", time.Minute)
+	if !errors.Is(err, context.Canceled) || got.Status != runintent.Unknown ||
+		store.intent.Status != runintent.Unknown || len(store.events) != 2 ||
+		store.events[1].Type != "agent.run-intent.unknown" {
+		t.Fatalf("canceled network context lost UNKNOWN persistence: got=%+v stored=%+v events=%+v err=%v", got, store.intent, store.events, err)
+	}
+	again, err := DispatchOnce(context.Background(), store, acceptor, intent.TenantID, intent.ID, "worker-2", time.Minute)
+	if !errors.Is(err, ErrNotDispatchable) || again.Status != runintent.Unknown || calls != 1 {
+		t.Fatalf("canceled request was dispatched again: %+v err=%v calls=%d", again, err, calls)
 	}
 }
