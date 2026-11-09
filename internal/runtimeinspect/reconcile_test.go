@@ -200,7 +200,7 @@ func TestReconcileOnceDefersExpiredLeaseToDatabaseClock(t *testing.T) {
 	}
 	store := &leaseClockStore{
 		recoveryStoreFixture: &recoveryStoreFixture{intent: abandoned},
-		dbNow: now.Add(3 * time.Minute),
+		dbNow:                now.Add(3 * time.Minute),
 	}
 	inspect := inspectionFixture(func(_ context.Context, req InspectRequest) (Inspection, error) {
 		return Inspection{
