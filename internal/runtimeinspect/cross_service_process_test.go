@@ -295,29 +295,11 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 	if found.RunID != runID || found.WorkflowID != "agent-run/v1/"+runID {
 		t.Fatalf("restarted Runtime minted another Run: %+v", found)
 	}
-	recon, err := unknown.BeginReconciliation(unknown.Version, "reconciler-2", time.Now().UTC(), 3*time.Minute)
-	if err != nil {
-		t.Fatal(err)
-	}
-	recon, err = repo.CompareAndSwap(ctx, intent.TenantID, intent.ID, unknown.Version, recon, event(recon.Version, 4, "agent.run-intent.reconciling"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertACPOutbox(intent.TenantID, intent.ID,
-		"1:agent.run-intent.created",
-		"2:agent.run-intent.dispatching",
-		"3:agent.run-intent.unknown",
-		"4:agent.run-intent.reconciling")
-	accepted, err := recon.ApplyReconciliationResult(recon.Version, recon.LeaseOwner, recon.FenceToken, time.Now().UTC(), runintent.ReconciliationResult{
-		TenantID: intent.TenantID, RunIntentID: intent.ID, RequestDigest: intent.RequestDigest,
-		Kind: runintent.RuntimeFound, RunID: found.RunID, WorkflowID: found.WorkflowID,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	accepted, err = repo.CompareAndSwap(ctx, intent.TenantID, intent.ID, recon.Version, accepted, event(accepted.Version, 5, "agent.run-intent.accepted"))
+	// Exercise the reusable ACP recovery boundary against the actual restarted
+	// Runtime process, not hand-written Begin/Apply reconciliation transitions.
+	accepted, err := ReconcileOnce(ctx, repo, inspector, intent.TenantID, intent.ID, "reconciler-2", 3*time.Minute)
 	if err != nil || accepted.Status != runintent.Accepted || accepted.RunID != runID {
-		t.Fatalf("ACP reconcile: %+v %v", accepted, err)
+		t.Fatalf("ACP ReconcileOnce: %+v %v", accepted, err)
 	}
 	assertACPOutbox(intent.TenantID, intent.ID,
 		"1:agent.run-intent.created",
