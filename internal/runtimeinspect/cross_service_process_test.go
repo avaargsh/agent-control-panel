@@ -311,7 +311,7 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 	// Inspect boundary and neither has a StartRun capability.
 	type reconcileOutcome struct {
 		intent runintent.Intent
-		err error
+		err    error
 	}
 	outcomes := make(chan reconcileOutcome, 2)
 	ready := make(chan struct{})
