@@ -174,13 +174,55 @@ func TestReconcileOnceExpiredLeaseReclaimsWithNewFence(t *testing.T) {
 	}
 }
 
+// leaseClockStore models the authoritative database time enforced under the
+// row lock by PostgreSQL CompareAndSwap, independently from the worker clock.
+type leaseClockStore struct {
+	*recoveryStoreFixture
+	dbNow time.Time
+}
+
+func (s *leaseClockStore) CompareAndSwap(ctx context.Context, tenantID, intentID string, version uint64, next runintent.Intent, event runpg.Event) (runintent.Intent, error) {
+	if s.intent.Status == runintent.Reconciling && next.Status == runintent.Unknown &&
+		s.dbNow.Before(s.intent.LeaseExpiresAt) {
+		return runintent.Intent{}, runintent.ErrLeaseActive
+	}
+	return s.recoveryStoreFixture.CompareAndSwap(ctx, tenantID, intentID, version, next, event)
+}
+
+// PostgreSQL can consider a lease expired while a skewed worker clock still
+// observes its timestamp in the future. The database must decide takeover.
+func TestReconcileOnceDefersExpiredLeaseToDatabaseClock(t *testing.T) {
+	now := time.Now().UTC()
+	unknown := unknownRecoveryFixture(t)
+	abandoned, err := unknown.BeginReconciliation(unknown.Version, "crashed-worker", now, 2*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &leaseClockStore{
+		recoveryStoreFixture: &recoveryStoreFixture{intent: abandoned},
+		dbNow: now.Add(3 * time.Minute),
+	}
+	inspect := inspectionFixture(func(_ context.Context, req InspectRequest) (Inspection, error) {
+		return Inspection{
+			Status: Found, TenantID: req.TenantID, RunIntentID: req.RunIntentID,
+			RequestDigest: req.RequestDigest, RunID: "run-1", WorkflowID: "agent-run/v1/run-1",
+		}, nil
+	})
+	got, err := ReconcileOnce(context.Background(), store, inspect, abandoned.TenantID, abandoned.ID, "new-worker", 10*time.Minute)
+	if err != nil || got.Status != runintent.Accepted || got.RunID != "run-1" ||
+		got.Version != abandoned.Version+3 || got.FenceToken != abandoned.FenceToken+2 ||
+		len(store.events) != 3 {
+		t.Fatalf("database-expired lease was not recovered: %+v events=%d err=%v", got, len(store.events), err)
+	}
+}
+
 func TestReconcileOnceDoesNotStealLiveReconciliationLease(t *testing.T) {
 	unknown := unknownRecoveryFixture(t)
 	live, err := unknown.BeginReconciliation(unknown.Version, "live-worker", time.Now(), time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
-	store := &recoveryStoreFixture{intent: live}
+	store := &leaseClockStore{recoveryStoreFixture: &recoveryStoreFixture{intent: live}, dbNow: time.Now().UTC()}
 	inspect := inspectionFixture(func(context.Context, InspectRequest) (Inspection, error) {
 		t.Fatal("live lease must prevent a second Inspect")
 		return Inspection{}, nil
