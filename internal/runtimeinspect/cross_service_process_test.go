@@ -295,18 +295,77 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 	if found.RunID != runID || found.WorkflowID != "agent-run/v1/"+runID {
 		t.Fatalf("restarted Runtime minted another Run: %+v", found)
 	}
-	// Exercise the reusable ACP recovery boundary against the actual restarted
-	// Runtime process, not hand-written Begin/Apply reconciliation transitions.
-	accepted, err := ReconcileOnce(ctx, repo, inspector, intent.TenantID, intent.ID, "reconciler-2", 3*time.Minute)
-	if err != nil || accepted.Status != runintent.Accepted || accepted.RunID != runID {
-		t.Fatalf("ACP ReconcileOnce: %+v %v", accepted, err)
+	// Simulate a reconciler process dying after it committed its lease but
+	// before Inspect. A second worker must fence it using PostgreSQL time.
+	abandoned, err := unknown.BeginReconciliation(unknown.Version, "crashed-reconciler", time.Now().UTC(), 200*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	abandoned, err = repo.CompareAndSwap(ctx, intent.TenantID, intent.ID, unknown.Version, abandoned, event(abandoned.Version, 4, "agent.run-intent.reconciling"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(450 * time.Millisecond)
+	// Two independently scheduled callers race over the same PostgreSQL row.
+	// Only one may advance the version/fence; both share the real Runtime mTLS
+	// Inspect boundary and neither has a StartRun capability.
+	type reconcileOutcome struct {
+		intent runintent.Intent
+		err error
+	}
+	outcomes := make(chan reconcileOutcome, 2)
+	ready := make(chan struct{})
+	for i := 0; i < 2; i++ {
+		go func(i int) {
+			<-ready
+			got, reconcileErr := ReconcileOnce(ctx, repo, inspector, intent.TenantID, intent.ID, fmt.Sprintf("restarted-%d", i), 3*time.Minute)
+			outcomes <- reconcileOutcome{intent: got, err: reconcileErr}
+		}(i)
+	}
+	close(ready)
+	acceptedCount := 0
+	for i := 0; i < 2; i++ {
+		outcome := <-outcomes
+		if outcome.err == nil {
+			if outcome.intent.Status != runintent.Accepted || outcome.intent.RunID != runID {
+				t.Fatalf("competing reconciler returned incorrect success: %+v", outcome.intent)
+			}
+			acceptedCount++
+		} else if !errors.Is(outcome.err, runpg.ErrStaleVersion) &&
+			!errors.Is(outcome.err, runintent.ErrLeaseExpired) &&
+			!errors.Is(outcome.err, ErrNotReconcilable) {
+			t.Fatalf("unexpected concurrent reconciliation error: %v", outcome.err)
+		}
+	}
+	if acceptedCount < 1 {
+		t.Fatal("no reconciler recovered the committed Runtime Run")
+	}
+	accepted, err := repo.Get(ctx, intent.TenantID, intent.ID)
+	if err != nil || accepted.Status != runintent.Accepted || accepted.RunID != runID ||
+		accepted.Version != abandoned.Version+3 || accepted.FenceToken != abandoned.FenceToken+2 {
+		t.Fatalf("ACP lease takeover did not produce one fenced Run: %+v %v", accepted, err)
+	}
+	// The old worker cannot persist its receipt using the pre-crash lease.
+	stale, err := abandoned.ApplyReconciliationResult(abandoned.Version, abandoned.LeaseOwner,
+		abandoned.FenceToken, abandoned.LeaseExpiresAt.Add(-time.Nanosecond), runintent.ReconciliationResult{
+			TenantID: intent.TenantID, RunIntentID: intent.ID, RequestDigest: intent.RequestDigest,
+			Kind: runintent.RuntimeFound, RunID: found.RunID, WorkflowID: found.WorkflowID,
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CompareAndSwap(ctx, intent.TenantID, intent.ID, abandoned.Version, stale,
+		event(stale.Version, 8, "agent.run-intent.accepted")); !errors.Is(err, runpg.ErrStaleVersion) {
+		t.Fatalf("stale pre-crash reconciler overwrote authoritative state: %v", err)
 	}
 	assertACPOutbox(intent.TenantID, intent.ID,
 		"1:agent.run-intent.created",
 		"2:agent.run-intent.dispatching",
 		"3:agent.run-intent.unknown",
 		"4:agent.run-intent.reconciling",
-		"5:agent.run-intent.accepted")
+		"5:agent.run-intent.unknown",
+		"6:agent.run-intent.reconciling",
+		"7:agent.run-intent.accepted")
 	res, err := send(payload)
 	if err != nil {
 		t.Fatal(err)
@@ -340,7 +399,9 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 		"2:agent.run-intent.dispatching",
 		"3:agent.run-intent.unknown",
 		"4:agent.run-intent.reconciling",
-		"5:agent.run-intent.accepted")
+		"5:agent.run-intent.unknown",
+		"6:agent.run-intent.reconciling",
+		"7:agent.run-intent.accepted")
 	stored, err := repo.Get(ctx, intent.TenantID, intent.ID)
 	if err != nil || stored.Status != runintent.Accepted || stored.RunID != runID {
 		t.Fatalf("ACP persisted receipt: %+v %v", stored, err)
