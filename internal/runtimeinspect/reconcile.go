@@ -115,6 +115,13 @@ func ReconcileOnce(ctx context.Context, store reconcileStore, inspector reconcil
 			inspectErr = ErrInvalidResponse
 		}
 	}
+	// Authenticated Runtime HTTP 409 is an authoritative correlation
+	// conflict, not a network timeout or an uncertain absence. Persist a
+	// terminal manual-review transition with its own Outbox evidence.
+	if errors.Is(inspectErr, ErrRemoteConflict) {
+		result.Kind = runintent.RuntimeConflict
+		result.ReasonCode = "RUNTIME_STATE_CONFLICT"
+	}
 
 	next, err := claimed.ApplyReconciliationResult(
 		claimed.Version, claimed.LeaseOwner, claimed.FenceToken, time.Now().UTC(), result,
