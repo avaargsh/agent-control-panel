@@ -59,6 +59,13 @@ func TestDispositionV3RestrictedDatabaseRole(t *testing.T) {
 		if current != role {
 			return fmt.Errorf("wrong worker database principal: %s", current)
 		}
+		var sessionUser string
+		if err := tx.QueryRow(ctx, "SELECT session_user").Scan(&sessionUser); err != nil {
+			return err
+		}
+		if sessionUser != role {
+			return fmt.Errorf("worker is not independently authenticated: session_user=%s current_user=%s", sessionUser, current)
+		}
 		if _, err := tx.Exec(ctx, sql); err != nil {
 			return err
 		}
