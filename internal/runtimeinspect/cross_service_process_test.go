@@ -46,6 +46,36 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 		t.Fatal(err)
 	}
 	repo := runpg.New(pool)
+	// Validate the ACP side of the ACK-loss contract independently from the
+	// Runtime-owned RUN_START_REQUESTED Outbox and its single-Run guarantee.
+	assertACPOutbox := func(tenantID, runIntentID string, want ...string) {
+		t.Helper()
+		rows, err := pool.Query(ctx, `
+			SELECT aggregate_version, event_type
+			FROM outbox_events
+			WHERE tenant_id=$1 AND aggregate_type='run_intent' AND aggregate_id=$2
+			ORDER BY aggregate_version, event_type
+		`, tenantID, runIntentID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		got := make([]string, 0, len(want))
+		for rows.Next() {
+			var version int64
+			var eventType string
+			if err := rows.Scan(&version, &eventType); err != nil {
+				t.Fatal(err)
+			}
+			got = append(got, fmt.Sprintf("%d:%s", version, eventType))
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Join(got, "\n") != strings.Join(want, "\n") {
+			t.Fatalf("ACP Outbox changed (including unexpected duplicates): got %v, want %v", got, want)
+		}
+	}
 	intent := runintent.Intent{
 		ID: testIntent, TenantID: testTenant, PrincipalID: "principal-1",
 		ProjectID: "project-1", AgentID: "agent-1", ReleaseID: "release-1",
@@ -73,6 +103,9 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
+	assertACPOutbox(intent.TenantID, intent.ID,
+		"1:agent.run-intent.created",
+		"2:agent.run-intent.dispatching")
 
 	roots, serverCert, acpCert := testSPIFFECertificates(t)
 	dir := t.TempDir()
@@ -253,6 +286,10 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 	if err != nil || unknown.Status != runintent.Unknown {
 		t.Fatalf("lost ACK did not persist UNKNOWN: %+v %v", unknown, err)
 	}
+	assertACPOutbox(intent.TenantID, intent.ID,
+		"1:agent.run-intent.created",
+		"2:agent.run-intent.dispatching",
+		"3:agent.run-intent.unknown")
 	_ = start()
 	found := wait(Found)
 	if found.RunID != runID || found.WorkflowID != "agent-run/v1/"+runID {
@@ -266,6 +303,11 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
+	assertACPOutbox(intent.TenantID, intent.ID,
+		"1:agent.run-intent.created",
+		"2:agent.run-intent.dispatching",
+		"3:agent.run-intent.unknown",
+		"4:agent.run-intent.reconciling")
 	accepted, err := recon.ApplyReconciliationResult(recon.Version, recon.LeaseOwner, recon.FenceToken, time.Now().UTC(), runintent.ReconciliationResult{
 		TenantID: intent.TenantID, RunIntentID: intent.ID, RequestDigest: intent.RequestDigest,
 		Kind: runintent.RuntimeFound, RunID: found.RunID, WorkflowID: found.WorkflowID,
@@ -277,6 +319,12 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 	if err != nil || accepted.Status != runintent.Accepted || accepted.RunID != runID {
 		t.Fatalf("ACP reconcile: %+v %v", accepted, err)
 	}
+	assertACPOutbox(intent.TenantID, intent.ID,
+		"1:agent.run-intent.created",
+		"2:agent.run-intent.dispatching",
+		"3:agent.run-intent.unknown",
+		"4:agent.run-intent.reconciling",
+		"5:agent.run-intent.accepted")
 	res, err := send(payload)
 	if err != nil {
 		t.Fatal(err)
@@ -305,6 +353,12 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 	if id := assertOne(); id != runID {
 		t.Fatalf("Runtime Run changed to %s", id)
 	}
+	assertACPOutbox(intent.TenantID, intent.ID,
+		"1:agent.run-intent.created",
+		"2:agent.run-intent.dispatching",
+		"3:agent.run-intent.unknown",
+		"4:agent.run-intent.reconciling",
+		"5:agent.run-intent.accepted")
 	stored, err := repo.Get(ctx, intent.TenantID, intent.ID)
 	if err != nil || stored.Status != runintent.Accepted || stored.RunID != runID {
 		t.Fatalf("ACP persisted receipt: %+v %v", stored, err)
