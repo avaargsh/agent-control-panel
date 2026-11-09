@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -213,27 +214,24 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 		}
 	}))
 	defer drop.Close()
-	// The ACP dispatch boundary owns the durable claim and ambiguous ACK
-	// transition. Only the injected test adapter provides a Runtime Accept;
-	// no production issuer or StartRun worker is enabled here.
-	acceptCalls := 0
-	unknown, dispatchErr := DispatchOnce(ctx, repo, acceptFunc(func(_ context.Context, claimed runintent.Intent) (runintent.DispatchOutcome, error) {
-		acceptCalls++
-		if claimed.ID != intent.ID || claimed.Status != runintent.Dispatching ||
-			claimed.RequestDigest != intent.RequestDigest {
-			t.Fatalf("unexpected committed dispatch identity: %+v", claimed)
-		}
-		lost, err := http.Post(drop.URL, "application/json", bytes.NewReader(payload))
-		if lost != nil {
-			_ = lost.Body.Close()
-		}
-		if err == nil {
-			t.Fatal("unexpected ACK after injected loss")
-		}
-		return runintent.DispatchOutcome{}, err
-	}), intent.TenantID, intent.ID, "worker-1", 3*time.Minute)
-	if dispatchErr == nil || unknown.Status != runintent.Unknown || acceptCalls != 1 {
-		t.Fatalf("lost ACK did not persist UNKNOWN exactly once: %+v %v, sends=%d", unknown, dispatchErr, acceptCalls)
+	// The dispatcher is now a separately killable OS process; it uses the
+	// real ACP PostgreSQL state and a test-only transport proxy. The proxy
+	// drops the ACK only after authenticating and committing at Runtime.
+	dispatch := exec.Command(os.Args[0], "-test.run=^TestDispatchLostACKChild$")
+	dispatch.Env = append(os.Environ(),
+		"ACP_DISPATCH_CHILD=1",
+		"ACP_DATABASE_URL="+acpDSN,
+		"ACP_DISPATCH_TENANT="+intent.TenantID,
+		"ACP_DISPATCH_INTENT="+intent.ID,
+		"ACP_DISPATCH_ENDPOINT="+drop.URL,
+		"ACP_DISPATCH_PAYLOAD="+base64.StdEncoding.EncodeToString(payload),
+	)
+	if output, dispatchErr := dispatch.CombinedOutput(); dispatchErr != nil {
+		t.Fatalf("separate ACP dispatch process failed: %v: %s", dispatchErr, output)
+	}
+	unknown, err := repo.Get(ctx, intent.TenantID, intent.ID)
+	if err != nil || unknown.Status != runintent.Unknown || unknown.Version != 3 {
+		t.Fatalf("separate dispatch process did not persist UNKNOWN: %+v %v", unknown, err)
 	}
 	if err := <-upstream; err != nil {
 		t.Fatalf("Runtime did not commit before ACK loss: %v", err)
@@ -485,4 +483,62 @@ func TestCrashReconcilerAfterClaimChild(t *testing.T) {
 	_, err = ReconcileOnce(ctx, runpg.New(pool), blockedReconciliationInspector{},
 		tenantID, intentID, "crashed-reconciler", 600*time.Millisecond)
 	t.Fatalf("reconciler exited before injected SIGKILL: %v", err)
+}
+
+type lostACKDispatchAdapter struct {
+	endpoint string
+	payload  []byte
+	calls    int
+}
+
+func (a *lostACKDispatchAdapter) Accept(ctx context.Context, claimed runintent.Intent) (runintent.DispatchOutcome, error) {
+	a.calls++
+	if claimed.Status != runintent.Dispatching {
+		return runintent.DispatchOutcome{}, errors.New("dispatcher called Runtime without a committed lease")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.endpoint, bytes.NewReader(a.payload))
+	if err != nil {
+		return runintent.DispatchOutcome{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	res, err := http.DefaultClient.Do(req)
+	if res != nil {
+		_ = res.Body.Close()
+	}
+	if err == nil {
+		return runintent.DispatchOutcome{}, errors.New("injected lost ACK unexpectedly delivered an HTTP response")
+	}
+	return runintent.DispatchOutcome{}, err
+}
+
+// Test-only subprocess: no production service entry point or principal issuer.
+// It verifies a real ACP process persists UNKNOWN after a lost HTTP ACK.
+func TestDispatchLostACKChild(t *testing.T) {
+	if os.Getenv("ACP_DISPATCH_CHILD") != "1" {
+		t.Skip("only the two-process ACK-loss test starts this helper")
+	}
+	dsn := os.Getenv("ACP_DATABASE_URL")
+	tenantID := os.Getenv("ACP_DISPATCH_TENANT")
+	intentID := os.Getenv("ACP_DISPATCH_INTENT")
+	endpoint := os.Getenv("ACP_DISPATCH_ENDPOINT")
+	encoded := os.Getenv("ACP_DISPATCH_PAYLOAD")
+	if dsn == "" || tenantID == "" || intentID == "" || endpoint == "" || encoded == "" {
+		t.Fatal("dispatch subprocess requires PostgreSQL, scope and test transport")
+	}
+	payload, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	adapter := &lostACKDispatchAdapter{endpoint: endpoint, payload: payload}
+	got, dispatchErr := DispatchOnce(ctx, runpg.New(pool), adapter, tenantID, intentID, "worker-1", 3*time.Minute)
+	if dispatchErr == nil || got.Status != runintent.Unknown || got.Version != 3 || adapter.calls != 1 {
+		t.Fatalf("subprocess must persist one ambiguous dispatch: %+v %v calls=%d", got, dispatchErr, adapter.calls)
+	}
 }
