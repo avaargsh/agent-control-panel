@@ -31,3 +31,19 @@ The JetStream POC still writes a separate disposable poc_dlq_dispositions relati
 Require exact integrated-head PostgreSQL16, Go race/vet/gofmt, broker failure injection, independent migration/runtime DB LOGIN roles, restore, broker mTLS/ACL/HA and cross-service G01/G05 staging before promotion.
 Track remaining broker evidence in issue #16 and IAM/restore in issue #20.
 Keep PR #18 and #22 Draft. Close #19 unmerged only after the compatible security properties are transferred and reviewed.
+
+## Tenant-scoped LOGIN/RLS gate — 2026-11-10
+
+The canonical v3 journal is an immutable evidence store, **not** an authenticated tenant boundary. Its restricted PostgreSQL role can hold table-wide `SELECT` and publication-state `UPDATE` grants. Independent `LOGIN` credentials alone cannot prevent tenant-A users from reading, modifying, or inserting tenant-B journal records.
+
+[Executed RED #42726358578](https://github.com/avaargsh/agent-control-panel/actions/runs/42726358578) on the existing #17 branch proved all three cross-tenant accesses with a real non-owner, non-BYPASSRLS PostgreSQL login. [Test-scoped GREEN #42726701025](https://github.com/avaargsh/agent-control-panel/actions/runs/42726701025) proved that an **owner-provisioned** role-specific `CREATE POLICY ... TO <login>` with exact tenant `USING` and `WITH CHECK`, `ENABLE ROW LEVEL SECURITY`, and `FORCE ROW LEVEL SECURITY` denies cross-tenant SELECT/UPDATE/INSERT. This policy exists **only inside the disposable integration-test schema**. Neither the canonical v3 SQL checksum nor production IAM changed.
+
+Before any production rollout, require an independently reviewed additive forward migration, **not an edit to v3**:
+
+- Specify the trusted broker origin → tenant → independently authenticated PostgreSQL `LOGIN` binding and its provisioning, rotation, revocation, and role-membership rules. Do not use client-settable `app.tenant_id` or another untrusted session GUC as authorization authority.
+- Install tenant-scoped read/write RLS for the journal with both `USING` and `WITH CHECK`, `ENABLE` plus `FORCE`, non-owner `NOBYPASSRLS` runtime roles, and only reviewed table/column grants. Make an absent or unknown role-to-tenant binding deny all access.
+- Prove tenant A and B access denials with **separate authenticated sessions**, including SELECT invisibility, UPDATE row-count zero, INSERT `42501`, prohibited tenant reassignment, DDL/trigger tampering, inherited grants/role switches, and correct authorized writes.
+- Test production-shaped RLS policy/catalog attestation at startup, invalid/missing role bindings, real PostgreSQL dump/restore with policies/grants retained, and authentication through the service/broker boundary. Do not use superuser-only test sessions as tenant isolation proof.
+- Record the migration version, restore/rollback plan, affected installed v3 checksums, owner/security review and staging G01/G05 evidence before upgrading release readiness.
+
+Current decision: **test feasibility established; production tenant authority and versioned policy migration not accepted.** Keep ACP #17 Draft and ACP Issue #20 open.
