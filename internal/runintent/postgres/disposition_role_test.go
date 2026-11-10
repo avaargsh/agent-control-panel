@@ -50,6 +50,16 @@ func TestDispositionV3RestrictedDatabaseRole(t *testing.T) {
 		}
 	}
 
+	// Tenant B has independent journal evidence on the same shared table.
+	// The worker is authenticated for tenant A, never tenant B.
+	otherTenantInsert := fmt.Sprintf(
+		"INSERT INTO inbox_dlq_dispositions(tenant_id,consumer_name,source_stream,source_consumer,source_sequence,event_id,delivery_sha256,reason,dlq_stream,dlq_subject,evidence) "+
+			"VALUES ('tenant-b','consumer-b','stream-b','jetstream-durable-b',43,'00000000-0000-4000-8000-000000000043'::uuid,'%s','INBOX_QUARANTINED','dlq-b','dlq.b.43','{}'::bytea)",
+		strings.Repeat("b", 64))
+	if _, err := pool.Exec(ctx, otherTenantInsert); err != nil {
+		t.Fatalf("seed tenant-B journal evidence: %v", err)
+	}
+
 	workerConfig := pool.Config().ConnConfig.Copy()
 	workerConfig.User = role
 	workerConfig.Password = password
@@ -98,6 +108,45 @@ func TestDispositionV3RestrictedDatabaseRole(t *testing.T) {
 	if err := asWorker("UPDATE inbox_dlq_dispositions SET published=true,published_at=clock_timestamp()"); err != nil {
 		t.Fatalf("restricted role could not confirm disposition: %v", err)
 	}
+
+	// Test-only independently authenticated tenant-A worker must not read tenant-B
+	// evidence, publish its dispositions or create tenant-B entries.
+	t.Run("tenant-B SELECT is invisible", func(t *testing.T) {
+		var count int
+		if err := workerConn.QueryRow(ctx,
+			"SELECT count(*) FROM inbox_dlq_dispositions WHERE tenant_id='tenant-b'").Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 0 {
+			t.Fatalf("tenant-A LOGIN read %d tenant-B journal rows", count)
+		}
+	})
+	t.Run("tenant-B UPDATE is denied", func(t *testing.T) {
+		tag, err := workerConn.Exec(ctx,
+			"UPDATE inbox_dlq_dispositions SET publish_started=true WHERE tenant_id='tenant-b'")
+		if err != nil || tag.RowsAffected() != 0 {
+			t.Errorf("tenant-A LOGIN could mutate tenant-B journal: affected=%d err=%v", tag.RowsAffected(), err)
+		}
+		var began bool
+		if err := pool.QueryRow(ctx,
+			"SELECT publish_started FROM inbox_dlq_dispositions WHERE tenant_id='tenant-b'").Scan(&began); err != nil {
+			t.Fatal(err)
+		}
+		if began {
+			t.Error("tenant-B publication state changed under tenant-A credentials")
+		}
+	})
+	t.Run("tenant-B INSERT is rejected", func(t *testing.T) {
+		other := fmt.Sprintf(
+			"INSERT INTO inbox_dlq_dispositions(tenant_id,consumer_name,source_stream,source_consumer,source_sequence,event_id,delivery_sha256,reason,dlq_stream,dlq_subject,evidence) "+
+				"VALUES ('tenant-b','consumer-b','stream-b','jetstream-durable-b',44,'00000000-0000-4000-8000-000000000044'::uuid,'%s','INBOX_QUARANTINED','dlq-b','dlq.b.44','{}'::bytea)",
+			strings.Repeat("b", 64))
+		_, err := workerConn.Exec(ctx, other)
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) || pgErr.Code != "42501" {
+			t.Errorf("tenant-A LOGIN can forge tenant-B evidence: %v, want SQLSTATE 42501", err)
+		}
+	})
 
 	for _, tc := range []struct {
 		name     string
