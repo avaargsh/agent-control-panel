@@ -60,6 +60,37 @@ func TestDispositionV3RestrictedDatabaseRole(t *testing.T) {
 		t.Fatalf("seed tenant-B journal evidence: %v", err)
 	}
 
+	// NON-PRODUCTION POLICY PROOF: role ownership is trusted because the
+	// disposable test migrator explicitly provisions the LOGIN below. The
+	// external broker/tenant authority and forward versioned migration are
+	// NOT implemented by this test. Never use an app-settable tenant GUC
+	// as the RLS authority.
+	for _, statement := range []string{
+		"CREATE POLICY acp_test_tenant_a_dlq_role ON inbox_dlq_dispositions FOR ALL TO " + role +
+			" USING (tenant_id = 'tenant-a') WITH CHECK (tenant_id = 'tenant-a')",
+		"ALTER TABLE inbox_dlq_dispositions ENABLE ROW LEVEL SECURITY",
+		"ALTER TABLE inbox_dlq_dispositions FORCE ROW LEVEL SECURITY",
+	} {
+		if _, err := pool.Exec(ctx, statement); err != nil {
+			t.Fatalf("install disposable tenant-scoped RLS: %v", err)
+		}
+	}
+	var rlsEnabled, rlsForced, roleIsSuper, roleBypass bool
+	if err := pool.QueryRow(ctx,
+		"SELECT relrowsecurity, relforcerowsecurity FROM pg_class WHERE oid = to_regclass('inbox_dlq_dispositions')").
+		Scan(&rlsEnabled, &rlsForced); err != nil {
+		t.Fatalf("inspect test RLS catalog: %v", err)
+	}
+	if err := pool.QueryRow(ctx,
+		"SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = $1", role).
+		Scan(&roleIsSuper, &roleBypass); err != nil {
+		t.Fatalf("inspect test worker privileges: %v", err)
+	}
+	if !rlsEnabled || !rlsForced || roleIsSuper || roleBypass {
+		t.Fatalf("disposable RLS proof has weak role/policy settings: enabled=%v forced=%v super=%v bypass=%v",
+			rlsEnabled, rlsForced, roleIsSuper, roleBypass)
+	}
+
 	workerConfig := pool.Config().ConnConfig.Copy()
 	workerConfig.User = role
 	workerConfig.Password = password
