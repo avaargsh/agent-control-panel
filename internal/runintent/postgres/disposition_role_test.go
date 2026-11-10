@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"strconv"
@@ -9,18 +10,25 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// This is a PostgreSQL 16 role authorization test in a disposable schema,
-// NOT proof of an independently provisioned production service identity.
+// This PostgreSQL 16 role test uses an independent physical LOGIN connection
+// to a disposable schema. It does not provision production IAM, tenant RLS,
+// broker origin binding, TLS or least-privilege deployment credentials.
 func TestDispositionV3RestrictedDatabaseRole(t *testing.T) {
 	_, pool := testRepository(t)
 	ctx := context.Background()
 	schema := pool.Config().ConnConfig.RuntimeParams["search_path"]
 	role := "acp_dlq_worker_" + strconv.FormatInt(time.Now().UnixNano(), 10)
 
-	if _, err := pool.Exec(ctx, "CREATE ROLE "+role+" NOLOGIN"); err != nil {
+	secret := make([]byte, 24)
+	if _, err := rand.Read(secret); err != nil {
+		t.Fatalf("create test-only role password: %v", err)
+	}
+	password := fmt.Sprintf("%x", secret)
+	if _, err := pool.Exec(ctx, "CREATE ROLE "+role+" LOGIN PASSWORD '"+password+"'"); err != nil {
 		t.Fatalf("create restricted test role: %v", err)
 	}
 	t.Cleanup(func() {
@@ -42,16 +50,22 @@ func TestDispositionV3RestrictedDatabaseRole(t *testing.T) {
 		}
 	}
 
+	workerConfig := pool.Config().ConnConfig.Copy()
+	workerConfig.User = role
+	workerConfig.Password = password
+	workerConn, err := pgx.ConnectConfig(ctx, workerConfig)
+	if err != nil {
+		t.Fatalf("open independent worker LOGIN connection: %v", err)
+	}
+	t.Cleanup(func() { _ = workerConn.Close(context.Background()) })
+
 	asWorker := func(sql string) error {
 		t.Helper()
-		tx, err := pool.Begin(ctx)
+		tx, err := workerConn.Begin(ctx)
 		if err != nil {
 			return err
 		}
 		defer tx.Rollback(context.Background())
-		if _, err := tx.Exec(ctx, "SET LOCAL ROLE "+role); err != nil {
-			return err
-		}
 		var current string
 		if err := tx.QueryRow(ctx, "SELECT current_user").Scan(&current); err != nil {
 			return err
@@ -93,6 +107,9 @@ func TestDispositionV3RestrictedDatabaseRole(t *testing.T) {
 		{"edit immutable evidence", "UPDATE inbox_dlq_dispositions SET evidence='tampered'::bytea", "42501"},
 		{"edit tenant scope", "UPDATE inbox_dlq_dispositions SET tenant_id='tenant-b'", "42501"},
 		{"delete", "DELETE FROM inbox_dlq_dispositions", "42501"},
+		{"read migration checksum ledger", "SELECT checksum FROM schema_migrations", "42501"},
+		{"read RunIntent", "SELECT count(*) FROM run_intents", "42501"},
+		{"read RunIntent Outbox", "SELECT count(*) FROM outbox_events", "42501"},
 		{"truncate", "TRUNCATE inbox_dlq_dispositions", "42501"},
 		{"disable integrity trigger", "ALTER TABLE inbox_dlq_dispositions DISABLE TRIGGER inbox_dlq_no_unsafe_update_delete", "42501"},
 		{"rollback publication", "UPDATE inbox_dlq_dispositions SET published=false,published_at=NULL", "P0001"},
