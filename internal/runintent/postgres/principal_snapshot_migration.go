@@ -133,7 +133,7 @@ func verifyRunIntentPrincipalSnapshotSchema(ctx context.Context, tx pgx.Tx) erro
 
 	expectedFunctions := map[string]string{
 		"reject_run_intent_principal_snapshot_mutation": strings.TrimSpace("BEGIN\n    IF NEW.principal_snapshot_version IS DISTINCT FROM OLD.principal_snapshot_version\n        OR NEW.principal_subject_id IS DISTINCT FROM OLD.principal_subject_id\n        OR NEW.principal_actor_id IS DISTINCT FROM OLD.principal_actor_id\n        OR NEW.principal_policy_revision IS DISTINCT FROM OLD.principal_policy_revision\n        OR NEW.principal_config_digest IS DISTINCT FROM OLD.principal_config_digest THEN\n        RAISE EXCEPTION 'RunIntent principal snapshot is immutable';\n    END IF;\n    RETURN NEW;\nEND;"),
-		"require_run_intent_principal_snapshot_for_dispatch": strings.TrimSpace("BEGIN\n    IF NEW.status = 'DISPATCHING' AND NEW.principal_snapshot_version IS NULL THEN\n        RAISE EXCEPTION 'RunIntent cannot dispatch without an immutable principal snapshot';\n    END IF;\n    RETURN NEW;\nEND"),
+		"require_run_intent_principal_snapshot_for_dispatch": strings.TrimSpace("BEGIN\n    IF NEW.status = 'DISPATCHING' AND NEW.principal_snapshot_version IS NULL THEN\n        RAISE EXCEPTION 'RunIntent cannot dispatch without an immutable principal snapshot';\n    END IF;\n    RETURN NEW;\nEND;"),
 	}
 	for name, expected := range expectedFunctions {
 		var body string
