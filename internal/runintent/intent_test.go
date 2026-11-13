@@ -245,7 +245,7 @@ func TestDispatchFailsClosedWithoutPersistedPrincipalSnapshot(t *testing.T) {
 func TestPrincipalSnapshotMustBeCompleteAndProjectBound(t *testing.T) {
 	valid := fixture().PrincipalSnapshot
 	cases := []struct {
-		name string
+		name     string
 		snapshot PrincipalSnapshot
 	}{
 		{name: "wrong version", snapshot: PrincipalSnapshot{Version: "acp-principal/v2", ProjectID: "project-1", SubjectID: "subject-1", ActorID: "actor-1", PolicyRevision: "policy-1", ConfigDigest: valid.ConfigDigest}},

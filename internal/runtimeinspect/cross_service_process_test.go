@@ -183,12 +183,12 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 		"agent_release_id": intent.ReleaseID, "session_id": intent.SessionID,
 		"input": map[string]string{"message": "replay"},
 		"principal_context": map[string]string{
-			"version": intent.PrincipalSnapshot.Version,
-			"project_id": intent.PrincipalSnapshot.ProjectID,
-			"subject_id": intent.PrincipalSnapshot.SubjectID,
-			"actor_id": intent.PrincipalSnapshot.ActorID,
+			"version":         intent.PrincipalSnapshot.Version,
+			"project_id":      intent.PrincipalSnapshot.ProjectID,
+			"subject_id":      intent.PrincipalSnapshot.SubjectID,
+			"actor_id":        intent.PrincipalSnapshot.ActorID,
 			"policy_revision": intent.PrincipalSnapshot.PolicyRevision,
-			"config_digest": intent.PrincipalSnapshot.ConfigDigest,
+			"config_digest":   intent.PrincipalSnapshot.ConfigDigest,
 		},
 	})
 	if err != nil {

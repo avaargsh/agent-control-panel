@@ -86,15 +86,15 @@ func validRuntimeIdentity(runID, workflowID string) bool {
 }
 
 type Intent struct {
-	ID             string
-	TenantID       string
-	PrincipalID    string
-	ProjectID      string
-	AgentID        string
-	ReleaseID      string
-	SessionID      string
-	IdempotencyKey string
-	RequestDigest  string
+	ID                string
+	TenantID          string
+	PrincipalID       string
+	ProjectID         string
+	AgentID           string
+	ReleaseID         string
+	SessionID         string
+	IdempotencyKey    string
+	RequestDigest     string
 	PrincipalSnapshot PrincipalSnapshot
 
 	Version        uint64
