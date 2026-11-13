@@ -1,0 +1,54 @@
+name: Go and PostgreSQL validation
+
+on:
+  push:
+    branches: [main, "feat/go-foundation", "feature/platform-foundation"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: agent-ci
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6 pinned
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6 pinned
+        with:
+          go-version: '1.27.3'
+          cache: false
+      - name: Verify Go formatting
+        run: |
+          files="$(gofmt -l .)"
+          if [ -n "$files" ]; then
+            echo "$files"
+            exit 1
+          fi
+      - name: Verify module checksums
+        run: go mod verify
+      - name: Apply PostgreSQL schema
+        env:
+          PGPASSWORD: agent-ci
+        run: psql --host=127.0.0.1 --username=postgres --dbname=postgres --set=ON_ERROR_STOP=1 --file=migrations/0001_run_intents_outbox_inbox.sql
+      - name: Assert tenant-isolated aggregate claims and cursors
+        env:
+          PGPASSWORD: agent-ci
+        run: psql --host=127.0.0.1 --username=postgres --dbname=postgres --set=ON_ERROR_STOP=1 --file=migrations/tests/0001_tenant_isolation.sql
+      - name: Static analysis
+        run: go vet ./...
+      - name: Race-enabled tests
+        run: go test -race -count=1 ./...
