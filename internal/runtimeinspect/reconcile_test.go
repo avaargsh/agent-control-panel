@@ -49,7 +49,12 @@ func unknownRecoveryFixture(t *testing.T) runintent.Intent {
 		PrincipalID: "principal-1", ProjectID: "project-1", AgentID: "agent-1",
 		ReleaseID: "release-1", SessionID: "session-1", IdempotencyKey: "key-1",
 		RequestDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		Version:       1, Status: runintent.Pending,
+		PrincipalSnapshot: runintent.PrincipalSnapshot{
+			Version: runintent.PrincipalSnapshotVersion, ProjectID: "project-1",
+			SubjectID: "subject-1", ActorID: "actor-1", PolicyRevision: "policy-1",
+			ConfigDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		},
+		Version: 1, Status: runintent.Pending,
 	}
 	leased, err := intent.ClaimDispatch(intent.Version, "dispatcher-1", now, 3*time.Minute)
 	if err != nil {

@@ -13,11 +13,50 @@ func fixture() Intent {
 		ProjectID: "project-1", AgentID: "agent-1", ReleaseID: "release-1",
 		SessionID: "session-1", IdempotencyKey: "client-key-1",
 		RequestDigest: "sha256:" + strings.Repeat("a", 64),
-		Version:       1, Status: Pending,
+		PrincipalSnapshot: PrincipalSnapshot{
+			Version: PrincipalSnapshotVersion, ProjectID: "project-1",
+			SubjectID: "subject-1", ActorID: "actor-1",
+			PolicyRevision: "policy-1", ConfigDigest: "sha256:" + strings.Repeat("b", 64),
+		},
+		Version: 1, Status: Pending,
 	}
 }
 
 func TestDispatchAcceptanceUsesRuntimeOwnedRunIdentity(t *testing.T) {
+func TestDispatchFailsClosedWithoutPersistedPrincipalSnapshot(t *testing.T) {
+	intent := fixture()
+	intent.PrincipalSnapshot = PrincipalSnapshot{}
+	_, err := intent.ClaimDispatch(1, "dispatcher-1", time.Unix(100, 0).UTC(), time.Minute)
+	if !errors.Is(err, ErrPrincipalSnapshotUnavailable) {
+		t.Fatalf("legacy/unverified RunIntent was dispatchable: %v", err)
+	}
+}
+
+func TestPrincipalSnapshotMustBeCompleteAndProjectBound(t *testing.T) {
+	valid := fixture().PrincipalSnapshot
+	cases := []struct {
+		name string
+		snapshot PrincipalSnapshot
+	}{
+		{name: "wrong version", snapshot: PrincipalSnapshot{Version: "acp-principal/v2", ProjectID: "project-1", SubjectID: "subject-1", ActorID: "actor-1", PolicyRevision: "policy-1", ConfigDigest: valid.ConfigDigest}},
+		{name: "wrong project", snapshot: PrincipalSnapshot{Version: PrincipalSnapshotVersion, ProjectID: "project-2", SubjectID: "subject-1", ActorID: "actor-1", PolicyRevision: "policy-1", ConfigDigest: valid.ConfigDigest}},
+		{name: "missing subject", snapshot: PrincipalSnapshot{Version: PrincipalSnapshotVersion, ProjectID: "project-1", ActorID: "actor-1", PolicyRevision: "policy-1", ConfigDigest: valid.ConfigDigest}},
+		{name: "missing effective actor", snapshot: PrincipalSnapshot{Version: PrincipalSnapshotVersion, ProjectID: "project-1", SubjectID: "subject-1", PolicyRevision: "policy-1", ConfigDigest: valid.ConfigDigest}},
+		{name: "missing policy revision", snapshot: PrincipalSnapshot{Version: PrincipalSnapshotVersion, ProjectID: "project-1", SubjectID: "subject-1", ActorID: "actor-1", ConfigDigest: valid.ConfigDigest}},
+		{name: "invalid config digest", snapshot: PrincipalSnapshot{Version: PrincipalSnapshotVersion, ProjectID: "project-1", SubjectID: "subject-1", ActorID: "actor-1", PolicyRevision: "policy-1", ConfigDigest: "sha256:bad"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			intent := fixture()
+			intent.PrincipalSnapshot = tc.snapshot
+			if err := intent.Validate(); !errors.Is(err, ErrPrincipalSnapshotInvalid) {
+				t.Fatalf("invalid principal snapshot accepted: %v", err)
+			}
+		})
+	}
+}
+
+
 	now := time.Unix(100, 0).UTC()
 	intent, err := fixture().ClaimDispatch(1, "dispatcher-1", now, 10*time.Second)
 	if err != nil {
