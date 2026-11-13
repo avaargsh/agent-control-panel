@@ -2,7 +2,7 @@ name: Go and PostgreSQL validation
 
 on:
   push:
-    branches: [main, "feat/go-foundation"]
+    branches: [main, "feat/go-foundation", "feature/platform-foundation"]
   pull_request:
 
 permissions:
