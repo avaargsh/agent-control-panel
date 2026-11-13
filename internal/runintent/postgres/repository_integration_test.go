@@ -314,6 +314,40 @@ func TestCompareAndSwapRequiresNewFenceForNewLease(t *testing.T) {
 	}
 }
 
+
+func dropPrincipalSnapshotMigrationForTest(t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, "DROP TRIGGER IF EXISTS run_intent_principal_snapshot_immutable ON run_intents"); err != nil {
+		t.Fatalf("drop principal snapshot immutable trigger: %v", err)
+	}
+	if _, err := pool.Exec(ctx, "DROP TRIGGER IF EXISTS run_intent_dispatch_requires_principal_snapshot ON run_intents"); err != nil {
+		t.Fatalf("drop principal snapshot dispatch trigger: %v", err)
+	}
+	if _, err := pool.Exec(ctx, "DROP FUNCTION IF EXISTS reject_run_intent_principal_snapshot_mutation()"); err != nil {
+		t.Fatalf("drop principal snapshot immutable function: %v", err)
+	}
+	if _, err := pool.Exec(ctx, "DROP FUNCTION IF EXISTS require_run_intent_principal_snapshot_for_dispatch()"); err != nil {
+		t.Fatalf("drop principal snapshot dispatch function: %v", err)
+	}
+	if _, err := pool.Exec(ctx, "ALTER TABLE run_intents DROP CONSTRAINT IF EXISTS run_intents_principal_snapshot_consistency"); err != nil {
+		t.Fatalf("drop principal snapshot check: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		ALTER TABLE run_intents
+		DROP COLUMN IF EXISTS principal_snapshot_version,
+		DROP COLUMN IF EXISTS principal_subject_id,
+		DROP COLUMN IF EXISTS principal_actor_id,
+		DROP COLUMN IF EXISTS principal_policy_revision,
+		DROP COLUMN IF EXISTS principal_config_digest
+	`); err != nil {
+		t.Fatalf("drop principal snapshot columns: %v", err)
+	}
+	if _, err := pool.Exec(ctx, "DELETE FROM schema_migrations WHERE version=$1", principalSnapshotMigrationVersion); err != nil {
+		t.Fatalf("remove principal snapshot migration ledger: %v", err)
+	}
+}
+
 func TestCreateReplayRejectsChangedOwnerMetadataWithSameDigest(t *testing.T) {
 	repository, pool := testRepository(t)
 	ctx := context.Background()
@@ -327,7 +361,10 @@ func TestCreateReplayRejectsChangedOwnerMetadataWithSameDigest(t *testing.T) {
 		name   string
 		mutate func(*runintent.Intent)
 	}{
-		{"project", func(i *runintent.Intent) { i.ProjectID = "project-other" }},
+		{"project", func(i *runintent.Intent) {
+			i.ProjectID = "project-other"
+			i.PrincipalSnapshot.ProjectID = "project-other"
+		}},
 		{"agent", func(i *runintent.Intent) { i.AgentID = "agent-other" }},
 		{"release", func(i *runintent.Intent) { i.ReleaseID = "release-other" }},
 		{"session", func(i *runintent.Intent) { i.SessionID = "session-other" }},
@@ -363,9 +400,9 @@ func TestCreateReplayRejectsChangedOwnerMetadataWithSameDigest(t *testing.T) {
 func TestMigrationUpgradesRecordedV1ToConflictEvidenceV2(t *testing.T) {
 	_, pool := testRepository(t)
 	ctx := context.Background()
-	// The fixture now starts at v3. Remove v3 objects/history first so the
-	// test really models a recorded v1 database rather than an impossible
-	// v3-without-v2 migration history.
+	// Remove v4 and v3 objects/history so this test really models a
+	// recorded v1 schema, rather than a future schema with missing ledgers.
+	dropPrincipalSnapshotMigrationForTest(t, pool)
 	if _, err := pool.Exec(ctx, "DROP TABLE inbox_dlq_dispositions"); err != nil {
 		t.Fatalf("drop future v3 journal: %v", err)
 	}

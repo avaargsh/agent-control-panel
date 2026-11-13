@@ -138,6 +138,7 @@ func TestDispositionV3RejectsUnversionedPreexistingJournal(t *testing.T) {
 func TestDispositionV3UpgradesRecordedV2AndIsIdempotent(t *testing.T) {
 	_, pool := testRepository(t)
 	ctx := context.Background()
+	dropPrincipalSnapshotMigrationForTest(t, pool)
 	if _, err := pool.Exec(ctx, "DROP TABLE inbox_dlq_dispositions"); err != nil {
 		t.Fatal(err)
 	}
