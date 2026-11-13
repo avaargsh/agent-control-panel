@@ -27,6 +27,8 @@ It does **not** own executed Run/Task/Attempt/Checkpoint lifecycle, Temporal his
 
 A Run shown by this API is a **read-only projection** from Agent Runtime. The canonical `run_id` is generated and owned by Runtime. The Control Plane's `run_intent_id` is not a Run ID.
 
+`gpu-compute-platform` is retired as an active delivery repository and is retained only as historical migration/reference material. New Compute implementation and release evidence belong exclusively to `compute-control-panel`.
+
 ## Golden Path
 
 `AgentBundle → AgentRelease → Session → RunIntent → Agent Runtime → Temporal → Decision Core → optional framework adapter`
@@ -64,7 +66,7 @@ Compute is requested through Compute Control Plane; a Decision plugin never crea
 - [Implementation roadmap](docs/roadmap/IMPLEMENTATION-ROADMAP.md)
 - [Agent Decision Go Core API candidate](https://github.com/avaargsh/agent-decision/blob/bbdf45e415b310b421932977ca415419772dcaaa/api/openapi.yaml) — service-owned source, blocked pending [agent-decision#9](https://github.com/avaargsh/agent-decision/issues/9).
 - [Cross-repository protocol authority proposal](https://github.com/avaargsh/agent-control-panel/blob/governance/platform-v0.3/docs/governance/ADR-0001-PROTOCOL-AUTHORITY.md) — proposed only; not ratified.
-  
+
 The ACP-local `contracts/agent-decision/v0.1/` schemas and `contracts/engageguard/action-hash/v0.1/` vectors are retained as historical compatibility snapshots. They are not normative service contracts and must not be used to freeze a wire format or ActionHash preimage before the owning services approve the source contract.
 
 ## Status
