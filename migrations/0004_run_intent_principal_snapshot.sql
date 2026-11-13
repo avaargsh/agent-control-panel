@@ -47,7 +47,7 @@ BEGIN
         RAISE EXCEPTION 'RunIntent principal snapshot is immutable';
     END IF;
     RETURN NEW;
-END
+END;
 $principal_snapshot$;
 
 CREATE TRIGGER run_intent_principal_snapshot_immutable
@@ -67,7 +67,7 @@ BEGIN
         RAISE EXCEPTION 'RunIntent cannot dispatch without an immutable principal snapshot';
     END IF;
     RETURN NEW;
-END
+END;
 $dispatch_gate$;
 
 CREATE TRIGGER run_intent_dispatch_requires_principal_snapshot
