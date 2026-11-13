@@ -273,8 +273,9 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 			  AND project_id=$3 AND subject_id=$4
 			  AND actor_id=$5 AND policy_revision=$6
 			  AND config_digest=$7
-		`, id, intent.TenantID, intent.ProjectID,
-			"sha256:"+strings.Repeat("b", 64)).Scan(&snapshots); err != nil {
+		`, id, intent.TenantID, intent.PrincipalSnapshot.ProjectID,
+			intent.PrincipalSnapshot.SubjectID, intent.PrincipalSnapshot.ActorID,
+			intent.PrincipalSnapshot.PolicyRevision, intent.PrincipalSnapshot.ConfigDigest).Scan(&snapshots); err != nil {
 			t.Fatal(err)
 		}
 		if runs != 1 || starts != 1 || snapshots != 1 {
