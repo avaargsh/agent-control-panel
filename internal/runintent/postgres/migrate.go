@@ -22,6 +22,9 @@ const (
 const conflictMigrationVersion int64 = 2
 const conflictMigrationName = "0002_inbox_conflict_evidence.sql"
 
+const principalSnapshotMigrationVersion int64 = 4
+const principalSnapshotMigrationName = "0004_run_intent_principal_snapshot.sql"
+
 var (
 	ErrSchemaDrift       = errors.New("RunIntent schema migration checksum or relation drift")
 	ErrUnversionedSchema = errors.New("RunIntent schema exists without migration history")
@@ -176,12 +179,17 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 		return fmt.Errorf("read embedded Inbox disposition migration: %w", err)
 	}
 	dispositionChecksum := fmt.Sprintf("%x", sha256.Sum256(dispositionSource))
+	principalSnapshotSource, err := migrations.FS.ReadFile(principalSnapshotMigrationName)
+	if err != nil {
+		return fmt.Errorf("read embedded principal snapshot migration: %w", err)
+	}
+	principalSnapshotChecksum := fmt.Sprintf("%x", sha256.Sum256(principalSnapshotSource))
 
 	rows, err := tx.Query(ctx, "SELECT version, name, checksum FROM schema_migrations")
 	if err != nil {
 		return fmt.Errorf("read schema migration history: %w", err)
 	}
-	var appliedVersion, conflictApplied, dispositionApplied bool
+	var appliedVersion, conflictApplied, dispositionApplied, principalSnapshotApplied bool
 	for rows.Next() {
 		var version int64
 		var name, appliedChecksum string
@@ -208,6 +216,12 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 				return ErrSchemaDrift
 			}
 			dispositionApplied = true
+		case principalSnapshotMigrationVersion:
+			if name != principalSnapshotMigrationName || appliedChecksum != principalSnapshotChecksum || principalSnapshotApplied {
+				rows.Close()
+				return ErrSchemaDrift
+			}
+			principalSnapshotApplied = true
 		default:
 			rows.Close()
 			return ErrSchemaDrift
@@ -218,7 +232,9 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 		return fmt.Errorf("iterate schema migration history: %w", err)
 	}
 	rows.Close()
-	if conflictApplied && !appliedVersion || dispositionApplied && !conflictApplied {
+	if conflictApplied && !appliedVersion ||
+		dispositionApplied && !conflictApplied ||
+		principalSnapshotApplied && !dispositionApplied {
 		return ErrSchemaDrift
 	}
 
@@ -230,6 +246,9 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 			return err
 		}
 		if err := ensureInboxDLQDispositionMigration(ctx, tx, dispositionApplied, dispositionSource, dispositionChecksum); err != nil {
+			return err
+		}
+		if err := ensureRunIntentPrincipalSnapshotMigration(ctx, tx, principalSnapshotApplied, principalSnapshotSource, principalSnapshotChecksum); err != nil {
 			return err
 		}
 		if err := tx.Commit(ctx); err != nil {
@@ -279,6 +298,9 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 		return err
 	}
 	if err := ensureInboxDLQDispositionMigration(ctx, tx, false, dispositionSource, dispositionChecksum); err != nil {
+		return err
+	}
+	if err := ensureRunIntentPrincipalSnapshotMigration(ctx, tx, false, principalSnapshotSource, principalSnapshotChecksum); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
