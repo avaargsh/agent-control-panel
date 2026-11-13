@@ -81,6 +81,11 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 		ID: testIntent, TenantID: testTenant, PrincipalID: "principal-1",
 		ProjectID: "project-1", AgentID: "agent-1", ReleaseID: "release-1",
 		SessionID: "session-1", IdempotencyKey: "replay-1", RequestDigest: testDigest,
+		PrincipalSnapshot: runintent.PrincipalSnapshot{
+			Version: runintent.PrincipalSnapshotVersion, ProjectID: "project-1",
+			SubjectID: "subject-1", ActorID: "actor-1", PolicyRevision: "policy-revision-1",
+			ConfigDigest: "sha256:" + strings.Repeat("b", 64),
+		},
 		Version: 1, Status: runintent.Pending,
 	}
 	event := func(v uint64, n int, kind string) runpg.Event {
@@ -178,10 +183,12 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 		"agent_release_id": intent.ReleaseID, "session_id": intent.SessionID,
 		"input": map[string]string{"message": "replay"},
 		"principal_context": map[string]string{
-			"version": "acp-principal/v1", "project_id": intent.ProjectID,
-			"subject_id": "subject-1", "actor_id": "actor-1",
-			"policy_revision": "policy-revision-1",
-			"config_digest":   "sha256:" + strings.Repeat("b", 64),
+			"version": intent.PrincipalSnapshot.Version,
+			"project_id": intent.PrincipalSnapshot.ProjectID,
+			"subject_id": intent.PrincipalSnapshot.SubjectID,
+			"actor_id": intent.PrincipalSnapshot.ActorID,
+			"policy_revision": intent.PrincipalSnapshot.PolicyRevision,
+			"config_digest": intent.PrincipalSnapshot.ConfigDigest,
 		},
 	})
 	if err != nil {
@@ -263,9 +270,9 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 			SELECT count(*) FROM runtime_run_principal_snapshots
 			WHERE run_id=$1::uuid AND tenant_id=$2
 			  AND issuer_spiffe_id='spiffe://example.org/acp'
-			  AND project_id=$3 AND subject_id='subject-1'
-			  AND actor_id='actor-1' AND policy_revision='policy-revision-1'
-			  AND config_digest=$4
+			  AND project_id=$3 AND subject_id=$4
+			  AND actor_id=$5 AND policy_revision=$6
+			  AND config_digest=$7
 		`, id, intent.TenantID, intent.ProjectID,
 			"sha256:"+strings.Repeat("b", 64)).Scan(&snapshots); err != nil {
 			t.Fatal(err)
