@@ -314,7 +314,6 @@ func TestCompareAndSwapRequiresNewFenceForNewLease(t *testing.T) {
 	}
 }
 
-
 func dropPrincipalSnapshotMigrationForTest(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 	ctx := context.Background()
