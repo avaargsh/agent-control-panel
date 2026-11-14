@@ -198,7 +198,7 @@ func TestWorkspaceTenantAndPrincipalRestrictedRLS(t *testing.T) {
 	}
 	for _, tc := range []struct {
 		tenant, principal string
-		want int
+		want              int
 	}{
 		{lock.TenantID, lock.PrincipalID, 1},
 		{"tenant-other", lock.PrincipalID, 0},
