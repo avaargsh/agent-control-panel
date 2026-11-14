@@ -1,0 +1,58 @@
+name: Workspace S3/MinIO signed-byte integration (non-production)
+
+on:
+  pull_request:
+    paths:
+      - 'internal/workspace/s3blob/**'
+      - 'internal/runintent/postgres/workspace_object_integration_test.go'
+      - '.github/workflows/workspace-minio.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GOTOOLCHAIN: local
+
+jobs:
+  minio-real-bytes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6 pinned
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6 pinned
+        with:
+          go-version: '1.27.4'
+          cache: false
+      - name: Start isolated MinIO test server (release pinned, not production)
+        run: |
+          # The legacy OSS MinIO image is no longer published on Docker Hub.
+          # This uses the upstream historical Quay release tag and records its
+          # pulled digest for audit; the registry may eventually withdraw it.
+          docker pull quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+          docker image inspect --format '{{index .RepoDigests 0}}' quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+          docker run --detach --rm --name acp-workspace-minio \
+            --publish 127.0.0.1:9000:9000 \
+            --env MINIO_ROOT_USER=acp-ci-access \
+            --env MINIO_ROOT_PASSWORD=acp-ci-secret-only \
+            quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z server /data
+          for attempt in $(seq 1 45); do
+            if curl --fail --silent http://127.0.0.1:9000/minio/health/live >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo 'MinIO health deadline exceeded' >&2
+          exit 1
+      - name: Assert actual MinIO object bytes and corruption recovery
+        env:
+          S3BLOB_MINIO_TEST_ENDPOINT: http://127.0.0.1:9000
+          S3BLOB_MINIO_TEST_ACCESS_KEY: acp-ci-access
+          S3BLOB_MINIO_TEST_SECRET_KEY: acp-ci-secret-only
+        run: |
+          test "$(go env GOVERSION)" = "go1.27.4"
+          go test -race -count=1 -run '^TestMinIOBackend$' -v ./internal/workspace/s3blob
+      - name: Stop and inspect disposable MinIO
+        if: always()
+        run: |
+          docker logs --tail 60 acp-workspace-minio || true
+          docker rm --force acp-workspace-minio || true
