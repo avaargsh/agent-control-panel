@@ -298,3 +298,34 @@ func (r *Repository) CommitWorkspace(
 	}
 	return receipt, nil
 }
+
+// WorkspaceAssetReader is the trusted object-store read interface. The adapter
+// must check actual bytes, tenant/Workspace namespace, size and SHA256.
+type WorkspaceAssetReader interface {
+	ReadAsset(context.Context, string, string, workspace.Asset) ([]byte, error)
+}
+
+var ErrWorkspaceAssetNotFound = errors.New("asset is absent from committed Workspace manifest")
+
+// ReadVerifiedWorkspaceAsset first authenticates the pinned ACP identity and
+// loads an immutable committed manifest, then obtains the blob through a
+// trusted byte-verifying object-store adapter. Callers MUST derive the Lock
+// from server-side verified principal/release state; this method is not an
+// HTTP authentication boundary.
+func (r *Repository) ReadVerifiedWorkspaceAsset(
+	ctx context.Context, lock researchlock.Lock, logicalPath string, reader WorkspaceAssetReader,
+) ([]byte, error) {
+	if reader == nil || logicalPath == "" {
+		return nil, ErrWorkspaceUnverifiedAsset
+	}
+	_, assets, err := r.ReadWorkspaceSnapshot(ctx, lock)
+	if err != nil {
+		return nil, err
+	}
+	for _, asset := range assets {
+		if asset.Path == logicalPath {
+			return reader.ReadAsset(ctx, lock.TenantID, lock.WorkspaceID, asset)
+		}
+	}
+	return nil, ErrWorkspaceAssetNotFound
+}
