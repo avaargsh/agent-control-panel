@@ -317,6 +317,18 @@ func TestCompareAndSwapRequiresNewFenceForNewLease(t *testing.T) {
 func dropPrincipalSnapshotMigrationForTest(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 	ctx := context.Background()
+	// Simulated pre-v4 history must first drop the dependent v5 objects.
+	// Keeping v5 while deleting v4 history would be deliberate ledger drift.
+	for _, statement := range []string{
+		"DROP TABLE run_capability_locks",
+		"DROP FUNCTION reject_run_capability_lock_mutation()",
+		"DROP INDEX run_intents_capability_parent_identity",
+		"DELETE FROM schema_migrations WHERE version=5",
+	} {
+		if _, err := pool.Exec(ctx, statement); err != nil {
+			t.Fatalf("remove future DAS lock migration: %v", err)
+		}
+	}
 	if _, err := pool.Exec(ctx, "DROP TRIGGER IF EXISTS run_intent_principal_snapshot_immutable ON run_intents"); err != nil {
 		t.Fatalf("drop principal snapshot immutable trigger: %v", err)
 	}
