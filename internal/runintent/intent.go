@@ -86,15 +86,16 @@ func validRuntimeIdentity(runID, workflowID string) bool {
 }
 
 type Intent struct {
-	ID             string
-	TenantID       string
-	PrincipalID    string
-	ProjectID      string
-	AgentID        string
-	ReleaseID      string
-	SessionID      string
-	IdempotencyKey string
-	RequestDigest  string
+	ID                string
+	TenantID          string
+	PrincipalID       string
+	ProjectID         string
+	AgentID           string
+	ReleaseID         string
+	SessionID         string
+	IdempotencyKey    string
+	RequestDigest     string
+	PrincipalSnapshot PrincipalSnapshot
 
 	Version        uint64
 	FenceToken     uint64
@@ -149,6 +150,11 @@ func (i Intent) Validate() error {
 		!validOpaqueID(i.IdempotencyKey) ||
 		!validDigest(i.RequestDigest) || i.Version == 0 {
 		return ErrInvalid
+	}
+	if !i.PrincipalSnapshot.IsZero() {
+		if err := i.PrincipalSnapshot.ValidateForProject(i.ProjectID); err != nil {
+			return err
+		}
 	}
 
 	leased := i.Status == Dispatching || i.Status == Reconciling
@@ -225,6 +231,9 @@ func (i Intent) ClaimDispatch(expectedVersion uint64, owner string, now time.Tim
 	}
 	if i.Status != Pending {
 		return i, ErrTransition
+	}
+	if err := i.PrincipalSnapshot.ValidateForProject(i.ProjectID); err != nil {
+		return i, err
 	}
 	if strings.TrimSpace(owner) == "" || now.IsZero() || ttl <= 0 {
 		return i, ErrInvalid

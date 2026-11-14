@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/avaargsh/agent-control-panel/internal/runintent"
@@ -32,7 +33,7 @@ const (
 	aggregateType   = "run_intent"
 )
 
-const selectIntentColumns = "id::text, tenant_id, principal_id, project_id, agent_id, release_id, session_id, idempotency_key, request_digest, version, fence_token, status, lease_owner, lease_expires_at, runtime_run_id, workflow_id, rejection_code, manual_review_code"
+const selectIntentColumns = "id::text, tenant_id, principal_id, project_id, agent_id, release_id, session_id, idempotency_key, request_digest, version, fence_token, status, lease_owner, lease_expires_at, runtime_run_id, workflow_id, rejection_code, manual_review_code, principal_snapshot_version, principal_subject_id, principal_actor_id, principal_policy_revision, principal_config_digest"
 
 // Event is an immutable Outbox envelope. Payload must be a JSON object.
 type Event struct {
@@ -69,6 +70,9 @@ func (r *Repository) Create(ctx context.Context, intent runintent.Intent, event 
 	if err := intent.Validate(); err != nil {
 		return runintent.Intent{}, false, err
 	}
+	if err := intent.PrincipalSnapshot.ValidateForProject(intent.ProjectID); err != nil {
+		return runintent.Intent{}, false, err
+	}
 	if intent.Status != runintent.Pending || intent.Version != 1 || intent.FenceToken != 0 {
 		return runintent.Intent{}, false, ErrInvalidTransition
 	}
@@ -84,16 +88,19 @@ func (r *Repository) Create(ctx context.Context, intent runintent.Intent, event 
 
 	query := "INSERT INTO run_intents (" +
 		"id, tenant_id, principal_id, operation, project_id, agent_id, release_id, session_id, " +
-		"idempotency_key, request_digest, status, version, fence_token, lease_owner, lease_expires_at, " +
+		"idempotency_key, request_digest, principal_snapshot_version, principal_subject_id, principal_actor_id, " +
+		"principal_policy_revision, principal_config_digest, status, version, fence_token, lease_owner, lease_expires_at, " +
 		"runtime_run_id, workflow_id, rejection_code, manual_review_code) " +
-		"VALUES ($1::uuid, $2, $3, '" + operationCreate + "', $4, $5, $6, $7, $8, $9, $10, $11, $12, " +
-		"$13, $14, $15, $16, $17, $18) " +
+		"VALUES ($1::uuid, $2, $3, '" + operationCreate + "', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, " +
+		"$15, $16, $17, $18, $19, $20, $21, $22, $23) " +
 		"ON CONFLICT (tenant_id, principal_id, operation, idempotency_key) DO NOTHING " +
 		"RETURNING " + selectIntentColumns
 
 	persisted, err := scanIntent(tx.QueryRow(ctx, query,
 		intent.ID, intent.TenantID, intent.PrincipalID, intent.ProjectID, intent.AgentID,
 		intent.ReleaseID, intent.SessionID, intent.IdempotencyKey, intent.RequestDigest,
+		intent.PrincipalSnapshot.Version, intent.PrincipalSnapshot.SubjectID, intent.PrincipalSnapshot.ActorID,
+		intent.PrincipalSnapshot.PolicyRevision, intent.PrincipalSnapshot.ConfigDigest,
 		string(intent.Status), int64(intent.Version), int64(intent.FenceToken),
 		nullableString(intent.LeaseOwner), nullableTime(intent.LeaseExpiresAt),
 		nullableString(intent.RunID), nullableString(intent.WorkflowID),
@@ -269,7 +276,7 @@ func (r *Repository) CompareAndSwap(ctx context.Context, tenantID, id string, ex
 }
 
 func validateEvent(event Event, intent runintent.Intent, requiredType string) error {
-	if event.ID == "" || event.Producer == "" || event.Type == "" || event.SchemaVersion <= 0 ||
+	if event.ID == "" || event.Producer != "agent-control-panel" || event.Type == "" || event.SchemaVersion <= 0 ||
 		event.TenantID != intent.TenantID || event.AggregateType != aggregateType ||
 		event.AggregateID != intent.ID || event.AggregateVersion != intent.Version ||
 		event.OccurredAt.IsZero() || event.CorrelationID == "" {
@@ -278,8 +285,11 @@ func validateEvent(event Event, intent runintent.Intent, requiredType string) er
 	if requiredType != "" && event.Type != requiredType {
 		return ErrInvalidEvent
 	}
-	if requiredType == "" && event.Type == eventCreated {
-		return ErrInvalidEvent
+	if requiredType == "" {
+		wantType := "agent.run-intent." + strings.ReplaceAll(strings.ToLower(string(intent.Status)), "_", "-")
+		if event.Type != wantType {
+			return ErrInvalidEvent
+		}
 	}
 	var object map[string]json.RawMessage
 	if len(event.Payload) == 0 || json.Unmarshal(event.Payload, &object) != nil || object == nil {
@@ -310,12 +320,14 @@ func scanIntent(row pgx.Row) (runintent.Intent, error) {
 	var version, fenceToken int64
 	var status string
 	var leaseOwner, runID, workflowID, rejectionCode, manualReviewCode pgtype.Text
+	var snapshotVersion, snapshotSubject, snapshotActor, snapshotPolicy, snapshotConfig pgtype.Text
 	var leaseExpiresAt pgtype.Timestamptz
 	err := row.Scan(
 		&intent.ID, &intent.TenantID, &intent.PrincipalID, &intent.ProjectID, &intent.AgentID,
 		&intent.ReleaseID, &intent.SessionID, &intent.IdempotencyKey, &intent.RequestDigest,
 		&version, &fenceToken, &status, &leaseOwner, &leaseExpiresAt, &runID,
 		&workflowID, &rejectionCode, &manualReviewCode,
+		&snapshotVersion, &snapshotSubject, &snapshotActor, &snapshotPolicy, &snapshotConfig,
 	)
 	if err != nil {
 		return runintent.Intent{}, err
@@ -344,6 +356,23 @@ func scanIntent(row pgx.Row) (runintent.Intent, error) {
 	if manualReviewCode.Valid {
 		intent.ManualReviewCode = manualReviewCode.String
 	}
+	snapshotFields := []pgtype.Text{snapshotVersion, snapshotSubject, snapshotActor, snapshotPolicy, snapshotConfig}
+	validSnapshotFields := 0
+	for _, field := range snapshotFields {
+		if field.Valid {
+			validSnapshotFields++
+		}
+	}
+	if validSnapshotFields != 0 && validSnapshotFields != len(snapshotFields) {
+		return runintent.Intent{}, fmt.Errorf("%w: partial principal snapshot columns", ErrCorruptRecord)
+	}
+	if validSnapshotFields == len(snapshotFields) {
+		intent.PrincipalSnapshot = runintent.PrincipalSnapshot{
+			Version: snapshotVersion.String, ProjectID: intent.ProjectID,
+			SubjectID: snapshotSubject.String, ActorID: snapshotActor.String,
+			PolicyRevision: snapshotPolicy.String, ConfigDigest: snapshotConfig.String,
+		}
+	}
 	if err := intent.Validate(); err != nil {
 		return runintent.Intent{}, fmt.Errorf("%w: %v", ErrCorruptRecord, err)
 	}
@@ -354,7 +383,7 @@ func sameImmutableIdentity(a, b runintent.Intent) bool {
 	return a.ID == b.ID && a.TenantID == b.TenantID && a.PrincipalID == b.PrincipalID &&
 		a.ProjectID == b.ProjectID && a.AgentID == b.AgentID && a.ReleaseID == b.ReleaseID &&
 		a.SessionID == b.SessionID && a.IdempotencyKey == b.IdempotencyKey &&
-		a.RequestDigest == b.RequestDigest
+		a.RequestDigest == b.RequestDigest && a.PrincipalSnapshot == b.PrincipalSnapshot
 }
 
 func allowedTransition(from, to runintent.Status) bool {
@@ -402,5 +431,6 @@ func sameCreationIdentity(existing, requested runintent.Intent) bool {
 		existing.ReleaseID == requested.ReleaseID &&
 		existing.SessionID == requested.SessionID &&
 		existing.IdempotencyKey == requested.IdempotencyKey &&
-		existing.RequestDigest == requested.RequestDigest
+		existing.RequestDigest == requested.RequestDigest &&
+		existing.PrincipalSnapshot == requested.PrincipalSnapshot
 }

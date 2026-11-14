@@ -1,0 +1,80 @@
+name: ACP-to-Runtime authenticated lost-ACK recovery (non-production)
+
+on:
+  pull_request:
+    paths:
+      - 'internal/runtimeinspect/**'
+      - 'internal/runintent/**'
+      - '.github/workflows/acp-runtime-loss-ack.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # Use the audited Go binary; do not silently download another toolchain.
+  GOTOOLCHAIN: local
+
+jobs:
+  two-service-recovery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: agent-ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - name: Check out ACP PR integration head
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6 pinned
+        with:
+          path: acp
+      - name: Check out immutable Runtime implementation reference
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6 pinned
+        with:
+          repository: avaargsh/agent-runtime
+          ref: 202fcae936c73d529ef5f7ef390118fd09fec97e
+          path: runtime-source
+          persist-credentials: false
+      - name: Verify exact Runtime source checkout
+        working-directory: runtime-source
+        run: test "$(git rev-parse HEAD)" = '202fcae936c73d529ef5f7ef390118fd09fec97e'
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6 pinned
+        with:
+          go-version: '1.27.4'
+          cache: false
+      - name: Assert patched Go toolchain
+        run: |
+          test "$(go env GOVERSION)" = "go1.27.4"
+          go version
+      - name: Create two independent authoritative databases
+        env:
+          PGPASSWORD: agent-ci
+        run: |
+          psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE acp_recovery'
+          psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE runtime_recovery'
+      - name: Compile real Runtime mTLS API process
+        working-directory: runtime-source
+        run: go build -trimpath -o "$RUNNER_TEMP/acp-runtime-api" ./cmd/acp-api
+      - name: Execute actual two-process mTLS + PostgreSQL lost-ACK test
+        working-directory: acp
+        env:
+          ACP_CROSS_SERVICE: '1'
+          ACP_DATABASE_URL: postgres://postgres:agent-ci@127.0.0.1:5432/acp_recovery?sslmode=disable
+          ACP_RUNTIME_DATABASE_URL: postgres://postgres:agent-ci@127.0.0.1:5432/runtime_recovery?sslmode=disable
+          ACP_RUNTIME_API_BIN: ${{ runner.temp }}/acp-runtime-api
+        run: |
+          go test -race -count=1 -v -run '^TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart$' ./internal/runtimeinspect
+
+# This gate proves two independent PG stores, real mTLS acceptance/Inspect,
+# process SIGKILL, lost ACK and idempotent recovery. It does not launch
+# Temporal or verify origin-principal/policy binding. G01/G05 remain blocked.
