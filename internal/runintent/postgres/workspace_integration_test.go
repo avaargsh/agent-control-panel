@@ -223,3 +223,54 @@ func TestWorkspaceMigrationRejectsPolicyDrift(t *testing.T) {
 		t.Fatalf("weakened Workspace RLS accepted: %v", err)
 	}
 }
+
+type approveAssets struct{}
+
+func (approveAssets) VerifyAsset(context.Context, string, string, workspace.Asset) error { return nil }
+
+func TestWorkspaceManifestSnapshotAndConflictingCommitReplay(t *testing.T) {
+	repo, pool := testRepository(t)
+	ctx := context.Background()
+	lock := workspacePinnedFixture(t, repo, 9980)
+	if _, _, err := repo.OpenWorkspace(ctx, lock); err != nil {
+		t.Fatal(err)
+	}
+	assets := []workspace.Asset{
+		{Path: "reports/research.md", Digest: "sha256:" + strings.Repeat("a", 64), SizeBytes: 111},
+		{Path: "data/source.csv", Digest: "sha256:" + strings.Repeat("b", 64), SizeBytes: 222},
+	}
+	receipt, err := repo.CommitWorkspace(ctx, lock, WorkspaceCommitInput{
+		CommitID: "files-1", ExpectedRevision: 0, Assets: assets,
+	}, approveAssets{})
+	if err != nil || receipt.Revision != 1 {
+		t.Fatalf("commit manifest: %+v err=%v", receipt, err)
+	}
+	state, stored, err := New(pool).ReadWorkspaceSnapshot(ctx, lock)
+	if err != nil || state.Revision != 1 || len(stored) != 2 ||
+		stored[0].Path != "data/source.csv" || stored[1].Path != "reports/research.md" {
+		t.Fatalf("durable file manifest changed: %+v %+v err=%v", state, stored, err)
+	}
+	modified := append([]workspace.Asset(nil), assets...)
+	modified[0].Digest = "sha256:" + strings.Repeat("c", 64)
+	if _, err := repo.CommitWorkspace(ctx, lock, WorkspaceCommitInput{
+		CommitID: "files-1", ExpectedRevision: 0, Assets: modified,
+	}, approveAssets{}); !errors.Is(err, ErrWorkspaceReplayConflict) {
+		t.Fatalf("modified manifest replayed: %v", err)
+	}
+	second := testIntent(9982)
+	second.SessionID = "session-2"
+	nextLock := pinnedFixture(second.ID)
+	nextLock.SessionID = second.SessionID
+	if _, created, err := repo.CreatePinned(ctx, second, testEvent(second, 1, 9983, eventCreated), nextLock); err != nil || !created {
+		t.Fatalf("create second Thread: %v created=%v", err, created)
+	}
+	reopened, inserted, err := repo.OpenWorkspace(ctx, nextLock)
+	if err != nil || inserted || reopened.Revision != 1 {
+		t.Fatalf("second Thread cannot reopen Workspace: %+v %v inserted=%v", reopened, err, inserted)
+	}
+	// SQL cannot mutate an immutable receipt after it has committed.
+	if _, err := pool.Exec(ctx, "UPDATE workspace_manifest_commits SET manifest_digest=$1 WHERE commit_id='files-1'",
+		"sha256:"+strings.Repeat("c", 64)); err == nil {
+		t.Fatal("committed asset receipt was mutated")
+	}
+}
