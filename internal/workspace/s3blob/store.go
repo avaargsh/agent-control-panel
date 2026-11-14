@@ -24,11 +24,11 @@ import (
 const MaxUploadBytes int64 = 8 << 20
 
 var (
-	ErrInvalidConfig  = errors.New("invalid S3 backend configuration")
-	ErrInvalidObject  = errors.New("invalid scoped Workspace object")
-	ErrIntegrity      = errors.New("Workspace object bytes fail digest/size verification")
-	ErrObjectMissing  = errors.New("Workspace object missing")
-	ErrStorage        = errors.New("S3 backend operation failed")
+	ErrInvalidConfig = errors.New("invalid S3 backend configuration")
+	ErrInvalidObject = errors.New("invalid scoped Workspace object")
+	ErrIntegrity     = errors.New("Workspace object bytes fail digest/size verification")
+	ErrObjectMissing = errors.New("Workspace object missing")
+	ErrStorage       = errors.New("S3 backend operation failed")
 )
 
 type Config struct {
@@ -43,13 +43,13 @@ type Config struct {
 }
 
 type Store struct {
-	endpoint    *url.URL
-	region      string
-	bucket      string
-	accessKey   string
-	secretKey   string
-	session     string
-	client      *http.Client
+	endpoint  *url.URL
+	region    string
+	bucket    string
+	accessKey string
+	secretKey string
+	session   string
+	client    *http.Client
 }
 
 func validRegion(v string) bool {
@@ -164,9 +164,9 @@ func (s *Store) signedRequest(ctx context.Context, method, path string, body []b
 		req.Header.Set("X-Amz-Security-Token", s.session)
 	}
 	headers := map[string]string{
-		"host": req.URL.Host,
+		"host":                 req.URL.Host,
 		"x-amz-content-sha256": payloadHash,
-		"x-amz-date": amzDate,
+		"x-amz-date":           amzDate,
 	}
 	if conditional {
 		headers["if-none-match"] = "*"
