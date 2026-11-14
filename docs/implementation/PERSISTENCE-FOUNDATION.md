@@ -43,6 +43,29 @@ The Go repository foundation now provides:
 - `Migrate` uses a PostgreSQL advisory lock and one transaction for schema DDL plus a version/name/SHA-256 migration ledger. It rejects changed checksums, incomplete schemas and unversioned pre-existing relations rather than silently adopting them.
 - CI runs the repository tests against PostgreSQL via `PGTEST_DSN`, in addition to parent-branch migration and tenant-isolation smoke checks.
 
+## PostgreSQL-clock RunIntent CAS gate (stacked Draft PR #13)
+
+`Repository.CompareAndSwap` validates lease lifetime using PostgreSQL's
+`clock_timestamp()` under the locked RunIntent row, then repeats the guard in
+the conditional `UPDATE` immediately before the Outbox append. A caller's
+clock or a stale in-memory `Intent` cannot authorize a commit after the stored
+lease has expired.
+
+- New PENDING→DISPATCHING and UNKNOWN→RECONCILING leases must expire strictly
+  after the database clock and advance the fencing token exactly once.
+- Valid Runtime receipt/reconciliation transitions must complete while the
+  current lease is active and **must not increment** its fencing token.
+- An ambiguous receipt may move active DISPATCHING/RECONCILING→UNKNOWN with the
+  existing token; an expired lease may move to UNKNOWN only with `fence+1`.
+  Premature expiry and post-expiry ACK/reconciliation are rejected without
+  changing the RunIntent row or appending an Outbox event.
+- This is a repository persistence guarantee, **not** a cryptographic Runtime
+  receipt, mTLS authenticator, trusted principal snapshot, or an implementation
+  of the cross-repository `StartRun/InspectRunIntent` protocol. Those remain
+  blocked by ACP #10 / Runtime #20 owner-ratified contracts and recovery tests.
+- CI verifies these cases using PostgreSQL 16 and synthetic typed outcomes;
+  it does not establish staging recovery or database role/IAM hardening.
+
 ## Explicit remaining implementation gaps
 
 - Inbox ingestion/consumer workers, including deduplication, tenant-scoped aggregate ordering, cursor advancement, gap recovery and quarantine.
