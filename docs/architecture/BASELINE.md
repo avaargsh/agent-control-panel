@@ -10,7 +10,7 @@ The product is a thin Agent Infrastructure Control Plane. It exposes a stable AP
 
 The central contract is:
 
-- **Control Plane authority:** Agent identity, desired state, release intent, Session/Run identity, policy bindings, lifecycle coordination and evidence references.
+- **Control Plane authority:** Agent/Session identity, release intent, RunIntent desired state, policy bindings, lifecycle coordination and references to evidence. Canonical Run/Task/Attempt identity and state belong to Agent Runtime.
 - **Runtime authority:** actual execution plan semantics, workflow history, task/step scheduling, retry policy, wait/approval continuation and checkpoint details.
 - **Provider authority:** external resource state and side effects; the Control Plane tracks references and reconciles observed state.
 
@@ -46,7 +46,8 @@ Initial deployable modules should be kept coarse: API/domain service, reconciler
 - `AgentBundle`: immutable content-addressed package; declares runtime, tools, context inputs, policies and resource requirements by reference.
 - `AgentRelease`: immutable bundle digest plus release intent; status records rollout/reconciliation progress.
 - `Session`: stable logical work/conversation identity that survives multiple Runs and runtime restarts.
-- `Run`: a durable execution instance under a Session; lifecycle states: `Pending → Running → Waiting → Succeeded | Failed | Cancelled`.
+- `RunIntent`: the ACP-owned, durable request for execution, distinct from an accepted Run and from its execution outcome.
+- `Run`: a Runtime-owned durable execution instance linked to a Session/RunIntent; any status shown by ACP is a verified projection, not ACP-authoritative state.
 - `FederationBinding`: maps a local provider identity to a remote control plane/provider and its trust constraints.
 - `CredentialBinding`: secret/provider reference with scope, target and revocation semantics; secret bytes are never persisted in domain objects.
 - `ContextProjectionPolicy`: declares allowed context sources, projection limits and provenance rules.
@@ -56,7 +57,7 @@ Initial deployable modules should be kept coarse: API/domain service, reconciler
 
 - `AgentIdentity`: durable logical identity, independent from AgentRelease and runtime instance.
 - `SessionIdentity`: stable identity across Runs; owned by the Control Plane.
-- `RunIdentity`: durable unique execution identity, never reused after retry or recovery.
+- `RunIdentity`: canonical Runtime-issued execution identity, stable for an accepted logical Run across retry and recovery; ACP may store only a verified reference.
 - `WorkloadIdentity`: short-lived identity issued/bound to a specific runtime or Sandbox; revocable and scoped.
 - `ProviderResourceIdentity`: provider-native identity recorded as a mapping, not promoted to canonical Agent identity.
 
@@ -64,33 +65,35 @@ A Sandbox UID, Pod name, workflow ID or credential identifier must not become th
 
 ## 4. State ownership and reconciliation
 
-The API write path validates and persists desired state and an outbox event atomically. Reconciliation is asynchronous and idempotent. Every provider request carries a stable operation ID and desired-state generation.
+The ACP write path validates and persists ACP-owned desired state/RunIntent and its Outbox event atomically. Reconciliation is asynchronous and idempotent. External effect identities and their journals remain owned by the corresponding Runtime, Guard, Compute or provider boundary; ACP does not mint protected-action or provider-operation IDs.
 
 The reconciler must distinguish:
 
 - desired state from observed state;
-- logical Run state from workflow-provider execution state;
+- ACP's observed projection of Run state from the Runtime-authoritative execution state;
 - provider acknowledgement from verified outcome;
 - retryable errors from ambiguous/unknown side-effect outcomes.
 
 On process restart, reconciliation resumes from durable records. An ambiguous provider operation is queried/reconciled before another side effect is attempted. Do not infer success solely from a timeout-free API response or from the target resource coincidentally matching desired state.
 
-## 5. Run lifecycle contract
+## 5. RunIntent and observed Run lifecycle (conceptual, not an API schema)
 
-`Pending`: persisted Run intent; prerequisites and authorization are checked.  
+The following labels describe an illustrative Runtime-owned Run lifecycle, **not ACP-owned state transitions**. RunIntent acceptance alone does not create a Run or prove an effect. Only Runtime owns canonical Run state; ACP validates RunIntent transitions and projects verified Runtime receipts.
+
+`Pending`: Runtime has recorded an execution not yet running (distinct from ACP's accepted RunIntent).  
 `Running`: workflow/provider has accepted execution and Run is active.  
 `Waiting`: execution is suspended on approval, input, timer or external event.  
 `Succeeded`: terminal state backed by accepted completion evidence.  
 `Failed`: terminal state with structured error and evidence references.  
 `Cancelled`: cancellation intent reconciled with execution provider; terminal only after provider state is confirmed or cancellation outcome is explicitly represented as unknown.
 
-State transitions are validated centrally. Terminal states are immutable except for appended correction/verification evidence; never mutate history to erase an earlier outcome.
+State transitions are validated by their owning service, not by a shared ACP state machine. Runtime-owned terminal Run states remain immutable except for owner-authorized appended correction/verification evidence; ACP cannot mutate Runtime history.
 
 ## 6. External integrations
 
 ### Workflow
 
-Temporal is the preferred durable execution engine integration. The Control Plane stores canonical Session/Run identity and workflow references. Workflow history, activities, retries and continuation semantics remain owned by Temporal. A provider adapter maps Run intents and reports state/events without duplicating execution internals.
+Temporal is the preferred durable execution engine integration. ACP stores canonical Agent/Session identity and RunIntent; only Runtime issues canonical Run and workflow IDs, which ACP may reference after authenticated durable reconciliation. Workflow history, activities, retries and continuation semantics remain owned by Temporal. An adapter maps RunIntent to Runtime execution requests and projects verified state/events without duplicating execution internals.
 
 ### Sandbox
 
