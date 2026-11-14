@@ -13,6 +13,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/avaargsh/agent-control-panel/internal/workspace"
 	"github.com/avaargsh/agent-control-panel/internal/workspace/s3blob"
 )
 
