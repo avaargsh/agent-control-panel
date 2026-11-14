@@ -1,0 +1,10 @@
+{
+  "protocol_version": "v0.1",
+  "invocation_id": "inv-0001",
+  "kind": "final_response",
+  "text": "The approved change updates the service boundary.",
+  "structured_output": {
+    "summary": "Service boundary updated"
+  },
+  "evidence_refs": ["evidence://doc-1/page-2"]
+}

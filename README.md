@@ -79,6 +79,15 @@ For changes involving runtime dispatch, protected effects, or provider release, 
 
 Documentation-only governance corrections may be merged independently when they do not enable a runtime path, publish an unratified protocol as authoritative, or misrepresent historical PR topology as current. A Draft implementation stacked on a non-main parent is **not approved for main** merely because its local tests pass. External side-effect outcomes in `UNKNOWN` remain `UNKNOWN` until inspected by their owning service; do not blindly dispatch, mark FAILED, or finalize cost. Branch protection/required-check enforcement is a separate repository-settings obligation and is **not** established by this README or the PR template.
 
+## Development implementation (not a production release)
+
+The Go development baseline includes the RunIntent/PostgreSQL repository, transactional Outbox publisher, ordered Inbox consumer, broker settlement experiments and authenticated **read-only** Runtime InspectRunIntent client. The selected implementation is integrated from the reviewed internal stack through [ACP PR #14](https://github.com/avaargsh/agent-control-panel/pull/14); the historical cross-service Decision/Guard fixture snapshots are **not** normative protocol sources.
+
+- Source code: `internal/runintent/`, `internal/runtimeinspect/`, `internal/inboxtransport/`; PostgreSQL SQL: `migrations/`.
+- Tests: Go race/PostgreSQL, cross-process read-only Runtime lost-ACK, JetStream POC and contract compatibility.
+- Development means these components may be exercised in controlled test environments; it **does not** enable production dispatch, provide verified operator identity for all deployments, or prove G01–G05.
+- Real credential issuance/revocation, broker operations, Temporal restart, production delivery topology and protected-action Guard/Compute effects remain separate integration and release work.
+
 ## Documentation
 
 - [Architecture baseline](docs/architecture/BASELINE.md)
