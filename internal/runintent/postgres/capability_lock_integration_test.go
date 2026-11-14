@@ -3,9 +3,11 @@ package postgres
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/avaargsh/agent-control-panel/internal/researchlock"
 )
@@ -164,4 +166,56 @@ func TestPinnedMigrationDriftRLSAndMutationGuards(t *testing.T) {
 			t.Fatal("DAS lock deleted")
 		}
 	})
+}
+
+func TestPinnedRestrictedRoleTenantIsolation(t *testing.T) {
+	repository, pool := testRepository(t)
+	ctx := context.Background()
+	intent := testIntent(9771)
+	if _, _, err := repository.CreatePinned(ctx, intent, testEvent(intent, 1, 9772, eventCreated), pinnedFixture(intent.ID)); err != nil {
+		t.Fatalf("create pinned fixture: %v", err)
+	}
+	var schema string
+	if err := pool.QueryRow(ctx, "SELECT current_schema()").Scan(&schema); err != nil {
+		t.Fatal(err)
+	}
+	role := fmt.Sprintf("caplock_reader_%d", time.Now().UnixNano())
+	if _, err := pool.Exec(ctx, "CREATE ROLE "+role+" NOLOGIN"); err != nil {
+		t.Fatalf("create restricted role: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), "DROP OWNED BY "+role)
+		_, _ = pool.Exec(context.Background(), "DROP ROLE "+role)
+	})
+	if _, err := pool.Exec(ctx, "GRANT USAGE ON SCHEMA "+schema+" TO "+role); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, "GRANT SELECT ON "+schema+".run_capability_locks TO "+role); err != nil {
+		t.Fatal(err)
+	}
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	if _, err := tx.Exec(ctx, "SET LOCAL ROLE "+role); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, "SELECT set_config('app.tenant_id',$1,true)", intent.TenantID); err != nil {
+		t.Fatal(err)
+	}
+	var got int
+	if err := tx.QueryRow(ctx, "SELECT count(*) FROM run_capability_locks").Scan(&got); err != nil || got != 1 {
+		t.Fatalf("restricted tenant cannot read own lock: count=%d err=%v", got, err)
+	}
+	if _, err := tx.Exec(ctx, "SELECT set_config('app.tenant_id','tenant-other',true)"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.QueryRow(ctx, "SELECT count(*) FROM run_capability_locks").Scan(&got); err != nil || got != 0 {
+		t.Fatalf("cross-tenant lock was visible: count=%d err=%v", got, err)
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
 }
