@@ -317,6 +317,19 @@ func TestCompareAndSwapRequiresNewFenceForNewLease(t *testing.T) {
 func dropPrincipalSnapshotMigrationForTest(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 	ctx := context.Background()
+	// Simulated pre-v4 history must first drop v6 Workspace and dependent v5 objects.
+	for _, statement := range []string{
+		"DROP TABLE workspace_manifest_commits",
+		"DROP TABLE research_workspaces",
+		"DROP FUNCTION reject_workspace_identity_mutation()",
+		"DROP FUNCTION reject_workspace_commit_mutation()",
+		"DROP INDEX run_capability_locks_workspace_identity",
+		"DELETE FROM schema_migrations WHERE version=6",
+	} {
+		if _, err := pool.Exec(ctx, statement); err != nil {
+			t.Fatalf("remove future Workspace migration: %v", err)
+		}
+	}
 	// Simulated pre-v4 history must first drop the dependent v5 objects.
 	// Keeping v5 while deleting v4 history would be deliberate ledger drift.
 	for _, statement := range []string{
