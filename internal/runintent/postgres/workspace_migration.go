@@ -211,7 +211,7 @@ func verifyWorkspaceSchema(ctx context.Context, tx pgx.Tx) error {
 	}
 	for name, expected := range map[string]string{
 		"reject_workspace_identity_mutation": "BEGIN\n    RAISE EXCEPTION 'Workspace identity is immutable';\nEND;",
-		"reject_workspace_commit_mutation": "BEGIN\n    RAISE EXCEPTION 'Workspace commit receipt is immutable';\nEND;",
+		"reject_workspace_commit_mutation":   "BEGIN\n    RAISE EXCEPTION 'Workspace commit receipt is immutable';\nEND;",
 	} {
 		var actual string
 		err := tx.QueryRow(ctx, `
