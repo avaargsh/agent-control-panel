@@ -31,6 +31,9 @@ const capabilityLockMigrationName = "0005_run_capability_locks.sql"
 const workspaceMigrationVersion int64 = 6
 const workspaceMigrationName = "0006_workspace_manifest_cas.sql"
 
+const blobStageMigrationVersion int64 = 7
+const blobStageMigrationName = "0007_workspace_blob_stages.sql"
+
 var (
 	ErrSchemaDrift       = errors.New("RunIntent schema migration checksum or relation drift")
 	ErrUnversionedSchema = errors.New("RunIntent schema exists without migration history")
@@ -200,12 +203,17 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 		return fmt.Errorf("read embedded Workspace migration: %w", err)
 	}
 	workspaceChecksum := fmt.Sprintf("%x", sha256.Sum256(workspaceSource))
+	blobStageSource, err := migrations.FS.ReadFile(blobStageMigrationName)
+	if err != nil {
+		return fmt.Errorf("read embedded blob stage migration: %w", err)
+	}
+	blobStageChecksum := fmt.Sprintf("%x", sha256.Sum256(blobStageSource))
 
 	rows, err := tx.Query(ctx, "SELECT version, name, checksum FROM schema_migrations")
 	if err != nil {
 		return fmt.Errorf("read schema migration history: %w", err)
 	}
-	var appliedVersion, conflictApplied, dispositionApplied, principalSnapshotApplied, capabilityLockApplied, workspaceApplied bool
+	var appliedVersion, conflictApplied, dispositionApplied, principalSnapshotApplied, capabilityLockApplied, workspaceApplied, blobStageApplied bool
 	for rows.Next() {
 		var version int64
 		var name, appliedChecksum string
@@ -250,6 +258,12 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 				return ErrSchemaDrift
 			}
 			workspaceApplied = true
+		case blobStageMigrationVersion:
+			if name != blobStageMigrationName || appliedChecksum != blobStageChecksum || blobStageApplied {
+				rows.Close()
+				return ErrSchemaDrift
+			}
+			blobStageApplied = true
 		default:
 			rows.Close()
 			return ErrSchemaDrift
@@ -264,7 +278,8 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 		dispositionApplied && !conflictApplied ||
 		principalSnapshotApplied && !dispositionApplied ||
 		capabilityLockApplied && !principalSnapshotApplied ||
-		workspaceApplied && !capabilityLockApplied {
+		workspaceApplied && !capabilityLockApplied ||
+		blobStageApplied && !workspaceApplied {
 		return ErrSchemaDrift
 	}
 
@@ -287,6 +302,9 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 		if err := ensureWorkspaceMigration(ctx, tx, workspaceApplied, workspaceSource, workspaceChecksum); err != nil {
 			return err
 		}
+		if err := ensureBlobStageMigration(ctx, tx, blobStageApplied, blobStageSource, blobStageChecksum); err != nil {
+			return err
+		}
 		if err := tx.Commit(ctx); err != nil {
 			return fmt.Errorf("commit schema verification: %w", err)
 		}
@@ -304,6 +322,8 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 		OR to_regclass('run_capability_locks') IS NOT NULL
 		OR to_regclass('research_workspaces') IS NOT NULL
 		OR to_regclass('workspace_manifest_commits') IS NOT NULL
+		OR to_regclass('workspace_blob_stages') IS NOT NULL
+		OR to_regclass('workspace_blob_commit_refs') IS NOT NULL
 	`).Scan(&anySchemaExists); err != nil {
 		return fmt.Errorf("inspect existing RunIntent schema: %w", err)
 	}
@@ -346,6 +366,9 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 		return err
 	}
 	if err := ensureWorkspaceMigration(ctx, tx, false, workspaceSource, workspaceChecksum); err != nil {
+		return err
+	}
+	if err := ensureBlobStageMigration(ctx, tx, false, blobStageSource, blobStageChecksum); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
