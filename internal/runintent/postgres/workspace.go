@@ -203,10 +203,25 @@ func workspaceReceiptMatches(receipt WorkspaceCommitReceipt, lock researchlock.L
 		receipt.ManifestDigest == digest
 }
 
-// CommitWorkspace atomically increments one Workspace revision and appends an
-// immutable receipt. Callers must supply a server-verified RunIntent lock.
+// CommitWorkspace is the backward-compatible v6 metadata path. New storage
+// integrations should use CommitStagedWorkspace with immutable stage evidence.
 func (r *Repository) CommitWorkspace(
 	ctx context.Context, lock researchlock.Lock, input WorkspaceCommitInput, verifier AssetVerifier,
+) (WorkspaceCommitReceipt, error) {
+	return r.commitWorkspace(ctx, lock, input, verifier, false)
+}
+
+// CommitStagedWorkspace requires a recent scoped upload-stage receipt for
+// every referenced asset, and atomically records its retention references
+// with the immutable Manifest receipt. No object deletion is performed.
+func (r *Repository) CommitStagedWorkspace(
+	ctx context.Context, lock researchlock.Lock, input WorkspaceCommitInput, verifier AssetVerifier,
+) (WorkspaceCommitReceipt, error) {
+	return r.commitWorkspace(ctx, lock, input, verifier, true)
+}
+
+func (r *Repository) commitWorkspace(
+	ctx context.Context, lock researchlock.Lock, input WorkspaceCommitInput, verifier AssetVerifier, staged bool,
 ) (WorkspaceCommitReceipt, error) {
 	if r == nil || r.pool == nil || !workspace.ValidID(input.CommitID) ||
 		input.ExpectedRevision < 0 || input.ExpectedRevision >= math.MaxInt64 {
@@ -233,6 +248,11 @@ func (r *Repository) CommitWorkspace(
 		if !workspaceReceiptMatches(existing, lock, input, digest) {
 			return WorkspaceCommitReceipt{}, ErrWorkspaceReplayConflict
 		}
+		if staged {
+			if err := checkCommittedBlobRefs(ctx, tx, lock, existing.Revision, input.Assets); err != nil {
+				return WorkspaceCommitReceipt{}, err
+			}
+		}
 		return existing, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
@@ -247,6 +267,25 @@ func (r *Repository) CommitWorkspace(
 	for _, asset := range input.Assets {
 		if err := verifier.VerifyAsset(ctx, lock.TenantID, lock.WorkspaceID, asset); err != nil {
 			return WorkspaceCommitReceipt{}, ErrWorkspaceUnverifiedAsset
+		}
+	}
+
+	if staged {
+		for _, asset := range input.Assets {
+			var ok bool
+			if err := tx.QueryRow(ctx, `
+				SELECT EXISTS (
+					SELECT 1 FROM workspace_blob_stages
+					WHERE tenant_id=$1 AND workspace_id=$2 AND owner_principal_id=$3
+					  AND asset_path=$4 AND artifact_digest=$5 AND size_bytes=$6
+					  AND expires_at>clock_timestamp()
+				)`, lock.TenantID, lock.WorkspaceID, lock.PrincipalID,
+				asset.Path, asset.Digest, asset.SizeBytes).Scan(&ok); err != nil {
+				return WorkspaceCommitReceipt{}, fmt.Errorf("verify staged blob lease: %w", err)
+			}
+			if !ok {
+				return WorkspaceCommitReceipt{}, ErrBlobStageMissing
+			}
 		}
 	}
 
@@ -269,6 +308,11 @@ func (r *Repository) CommitWorkspace(
 		if lookupErr == nil {
 			if !workspaceReceiptMatches(replayed, lock, input, digest) {
 				return WorkspaceCommitReceipt{}, ErrWorkspaceReplayConflict
+			}
+			if staged {
+				if err := checkCommittedBlobRefs(ctx, tx, lock, replayed.Revision, input.Assets); err != nil {
+					return WorkspaceCommitReceipt{}, err
+				}
 			}
 			return replayed, nil
 		}
@@ -293,10 +337,45 @@ func (r *Repository) CommitWorkspace(
 	if err != nil {
 		return WorkspaceCommitReceipt{}, fmt.Errorf("insert Workspace manifest receipt: %w", err)
 	}
+	if staged {
+		for _, asset := range input.Assets {
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO workspace_blob_commit_refs (
+					tenant_id,workspace_id,owner_principal_id,manifest_revision,
+					asset_path,artifact_digest,size_bytes
+				) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+				lock.TenantID, lock.WorkspaceID, lock.PrincipalID, receipt.Revision,
+				asset.Path, asset.Digest, asset.SizeBytes); err != nil {
+				return WorkspaceCommitReceipt{}, fmt.Errorf("retain verified blob reference: %w", err)
+			}
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return WorkspaceCommitReceipt{}, fmt.Errorf("commit Workspace CAS: %w", err)
 	}
 	return receipt, nil
+}
+
+func checkCommittedBlobRefs(
+	ctx context.Context, tx pgx.Tx, lock researchlock.Lock, revision int64, assets []workspace.Asset,
+) error {
+	for _, asset := range assets {
+		var found bool
+		if err := tx.QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1 FROM workspace_blob_commit_refs
+				WHERE tenant_id=$1 AND workspace_id=$2 AND owner_principal_id=$3
+				  AND manifest_revision=$4 AND asset_path=$5
+				  AND artifact_digest=$6 AND size_bytes=$7
+			)`, lock.TenantID, lock.WorkspaceID, lock.PrincipalID, revision,
+			asset.Path, asset.Digest, asset.SizeBytes).Scan(&found); err != nil {
+			return fmt.Errorf("verify immutable blob reference: %w", err)
+		}
+		if !found {
+			return ErrBlobStageMissing
+		}
+	}
+	return nil
 }
 
 // WorkspaceAssetReader is the trusted object-store read interface. The adapter

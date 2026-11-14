@@ -79,11 +79,15 @@ func TestWorkspaceSignedS3BlobRecoveryAndCorruption(t *testing.T) {
 	if err != nil {
 		t.Fatalf("upload raw bytes: %v", err)
 	}
-	receipt, err := repo.CommitWorkspace(ctx, lock, WorkspaceCommitInput{
+	stage, staged, err := repo.StageWorkspaceAsset(ctx, lock, "signed-upload", asset, 300, store)
+	if err != nil || !staged || stage.Asset != asset {
+		t.Fatalf("stage verified S3 bytes: %+v inserted=%v err=%v", stage, staged, err)
+	}
+	receipt, err := repo.CommitStagedWorkspace(ctx, lock, WorkspaceCommitInput{
 		CommitID: "commit-http-report", ExpectedRevision: 0, Assets: []workspace.Asset{asset},
 	}, store)
 	if err != nil || receipt.Revision != 1 {
-		t.Fatalf("commit verified object: %+v err=%v", receipt, err)
+		t.Fatalf("commit staged S3 bytes: %+v err=%v", receipt, err)
 	}
 	// Reopen in a fresh Repository and re-download the bytes through a scoped
 	// signed S3 GET, not the manifest's JSON digest alone.

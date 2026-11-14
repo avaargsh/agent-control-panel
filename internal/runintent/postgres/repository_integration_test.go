@@ -317,6 +317,17 @@ func TestCompareAndSwapRequiresNewFenceForNewLease(t *testing.T) {
 func dropPrincipalSnapshotMigrationForTest(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 	ctx := context.Background()
+	// Recorded v1 upgrade must first remove the dependent v7 stage ledger.
+	for _, statement := range []string{
+		"DROP TABLE workspace_blob_commit_refs",
+		"DROP TABLE workspace_blob_stages",
+		"DROP FUNCTION reject_workspace_blob_evidence_mutation()",
+		"DELETE FROM schema_migrations WHERE version=7",
+	} {
+		if _, err := pool.Exec(ctx, statement); err != nil {
+			t.Fatalf("remove future blob stage migration: %v", err)
+		}
+	}
 	// Simulated pre-v4 history must first drop v6 Workspace and dependent v5 objects.
 	for _, statement := range []string{
 		"DROP TABLE workspace_manifest_commits",
