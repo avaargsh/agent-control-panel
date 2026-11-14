@@ -204,14 +204,6 @@ func (r *Repository) CommitWorkspace(
 	if err != nil {
 		return WorkspaceCommitReceipt{}, err
 	}
-	if len(input.Assets) > 0 && verifier == nil {
-		return WorkspaceCommitReceipt{}, ErrWorkspaceUnverifiedAsset
-	}
-	for _, asset := range input.Assets {
-		if err := verifier.VerifyAsset(ctx, lock.TenantID, lock.WorkspaceID, asset); err != nil {
-			return WorkspaceCommitReceipt{}, ErrWorkspaceUnverifiedAsset
-		}
-	}
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return WorkspaceCommitReceipt{}, fmt.Errorf("begin Workspace CAS: %w", err)
@@ -237,6 +229,17 @@ func (r *Repository) CommitWorkspace(
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return WorkspaceCommitReceipt{}, fmt.Errorf("read Workspace idempotency receipt: %w", err)
+	}
+
+	// Authenticate the pinned ACP scope before invoking the external object
+	// verifier. Already committed same-key replays need no new object access.
+	if len(input.Assets) > 0 && verifier == nil {
+		return WorkspaceCommitReceipt{}, ErrWorkspaceUnverifiedAsset
+	}
+	for _, asset := range input.Assets {
+		if err := verifier.VerifyAsset(ctx, lock.TenantID, lock.WorkspaceID, asset); err != nil {
+			return WorkspaceCommitReceipt{}, ErrWorkspaceUnverifiedAsset
+		}
 	}
 
 	var nextRevision int64
