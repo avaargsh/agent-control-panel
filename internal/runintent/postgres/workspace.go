@@ -191,6 +191,18 @@ func scanWorkspaceReceipt(row pgx.Row) (WorkspaceCommitReceipt, error) {
 
 const selectWorkspaceReceipt = "tenant_id,workspace_id,owner_principal_id,commit_id,manifest_revision,previous_revision,source_run_intent_id::text,session_id,das_digest,manifest_digest"
 
+func workspaceReceiptMatches(receipt WorkspaceCommitReceipt, lock researchlock.Lock, input WorkspaceCommitInput, digest string) bool {
+	return receipt.TenantID == lock.TenantID &&
+		receipt.WorkspaceID == lock.WorkspaceID &&
+		receipt.OwnerPrincipalID == lock.PrincipalID &&
+		receipt.CommitID == input.CommitID &&
+		receipt.PreviousRevision == input.ExpectedRevision &&
+		receipt.RunIntentID == lock.RunIntentID &&
+		receipt.SessionID == lock.SessionID &&
+		receipt.ArtifactDigest == lock.ArtifactDigest &&
+		receipt.ManifestDigest == digest
+}
+
 // CommitWorkspace atomically increments one Workspace revision and appends an
 // immutable receipt. Callers must supply a server-verified RunIntent lock.
 func (r *Repository) CommitWorkspace(
@@ -218,11 +230,7 @@ func (r *Repository) CommitWorkspace(
 		WHERE tenant_id=$1 AND workspace_id=$2 AND owner_principal_id=$3 AND commit_id=$4
 	`, lock.TenantID, lock.WorkspaceID, lock.PrincipalID, input.CommitID))
 	if err == nil {
-		if existing.PreviousRevision != input.ExpectedRevision ||
-			existing.RunIntentID != lock.RunIntentID ||
-			existing.SessionID != lock.SessionID ||
-			existing.ArtifactDigest != lock.ArtifactDigest ||
-			existing.ManifestDigest != digest {
+		if !workspaceReceiptMatches(existing, lock, input, digest) {
 			return WorkspaceCommitReceipt{}, ErrWorkspaceReplayConflict
 		}
 		return existing, nil
@@ -251,6 +259,22 @@ func (r *Repository) CommitWorkspace(
 		RETURNING manifest_revision
 	`, lock.TenantID, lock.WorkspaceID, lock.PrincipalID, input.ExpectedRevision).Scan(&nextRevision)
 	if errors.Is(err, pgx.ErrNoRows) {
+		// Concurrent identical CommitIDs may both miss the first lookup.
+		// A loser waits on the Workspace CAS row, then observes the winner's
+		// committed receipt in a fresh READ COMMITTED statement.
+		replayed, lookupErr := scanWorkspaceReceipt(tx.QueryRow(ctx, `
+			SELECT `+selectWorkspaceReceipt+` FROM workspace_manifest_commits
+			WHERE tenant_id=$1 AND workspace_id=$2 AND owner_principal_id=$3 AND commit_id=$4
+		`, lock.TenantID, lock.WorkspaceID, lock.PrincipalID, input.CommitID))
+		if lookupErr == nil {
+			if !workspaceReceiptMatches(replayed, lock, input, digest) {
+				return WorkspaceCommitReceipt{}, ErrWorkspaceReplayConflict
+			}
+			return replayed, nil
+		}
+		if !errors.Is(lookupErr, pgx.ErrNoRows) {
+			return WorkspaceCommitReceipt{}, fmt.Errorf("inspect concurrent Workspace replay: %w", lookupErr)
+		}
 		return WorkspaceCommitReceipt{}, ErrWorkspaceRevisionConflict
 	}
 	if err != nil {
