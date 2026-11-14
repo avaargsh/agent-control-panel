@@ -10,17 +10,17 @@ import (
 func fixture() (Request, PublishedRelease, Entitlement, time.Time) {
 	now := time.Date(2026, 11, 14, 13, 0, 0, 0, time.UTC)
 	return Request{
-			TenantID: "tenant-a", PrincipalID: "user-a", RunIntentID: "intent-1",
-			AgentReleaseID: "agent-release-1", WorkspaceID: "workspace-1", SessionID: "session-1",
-			PackageID: "equity-research", RequestedVersion: "1.2.0",
-		}, PublishedRelease{
-			PackageID: "equity-research", Version: "1.2.0", ArtifactDigest: "sha256:" + strings.Repeat("a", 64),
-			Status: Published,
-		}, Entitlement{
-			TenantID: "tenant-a", PrincipalID: "user-a", PackageID: "equity-research",
-			SubscriptionID: "subscription-1", PolicyRevision: "policy-3",
-			ValidFrom: now.Add(-time.Hour), ValidUntil: now.Add(time.Hour),
-		}, now
+		TenantID: "tenant-a", PrincipalID: "user-a", RunIntentID: "intent-1",
+		AgentReleaseID: "agent-release-1", WorkspaceID: "workspace-1", SessionID: "session-1",
+		PackageID: "equity-research", RequestedVersion: "1.2.0",
+	}, PublishedRelease{
+		PackageID: "equity-research", Version: "1.2.0", ArtifactDigest: "sha256:" + strings.Repeat("a", 64),
+		Status: Published,
+	}, Entitlement{
+		TenantID: "tenant-a", PrincipalID: "user-a", PackageID: "equity-research",
+		SubscriptionID: "subscription-1", PolicyRevision: "policy-3",
+		ValidFrom: now.Add(-time.Hour), ValidUntil: now.Add(time.Hour),
+	}, now
 }
 
 func TestResolvePinsExactPublishedArtifactAndScopedEntitlement(t *testing.T) {
