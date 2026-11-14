@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/avaargsh/agent-control-panel/internal/researchlock"
 	"github.com/avaargsh/agent-control-panel/internal/runintent"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -64,6 +65,10 @@ func New(pool *pgxpool.Pool) *Repository {
 // Create atomically claims the idempotency key, inserts the RunIntent and
 // appends its creation event. A matching replay returns the original record.
 func (r *Repository) Create(ctx context.Context, intent runintent.Intent, event Event) (runintent.Intent, bool, error) {
+	return r.create(ctx, intent, event, nil)
+}
+
+func (r *Repository) create(ctx context.Context, intent runintent.Intent, event Event, pinned *researchlock.Lock) (runintent.Intent, bool, error) {
 	if r == nil || r.pool == nil {
 		return runintent.Intent{}, false, errors.New("postgres run intent repository is not configured")
 	}
@@ -79,12 +84,21 @@ func (r *Repository) Create(ctx context.Context, intent runintent.Intent, event 
 	if err := validateEvent(event, intent, eventCreated); err != nil {
 		return runintent.Intent{}, false, err
 	}
+	if pinned != nil && !validIntentCapabilityLock(intent, *pinned) {
+		return runintent.Intent{}, false, ErrInvalidCapabilityLock
+	}
 
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return runintent.Intent{}, false, fmt.Errorf("begin RunIntent create: %w", err)
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
+
+	// PostgreSQL transaction-local policy context is derived from the verified
+	// server-side Intent; this is not an authentication mechanism by itself.
+	if _, err := tx.Exec(ctx, "SELECT set_config('app.tenant_id', $1, true)", intent.TenantID); err != nil {
+		return runintent.Intent{}, false, fmt.Errorf("bind capability lock tenant: %w", err)
+	}
 
 	query := "INSERT INTO run_intents (" +
 		"id, tenant_id, principal_id, operation, project_id, agent_id, release_id, session_id, " +
@@ -117,10 +131,18 @@ func (r *Repository) Create(ctx context.Context, intent runintent.Intent, event 
 		if existing.RequestDigest != intent.RequestDigest || !sameCreationIdentity(existing, intent) {
 			return runintent.Intent{}, false, ErrIdempotencyConflict
 		}
+		if err := compareCapabilityReplay(ctx, tx, existing, pinned); err != nil {
+			return runintent.Intent{}, false, err
+		}
 		return existing, false, nil
 	}
 	if err != nil {
 		return runintent.Intent{}, false, fmt.Errorf("insert RunIntent: %w", err)
+	}
+	if pinned != nil {
+		if err := insertCapabilityLock(ctx, tx, *pinned); err != nil {
+			return runintent.Intent{}, false, fmt.Errorf("insert RunIntent DAS lock: %w", err)
+		}
 	}
 	if err := insertEvent(ctx, tx, event); err != nil {
 		return runintent.Intent{}, false, fmt.Errorf("insert RunIntent created event: %w", err)
