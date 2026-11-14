@@ -74,7 +74,12 @@ func testIntent(sequence int) runintent.Intent {
 		ProjectID: "project-1", AgentID: "agent-1", ReleaseID: "release-1",
 		SessionID: "session-1", IdempotencyKey: fmt.Sprintf("key-%d", sequence),
 		RequestDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		Version:       1, Status: runintent.Pending,
+		PrincipalSnapshot: runintent.PrincipalSnapshot{
+			Version: runintent.PrincipalSnapshotVersion, ProjectID: "project-1",
+			SubjectID: "subject-1", ActorID: "actor-1", PolicyRevision: "policy-1",
+			ConfigDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		},
+		Version: 1, Status: runintent.Pending,
 	}
 }
 
@@ -177,6 +182,48 @@ func TestCompareAndSwapAndOutboxShareTransaction(t *testing.T) {
 	}
 }
 
+// The aggregate status, producer and public Outbox event type form one
+// authority-bound fact. A caller must not persist an ACCEPTED event while the
+// durable RunIntent still says DISPATCHING, nor forge another producer.
+func TestCompareAndSwapRejectsMislabelledOutboxEvidence(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		producer  string
+		eventType string
+	}{
+		{name: "wrong state event", producer: "agent-control-panel", eventType: "agent.run-intent.accepted"},
+		{name: "forged producer", producer: "agent-runtime", eventType: "agent.run-intent.dispatching"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repository, pool := testRepository(t)
+			ctx := context.Background()
+			intent := testIntent(9060)
+			created, inserted, err := repository.Create(ctx, intent, testEvent(intent, 1, 9061, eventCreated))
+			if err != nil || !inserted {
+				t.Fatalf("create RunIntent: inserted=%v err=%v", inserted, err)
+			}
+			next, err := created.ClaimDispatch(created.Version, "dispatcher-1", time.Now().UTC(), time.Minute)
+			if err != nil {
+				t.Fatal(err)
+			}
+			event := testEvent(next, next.Version, 9062, tc.eventType)
+			event.Producer = tc.producer
+			if _, err := repository.CompareAndSwap(ctx, intent.TenantID, intent.ID, created.Version, next, event); !errors.Is(err, ErrInvalidEvent) {
+				t.Fatalf("mismatched Outbox evidence was accepted: %v", err)
+			}
+			persisted, err := repository.Get(ctx, intent.TenantID, intent.ID)
+			if err != nil || persisted.Status != runintent.Pending || persisted.Version != created.Version ||
+				countOutbox(t, pool, intent.ID) != 1 {
+				t.Fatalf("rejected evidence partially committed: %+v err=%v", persisted, err)
+			}
+			if _, err := repository.CompareAndSwap(ctx, intent.TenantID, intent.ID, created.Version, next,
+				testEvent(next, next.Version, 9063, "agent.run-intent.dispatching")); err != nil {
+				t.Fatalf("valid state-aligned evidence was rejected: %v", err)
+			}
+		})
+	}
+}
+
 func TestConcurrentIdempotencyClaimsCreateOneRecordAndEvent(t *testing.T) {
 	repository, pool := testRepository(t)
 	ctx := context.Background()
@@ -267,6 +314,39 @@ func TestCompareAndSwapRequiresNewFenceForNewLease(t *testing.T) {
 	}
 }
 
+func dropPrincipalSnapshotMigrationForTest(t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, "DROP TRIGGER IF EXISTS run_intent_principal_snapshot_immutable ON run_intents"); err != nil {
+		t.Fatalf("drop principal snapshot immutable trigger: %v", err)
+	}
+	if _, err := pool.Exec(ctx, "DROP TRIGGER IF EXISTS run_intent_dispatch_requires_principal_snapshot ON run_intents"); err != nil {
+		t.Fatalf("drop principal snapshot dispatch trigger: %v", err)
+	}
+	if _, err := pool.Exec(ctx, "DROP FUNCTION IF EXISTS reject_run_intent_principal_snapshot_mutation()"); err != nil {
+		t.Fatalf("drop principal snapshot immutable function: %v", err)
+	}
+	if _, err := pool.Exec(ctx, "DROP FUNCTION IF EXISTS require_run_intent_principal_snapshot_for_dispatch()"); err != nil {
+		t.Fatalf("drop principal snapshot dispatch function: %v", err)
+	}
+	if _, err := pool.Exec(ctx, "ALTER TABLE run_intents DROP CONSTRAINT IF EXISTS run_intents_principal_snapshot_consistency"); err != nil {
+		t.Fatalf("drop principal snapshot check: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		ALTER TABLE run_intents
+		DROP COLUMN IF EXISTS principal_snapshot_version,
+		DROP COLUMN IF EXISTS principal_subject_id,
+		DROP COLUMN IF EXISTS principal_actor_id,
+		DROP COLUMN IF EXISTS principal_policy_revision,
+		DROP COLUMN IF EXISTS principal_config_digest
+	`); err != nil {
+		t.Fatalf("drop principal snapshot columns: %v", err)
+	}
+	if _, err := pool.Exec(ctx, "DELETE FROM schema_migrations WHERE version=$1", principalSnapshotMigrationVersion); err != nil {
+		t.Fatalf("remove principal snapshot migration ledger: %v", err)
+	}
+}
+
 func TestCreateReplayRejectsChangedOwnerMetadataWithSameDigest(t *testing.T) {
 	repository, pool := testRepository(t)
 	ctx := context.Background()
@@ -280,7 +360,10 @@ func TestCreateReplayRejectsChangedOwnerMetadataWithSameDigest(t *testing.T) {
 		name   string
 		mutate func(*runintent.Intent)
 	}{
-		{"project", func(i *runintent.Intent) { i.ProjectID = "project-other" }},
+		{"project", func(i *runintent.Intent) {
+			i.ProjectID = "project-other"
+			i.PrincipalSnapshot.ProjectID = "project-other"
+		}},
 		{"agent", func(i *runintent.Intent) { i.AgentID = "agent-other" }},
 		{"release", func(i *runintent.Intent) { i.ReleaseID = "release-other" }},
 		{"session", func(i *runintent.Intent) { i.SessionID = "session-other" }},
@@ -316,6 +399,18 @@ func TestCreateReplayRejectsChangedOwnerMetadataWithSameDigest(t *testing.T) {
 func TestMigrationUpgradesRecordedV1ToConflictEvidenceV2(t *testing.T) {
 	_, pool := testRepository(t)
 	ctx := context.Background()
+	// Remove v4 and v3 objects/history so this test really models a
+	// recorded v1 schema, rather than a future schema with missing ledgers.
+	dropPrincipalSnapshotMigrationForTest(t, pool)
+	if _, err := pool.Exec(ctx, "DROP TABLE inbox_dlq_dispositions"); err != nil {
+		t.Fatalf("drop future v3 journal: %v", err)
+	}
+	if _, err := pool.Exec(ctx, "DROP FUNCTION reject_inbox_dlq_disposition_mutation()"); err != nil {
+		t.Fatalf("drop future v3 trigger function: %v", err)
+	}
+	if _, err := pool.Exec(ctx, "DELETE FROM schema_migrations WHERE version=3"); err != nil {
+		t.Fatalf("remove simulated future v3 ledger: %v", err)
+	}
 	if _, err := pool.Exec(ctx, "DROP TABLE inbox_event_conflicts"); err != nil {
 		t.Fatalf("simulate recorded v1 schema: %v", err)
 	}

@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 env:
-  # Build and test only with the pinned, patched Go compiler.
+  # Use the audited Go binary; do not silently download another toolchain.
   GOTOOLCHAIN: local
 
 jobs:
@@ -46,6 +46,7 @@ jobs:
           files="$(gofmt -l .)"
           if [ -n "$files" ]; then
             echo "$files"
+            gofmt -d .
             exit 1
           fi
       - name: Verify module graph and checksums

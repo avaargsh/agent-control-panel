@@ -22,6 +22,9 @@ const (
 const conflictMigrationVersion int64 = 2
 const conflictMigrationName = "0002_inbox_conflict_evidence.sql"
 
+const principalSnapshotMigrationVersion int64 = 4
+const principalSnapshotMigrationName = "0004_run_intent_principal_snapshot.sql"
+
 var (
 	ErrSchemaDrift       = errors.New("RunIntent schema migration checksum or relation drift")
 	ErrUnversionedSchema = errors.New("RunIntent schema exists without migration history")
@@ -65,6 +68,102 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 		return fmt.Errorf("create schema migration ledger: %w", err)
 	}
 
+	// The checksum ledger is itself durable evidence. If a privileged actor
+	// replaces it with an UNLOGGED or shadow relation, a crash can erase the
+	// history and make an otherwise recorded migration appear unversioned.
+	var ledgerDurable bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (
+		SELECT 1 FROM pg_class c
+		WHERE c.oid=to_regclass('schema_migrations')
+		  AND c.relkind='r' AND c.relpersistence='p'
+		  AND c.relnamespace=current_schema()::regnamespace
+	)`).Scan(&ledgerDurable); err != nil {
+		return fmt.Errorf("verify migration ledger storage: %w", err)
+	}
+	if !ledgerDurable {
+		return ErrSchemaDrift
+	}
+
+	// Migration history belongs exclusively to its table owner. Table ACLs
+	// (pg_class.relacl) and column ACLs (pg_attribute.attacl) are independent:
+	// either can give PUBLIC or a named non-owner access to the checksum.
+	// Inspect both before trusting migration history.
+	var nonOwnerLedgerGrants bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM pg_class c,
+			     LATERAL aclexplode(coalesce(c.relacl, acldefault('r', c.relowner))) acl
+			WHERE c.oid=to_regclass('schema_migrations') AND acl.grantee<>c.relowner
+		) OR EXISTS (
+			SELECT 1 FROM pg_class c
+			JOIN pg_attribute a ON a.attrelid=c.oid
+			CROSS JOIN LATERAL aclexplode(a.attacl) acl
+			WHERE c.oid=to_regclass('schema_migrations')
+			  AND a.attnum>0 AND NOT a.attisdropped
+			  AND acl.grantee<>c.relowner
+		)
+	`).Scan(&nonOwnerLedgerGrants); err != nil {
+		return fmt.Errorf("verify migration ledger non-owner grants: %w", err)
+	}
+	if nonOwnerLedgerGrants {
+		return ErrSchemaDrift
+	}
+
+	// Do not trust a durable ledger whose uniqueness or checksum predicate
+	// has been dropped or replaced with a same-name weaker constraint.
+	var ledgerKeysBound bool
+	if err := tx.QueryRow(ctx, `
+		WITH expected(name, kind, cols) AS (
+			VALUES
+			  ('schema_migrations_pkey', 'p', ARRAY['version']::text[]),
+			  ('schema_migrations_name_key', 'u', ARRAY['name']::text[])
+		)
+		SELECT count(*)=(SELECT count(*) FROM expected)
+		FROM expected e
+		JOIN pg_constraint c ON c.conrelid=to_regclass('schema_migrations')
+		  AND c.conname=e.name AND c.contype::text=e.kind AND c.convalidated
+		WHERE (SELECT array_agg(a.attname::text ORDER BY k.ordinality)
+		       FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ordinality)
+		       JOIN pg_attribute a ON a.attrelid=c.conrelid AND a.attnum=k.attnum)=e.cols
+	`).Scan(&ledgerKeysBound); err != nil {
+		return fmt.Errorf("verify migration ledger key constraints: %w", err)
+	}
+	if !ledgerKeysBound {
+		return ErrSchemaDrift
+	}
+
+	// Compile the reviewed CHECK predicates on this exact PostgreSQL server;
+	// compare normalized pg_get_expr output, not merely constraint names.
+	_, err = tx.Exec(ctx, `
+		CREATE TEMP TABLE acp_expected_migration_ledger_checks (
+			version BIGINT, checksum TEXT
+		) ON COMMIT DROP;
+		ALTER TABLE pg_temp.acp_expected_migration_ledger_checks
+		  ADD CONSTRAINT schema_migrations_version_check CHECK (version > 0);
+		ALTER TABLE pg_temp.acp_expected_migration_ledger_checks
+		  ADD CONSTRAINT schema_migrations_checksum_check
+		  CHECK (checksum ~ '^[0-9a-f]{64}$');
+	`, pgx.QueryExecModeSimpleProtocol)
+	if err != nil {
+		return fmt.Errorf("compile expected migration ledger CHECKs: %w", err)
+	}
+	var ledgerChecksBound bool
+	if err := tx.QueryRow(ctx, `
+		SELECT count(*)=2 FROM pg_constraint actual
+		JOIN pg_constraint expected ON expected.conname=actual.conname
+		WHERE actual.conrelid=to_regclass('schema_migrations')
+		  AND expected.conrelid=to_regclass('pg_temp.acp_expected_migration_ledger_checks')
+		  AND actual.conname IN ('schema_migrations_version_check','schema_migrations_checksum_check')
+		  AND actual.contype='c' AND expected.contype='c' AND actual.convalidated
+		  AND pg_get_expr(actual.conbin,actual.conrelid,false)=
+		      pg_get_expr(expected.conbin,expected.conrelid,false)
+	`).Scan(&ledgerChecksBound); err != nil {
+		return fmt.Errorf("verify migration ledger CHECK predicates: %w", err)
+	}
+	if !ledgerChecksBound {
+		return ErrSchemaDrift
+	}
+
 	source, err := migrations.FS.ReadFile(initialMigrationName)
 	if err != nil {
 		return fmt.Errorf("read embedded RunIntent migration: %w", err)
@@ -75,12 +174,22 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 		return fmt.Errorf("read embedded Inbox conflict migration: %w", err)
 	}
 	conflictChecksum := fmt.Sprintf("%x", sha256.Sum256(conflictSource))
+	dispositionSource, err := migrations.FS.ReadFile(dispositionMigrationName)
+	if err != nil {
+		return fmt.Errorf("read embedded Inbox disposition migration: %w", err)
+	}
+	dispositionChecksum := fmt.Sprintf("%x", sha256.Sum256(dispositionSource))
+	principalSnapshotSource, err := migrations.FS.ReadFile(principalSnapshotMigrationName)
+	if err != nil {
+		return fmt.Errorf("read embedded principal snapshot migration: %w", err)
+	}
+	principalSnapshotChecksum := fmt.Sprintf("%x", sha256.Sum256(principalSnapshotSource))
 
 	rows, err := tx.Query(ctx, "SELECT version, name, checksum FROM schema_migrations")
 	if err != nil {
 		return fmt.Errorf("read schema migration history: %w", err)
 	}
-	var appliedVersion, conflictApplied bool
+	var appliedVersion, conflictApplied, dispositionApplied, principalSnapshotApplied bool
 	for rows.Next() {
 		var version int64
 		var name, appliedChecksum string
@@ -101,6 +210,18 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 				return ErrSchemaDrift
 			}
 			conflictApplied = true
+		case dispositionMigrationVersion:
+			if name != dispositionMigrationName || appliedChecksum != dispositionChecksum || dispositionApplied {
+				rows.Close()
+				return ErrSchemaDrift
+			}
+			dispositionApplied = true
+		case principalSnapshotMigrationVersion:
+			if name != principalSnapshotMigrationName || appliedChecksum != principalSnapshotChecksum || principalSnapshotApplied {
+				rows.Close()
+				return ErrSchemaDrift
+			}
+			principalSnapshotApplied = true
 		default:
 			rows.Close()
 			return ErrSchemaDrift
@@ -111,7 +232,9 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 		return fmt.Errorf("iterate schema migration history: %w", err)
 	}
 	rows.Close()
-	if conflictApplied && !appliedVersion {
+	if conflictApplied && !appliedVersion ||
+		dispositionApplied && !conflictApplied ||
+		principalSnapshotApplied && !dispositionApplied {
 		return ErrSchemaDrift
 	}
 
@@ -120,6 +243,12 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 			return err
 		}
 		if err := ensureInboxConflictMigration(ctx, tx, conflictApplied, conflictSource, conflictChecksum); err != nil {
+			return err
+		}
+		if err := ensureInboxDLQDispositionMigration(ctx, tx, dispositionApplied, dispositionSource, dispositionChecksum); err != nil {
+			return err
+		}
+		if err := ensureRunIntentPrincipalSnapshotMigration(ctx, tx, principalSnapshotApplied, principalSnapshotSource, principalSnapshotChecksum); err != nil {
 			return err
 		}
 		if err := tx.Commit(ctx); err != nil {
@@ -135,6 +264,7 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 		OR to_regclass('inbox_events') IS NOT NULL
 		OR to_regclass('inbox_aggregate_claims') IS NOT NULL
 		OR to_regclass('inbox_cursors') IS NOT NULL
+		OR to_regclass('inbox_dlq_dispositions') IS NOT NULL
 	`).Scan(&anySchemaExists); err != nil {
 		return fmt.Errorf("inspect existing RunIntent schema: %w", err)
 	}
@@ -165,6 +295,12 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 		return fmt.Errorf("record RunIntent migration checksum: %w", err)
 	}
 	if err := ensureInboxConflictMigration(ctx, tx, false, conflictSource, conflictChecksum); err != nil {
+		return err
+	}
+	if err := ensureInboxDLQDispositionMigration(ctx, tx, false, dispositionSource, dispositionChecksum); err != nil {
+		return err
+	}
+	if err := ensureRunIntentPrincipalSnapshotMigration(ctx, tx, false, principalSnapshotSource, principalSnapshotChecksum); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
