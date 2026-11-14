@@ -25,6 +25,9 @@ const conflictMigrationName = "0002_inbox_conflict_evidence.sql"
 const principalSnapshotMigrationVersion int64 = 4
 const principalSnapshotMigrationName = "0004_run_intent_principal_snapshot.sql"
 
+const capabilityLockMigrationVersion int64 = 5
+const capabilityLockMigrationName = "0005_run_capability_locks.sql"
+
 var (
 	ErrSchemaDrift       = errors.New("RunIntent schema migration checksum or relation drift")
 	ErrUnversionedSchema = errors.New("RunIntent schema exists without migration history")
@@ -184,12 +187,17 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 		return fmt.Errorf("read embedded principal snapshot migration: %w", err)
 	}
 	principalSnapshotChecksum := fmt.Sprintf("%x", sha256.Sum256(principalSnapshotSource))
+	capabilityLockSource, err := migrations.FS.ReadFile(capabilityLockMigrationName)
+	if err != nil {
+		return fmt.Errorf("read embedded DAS lock migration: %w", err)
+	}
+	capabilityLockChecksum := fmt.Sprintf("%x", sha256.Sum256(capabilityLockSource))
 
 	rows, err := tx.Query(ctx, "SELECT version, name, checksum FROM schema_migrations")
 	if err != nil {
 		return fmt.Errorf("read schema migration history: %w", err)
 	}
-	var appliedVersion, conflictApplied, dispositionApplied, principalSnapshotApplied bool
+	var appliedVersion, conflictApplied, dispositionApplied, principalSnapshotApplied, capabilityLockApplied bool
 	for rows.Next() {
 		var version int64
 		var name, appliedChecksum string
@@ -222,6 +230,12 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 				return ErrSchemaDrift
 			}
 			principalSnapshotApplied = true
+		case capabilityLockMigrationVersion:
+			if name != capabilityLockMigrationName || appliedChecksum != capabilityLockChecksum || capabilityLockApplied {
+				rows.Close()
+				return ErrSchemaDrift
+			}
+			capabilityLockApplied = true
 		default:
 			rows.Close()
 			return ErrSchemaDrift
@@ -234,7 +248,8 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 	rows.Close()
 	if conflictApplied && !appliedVersion ||
 		dispositionApplied && !conflictApplied ||
-		principalSnapshotApplied && !dispositionApplied {
+		principalSnapshotApplied && !dispositionApplied ||
+		capabilityLockApplied && !principalSnapshotApplied {
 		return ErrSchemaDrift
 	}
 
@@ -251,6 +266,9 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 		if err := ensureRunIntentPrincipalSnapshotMigration(ctx, tx, principalSnapshotApplied, principalSnapshotSource, principalSnapshotChecksum); err != nil {
 			return err
 		}
+		if err := ensureRunCapabilityLockMigration(ctx, tx, capabilityLockApplied, capabilityLockSource, capabilityLockChecksum); err != nil {
+			return err
+		}
 		if err := tx.Commit(ctx); err != nil {
 			return fmt.Errorf("commit schema verification: %w", err)
 		}
@@ -265,6 +283,7 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 		OR to_regclass('inbox_aggregate_claims') IS NOT NULL
 		OR to_regclass('inbox_cursors') IS NOT NULL
 		OR to_regclass('inbox_dlq_dispositions') IS NOT NULL
+		OR to_regclass('run_capability_locks') IS NOT NULL
 	`).Scan(&anySchemaExists); err != nil {
 		return fmt.Errorf("inspect existing RunIntent schema: %w", err)
 	}
@@ -301,6 +320,9 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 		return err
 	}
 	if err := ensureRunIntentPrincipalSnapshotMigration(ctx, tx, false, principalSnapshotSource, principalSnapshotChecksum); err != nil {
+		return err
+	}
+	if err := ensureRunCapabilityLockMigration(ctx, tx, false, capabilityLockSource, capabilityLockChecksum); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
