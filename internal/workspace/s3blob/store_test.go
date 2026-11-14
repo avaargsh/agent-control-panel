@@ -17,8 +17,8 @@ import (
 )
 
 type wireStore struct {
-	mu sync.Mutex
-	objects map[string][]byte
+	mu         sync.Mutex
+	objects    map[string][]byte
 	signatures int
 }
 
