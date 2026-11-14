@@ -3,8 +3,10 @@ package postgres
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/avaargsh/agent-control-panel/internal/workspace"
 )
@@ -178,4 +180,71 @@ func TestBlobStageMigrationDriftAndImmutableReceipts(t *testing.T) {
 			t.Fatal("staged evidence mutated")
 		}
 	})
+}
+
+func TestBlobStageAndRetentionRestrictedRoleRLS(t *testing.T) {
+	repository, pool := testRepository(t)
+	ctx := context.Background()
+	lock := workspacePinnedFixture(t, repository, 120601)
+	if _, _, err := repository.OpenWorkspace(ctx, lock); err != nil {
+		t.Fatal(err)
+	}
+	asset := blobFixture("a", "reports/isolated.md")
+	if _, _, err := repository.StageWorkspaceAsset(ctx, lock, "restricted-stage", asset, 120, approveAssets{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.CommitStagedWorkspace(ctx, lock, WorkspaceCommitInput{
+		CommitID: "restricted-commit", ExpectedRevision: 0, Assets: []workspace.Asset{asset},
+	}, approveAssets{}); err != nil {
+		t.Fatal(err)
+	}
+	var schema string
+	if err := pool.QueryRow(ctx, "SELECT current_schema()").Scan(&schema); err != nil {
+		t.Fatal(err)
+	}
+	role := fmt.Sprintf("blob_reader_%d", time.Now().UnixNano())
+	if _, err := pool.Exec(ctx, "CREATE ROLE "+role+" NOLOGIN"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), "DROP OWNED BY "+role)
+		_, _ = pool.Exec(context.Background(), "DROP ROLE "+role)
+	})
+	for _, sql := range []string{
+		"GRANT USAGE ON SCHEMA " + schema + " TO " + role,
+		"GRANT SELECT ON " + schema + ".workspace_blob_stages TO " + role,
+		"GRANT SELECT ON " + schema + ".workspace_blob_commit_refs TO " + role,
+	} {
+		if _, err := pool.Exec(ctx, sql); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	if _, err := tx.Exec(ctx, "SET LOCAL ROLE "+role); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		tenant, principal string
+		want              int
+	}{
+		{lock.TenantID, lock.PrincipalID, 1},
+		{"tenant-other", lock.PrincipalID, 0},
+		{lock.TenantID, "principal-other", 0},
+	} {
+		if _, err := tx.Exec(ctx,
+			"SELECT set_config('app.tenant_id',$1,true),set_config('app.principal_id',$2,true)",
+			tc.tenant, tc.principal); err != nil {
+			t.Fatal(err)
+		}
+		for _, table := range []string{"workspace_blob_stages", "workspace_blob_commit_refs"} {
+			var count int
+			if err := tx.QueryRow(ctx, "SELECT count(*) FROM "+table).Scan(&count); err != nil || count != tc.want {
+				t.Fatalf("role=%s table=%s count=%d want=%d err=%v", role, table, count, tc.want, err)
+			}
+		}
+	}
 }
