@@ -274,3 +274,52 @@ func TestWorkspaceManifestSnapshotAndConflictingCommitReplay(t *testing.T) {
 		t.Fatal("committed asset receipt was mutated")
 	}
 }
+
+func TestWorkspaceConcurrentSameCommitIDReturnsOneReceipt(t *testing.T) {
+	repo, pool := testRepository(t)
+	ctx := context.Background()
+	lock := workspacePinnedFixture(t, repo, 9990)
+	if _, _, err := repo.OpenWorkspace(ctx, lock); err != nil {
+		t.Fatal(err)
+	}
+	const workers = 8
+	var wg sync.WaitGroup
+	results := make(chan WorkspaceCommitReceipt, workers)
+	errs := make(chan error, workers)
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			receipt, err := repo.CommitWorkspace(ctx, lock, WorkspaceCommitInput{
+				CommitID: "same-commit", ExpectedRevision: 0,
+			}, nil)
+			if err != nil {
+				errs <- err
+			} else {
+				results <- receipt
+			}
+		}()
+	}
+	wg.Wait()
+	close(results)
+	close(errs)
+	for err := range errs {
+		t.Errorf("concurrent duplicate was not replayed: %v", err)
+	}
+	var first WorkspaceCommitReceipt
+	count := 0
+	for receipt := range results {
+		if count > 0 && receipt != first {
+			t.Errorf("concurrent replay returned different receipt %+v != %+v", receipt, first)
+		}
+		first = receipt
+		count++
+	}
+	if count != workers {
+		t.Fatalf("duplicate same CommitID successes=%d want=%d", count, workers)
+	}
+	var committed int
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM workspace_manifest_commits").Scan(&committed); err != nil || committed != 1 {
+		t.Fatalf("duplicate commit rows=%d err=%v", committed, err)
+	}
+}
