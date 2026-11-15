@@ -63,8 +63,8 @@ func TestApprovedS3WriteOnceSecurityGate(t *testing.T) {
 	original := []byte(fmt.Sprintf("P0-2B5c approved HTTPS provider unconditional-write protection canary=%x", nonce))
 	sum := sha256.Sum256(original)
 	asset := workspace.Asset{
-		Path: "reports/approved-writeonce-gate.md",
-		Digest: "sha256:" + hex.EncodeToString(sum[:]),
+		Path:      "reports/approved-writeonce-gate.md",
+		Digest:    "sha256:" + hex.EncodeToString(sum[:]),
 		SizeBytes: int64(len(original)),
 	}
 	const tenant, workspaceID = "tenant-security-probe", "workspace-writeonce-probe"
@@ -114,8 +114,8 @@ func TestApprovedS3WriteOnceSecurityGate(t *testing.T) {
 	racingBytes := []byte(fmt.Sprintf("P0-2B5c simultaneous digest creation canary=%x", nonce))
 	racingDigest := sha256.Sum256(racingBytes)
 	racingAsset := workspace.Asset{
-		Path: "reports/concurrent-writeonce-gate.md",
-		Digest: "sha256:" + hex.EncodeToString(racingDigest[:]),
+		Path:      "reports/concurrent-writeonce-gate.md",
+		Digest:    "sha256:" + hex.EncodeToString(racingDigest[:]),
 		SizeBytes: int64(len(racingBytes)),
 	}
 	racingKey, err := writer.objectPath(tenant, workspaceID, racingAsset.Digest)
@@ -124,7 +124,7 @@ func TestApprovedS3WriteOnceSecurityGate(t *testing.T) {
 	}
 	type responseResult struct {
 		status int
-		err error
+		err    error
 	}
 	resultChannel := make(chan responseResult, 4)
 	start := make(chan struct{})
