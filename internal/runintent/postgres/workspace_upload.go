@@ -1,7 +1,10 @@
 package postgres
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -17,6 +20,7 @@ var (
 	ErrUploadIntentExpired  = errors.New("Workspace upload intent expired before verification")
 	ErrUploadIntentMissing  = errors.New("Workspace upload intent not found")
 	ErrUploadOutcomeUnknown = errors.New("Workspace S3 upload outcome UNKNOWN; reconcile before committing")
+	ErrUploadPayloadMismatch = errors.New("upload stream digest/size does not match predeclared Workspace asset")
 )
 
 // WorkspaceUploadInput describes an immutable expected object *before* any
@@ -173,9 +177,20 @@ func (r *Repository) appendUploadObservation(ctx context.Context, lock researchl
 // UploadWorkspaceObject begins with a durable intent, performs a single
 // trusted signed PUT, then re-verifies actual bytes. Any transport/byte/stage
 // error stays UNKNOWN; callers must reconcile, never blindly retry effects.
-func (r *Repository) UploadWorkspaceObject(ctx context.Context, lock researchlock.Lock, in WorkspaceUploadInput, bytes io.Reader, uploader WorkspaceObjectUploader) (BlobStage, error) {
-	if bytes == nil || uploader == nil {
+func (r *Repository) UploadWorkspaceObject(ctx context.Context, lock researchlock.Lock, in WorkspaceUploadInput, content io.Reader, uploader WorkspaceObjectUploader) (BlobStage, error) {
+	if content == nil || uploader == nil {
 		return BlobStage{}, ErrWorkspaceUnverifiedAsset
+	}
+	// Validate the actual stream before a remote PUT. A backend that keys
+	// objects by its observed digest could otherwise create an untracked
+	// wrong-digest object when the declared request does not match.
+	data, err := io.ReadAll(io.LimitReader(content, (8<<20)+1))
+	if err != nil || len(data) > 8<<20 {
+		return BlobStage{}, ErrUploadPayloadMismatch
+	}
+	sum := sha256.Sum256(data)
+	if int64(len(data)) != in.Asset.SizeBytes || "sha256:"+hex.EncodeToString(sum[:]) != in.Asset.Digest {
+		return BlobStage{}, ErrUploadPayloadMismatch
 	}
 	_, created, err := r.BeginWorkspaceUpload(ctx, lock, in)
 	if err != nil {
@@ -193,7 +208,7 @@ func (r *Repository) UploadWorkspaceObject(ctx context.Context, lock researchloc
 	if !time.Now().Before(intent.ExpiresAt) {
 		return BlobStage{}, ErrUploadIntentExpired
 	}
-	actual, uploadErr := uploader.Upload(ctx, lock.TenantID, lock.WorkspaceID, in.Asset.Path, bytes)
+	actual, uploadErr := uploader.Upload(ctx, lock.TenantID, lock.WorkspaceID, in.Asset.Path, bytes.NewReader(data))
 	if uploadErr != nil || actual != in.Asset {
 		if err := r.appendUploadObservation(ctx, lock, in.IntentID, "UNKNOWN"); err != nil {
 			return BlobStage{}, errors.Join(ErrUploadOutcomeUnknown, err)
