@@ -12,6 +12,8 @@ on:
       - 'internal/workspace/s3blob/**'
       - '.github/fixtures/minio/**'
       - 'internal/runintent/postgres/workspace_minio_iam_integration_test.go'
+      - 'internal/runintent/postgres/workspace_minio_history_integration_test.go'
+      - 'docs/implementation/WORKSPACE-MINIO-HISTORICAL-RETENTION.md'
       - 'docs/implementation/WORKSPACE-MINIO-SCOPED-IAM.md'
       - 'docs/implementation/WORKSPACE-WRITEONCE-PROVIDER-GATE.md'
       - '.github/fixtures/aws-s3/**'
@@ -198,6 +200,17 @@ jobs:
             fi
           done
           grep --fixed-strings -- 'four SIGKILL phases passed using separate writer/reader service identities' "$RUNNER_TEMP/minio-iam-sigkill-pg-test.log"
+      - name: Real MinIO scoped IAM + PG16 historical v1/v2 bytes retained after v3 empty CAS
+        shell: bash
+        env:
+          S3BLOB_MINIO_TEST_ENDPOINT: http://127.0.0.1:9000
+        run: |
+          set -euo pipefail
+          # Protected roles: test only receives scoped writer/reader environment
+          # identities, never provisioning administrator credentials.
+          go test -race -count=1 -v -run '^TestWorkspaceRealMinIOHistoricalRetainedBytesPG$' ./internal/runintent/postgres | tee "$RUNNER_TEMP/minio-history-pg.log"
+          grep --fixed-strings -- '--- PASS: TestWorkspaceRealMinIOHistoricalRetainedBytesPG (' "$RUNNER_TEMP/minio-history-pg.log"
+          grep --fixed-strings -- 'REAL MINIO HISTORICAL RETENTION PASS: separate IAM reader verified v1/v2 bytes after v3 empty CAS;' "$RUNNER_TEMP/minio-history-pg.log"
       - name: Revoke real reader principal and prove provider blocks existing object
         shell: bash
         env:
