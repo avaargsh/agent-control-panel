@@ -266,7 +266,7 @@ func (r *Repository) ClaimWorkspaceBlob(ctx context.Context, lock researchlock.L
 		INSERT INTO workspace_gc_claims (
 			tenant_id,workspace_id,owner_principal_id,artifact_digest,
 			holder_id,generation,lease_seconds,expires_at
-		) VALUES ($1,$2,$3,$4,$5,1,$6,clock_timestamp()+($6*interval '1 second'))
+		) VALUES ($1,$2,$3,$4,$5,1,$6,clock_timestamp()+($6::bigint*interval '1 second'))
 		ON CONFLICT (tenant_id,workspace_id,artifact_digest)
 		DO UPDATE SET holder_id=EXCLUDED.holder_id,
 		  generation=workspace_gc_claims.generation+1,
@@ -328,7 +328,7 @@ func (r *Repository) RenewWorkspaceGCClaim(ctx context.Context, lock researchloc
 		UPDATE workspace_gc_claims
 		SET generation=generation+1, lease_seconds=$7,
 		    updated_at=clock_timestamp(),
-		    expires_at=clock_timestamp()+($7*interval '1 second')
+		    expires_at=clock_timestamp()+($7::bigint*interval '1 second')
 		WHERE tenant_id=$1 AND workspace_id=$2 AND owner_principal_id=$3
 		  AND artifact_digest=$4 AND holder_id=$5 AND generation=$6
 		  AND expires_at > clock_timestamp()
