@@ -133,6 +133,50 @@ func gcEligible(ctx context.Context, tx pgx.Tx, lock researchlock.Lock, digest s
 	return ok, nil
 }
 
+// gcIneligibilityReason records why this local candidate was declined. It
+// never treats a missing upload ACK as a negative existence proof.
+func gcIneligibilityReason(ctx context.Context, tx pgx.Tx, lock researchlock.Lock, digest string) (string, error) {
+	var retained, unresolved bool
+	err := tx.QueryRow(ctx, `
+		SELECT
+		  EXISTS (
+		    SELECT 1 FROM workspace_blob_commit_refs ref
+		    WHERE ref.tenant_id=$1 AND ref.workspace_id=$2
+		      AND ref.owner_principal_id=$3 AND ref.artifact_digest=$4
+		  ) OR EXISTS (
+		    SELECT 1 FROM workspace_manifest_commits c
+		    WHERE c.tenant_id=$1 AND c.workspace_id=$2
+		      AND c.owner_principal_id=$3
+		      AND c.manifest @> jsonb_build_array(jsonb_build_object('digest',$4::text))
+		  ),
+		  EXISTS (
+		    SELECT 1 FROM workspace_upload_intents u
+		    WHERE u.tenant_id=$1 AND u.workspace_id=$2
+		      AND u.owner_principal_id=$3 AND u.artifact_digest=$4
+		      AND (
+		        u.expires_at > clock_timestamp() OR
+		        COALESCE((
+		          SELECT o.disposition FROM workspace_upload_observations o
+		          WHERE o.tenant_id=u.tenant_id AND o.workspace_id=u.workspace_id
+		            AND o.owner_principal_id=u.owner_principal_id
+		            AND o.intent_id=u.intent_id
+		          ORDER BY o.observation_id DESC LIMIT 1
+		        ),'UNKNOWN') <> 'VERIFIED'
+		      )
+		  )
+	`, lock.TenantID, lock.WorkspaceID, lock.PrincipalID, digest).Scan(&retained, &unresolved)
+	if err != nil {
+		return "", fmt.Errorf("classify GC retention or UNKNOWN: %w", err)
+	}
+	if retained {
+		return "RETAINED", nil
+	}
+	if unresolved {
+		return "UNKNOWN", nil
+	}
+	return "NOT_ELIGIBLE", nil
+}
+
 func appendGCObservation(ctx context.Context, tx pgx.Tx, lock researchlock.Lock,
 	digest, holder string, generation int64, disposition string,
 ) error {
@@ -179,7 +223,11 @@ func (r *Repository) ClaimWorkspaceBlob(ctx context.Context, lock researchlock.L
 		return GCClaim{}, err
 	}
 	if !eligible {
-		if err := appendGCObservation(ctx, tx, lock, digest, holder, 0, "NOT_ELIGIBLE"); err != nil {
+		reason, err := gcIneligibilityReason(ctx, tx, lock, digest)
+		if err != nil {
+			return GCClaim{}, err
+		}
+		if err := appendGCObservation(ctx, tx, lock, digest, holder, 0, reason); err != nil {
 			return GCClaim{}, fmt.Errorf("record ineligible GC observation: %w", err)
 		}
 		if err := tx.Commit(ctx); err != nil {
