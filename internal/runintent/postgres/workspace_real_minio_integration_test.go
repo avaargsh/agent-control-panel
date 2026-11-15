@@ -70,8 +70,8 @@ func TestWorkspaceRealMinIOPGReconcile(t *testing.T) {
 	report := []byte("A scoped research report reopened after MinIO accepted PUT but the ACP ACK was lost.")
 	sha := sha256.Sum256(report)
 	asset := workspace.Asset{
-		Path: "reports/real-minio-research.md",
-		Digest: "sha256:" + hex.EncodeToString(sha[:]),
+		Path:      "reports/real-minio-research.md",
+		Digest:    "sha256:" + hex.EncodeToString(sha[:]),
 		SizeBytes: int64(len(report)),
 	}
 	intent := WorkspaceUploadInput{IntentID: "minio-lost-ack-report", Asset: asset, LeaseSeconds: 300}
