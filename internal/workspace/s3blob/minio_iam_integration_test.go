@@ -136,3 +136,32 @@ func TestMinIORealScopedIAM(t *testing.T) {
 	}
 	t.Log("real provider IAM: scoped write-only + read-only + foreign-tenant + unassigned user denials; conditional 412")
 }
+
+func TestMinIORealIAMDisabledReader(t *testing.T) {
+	if os.Getenv("S3BLOB_MINIO_TEST_ENDPOINT") == "" {
+		t.Skip("requires real MinIO user disable event from approved CI fixture")
+	}
+	reader := minioRoleStore(t, "READER")
+	tenant, workspaceID := "tenant-integration", "workspace-1"
+	report := []byte("P0-2B5b real MinIO separate writer and verified reader, not bootstrap administrator")
+	sum := sha256.Sum256(report)
+	asset := workspace.Asset{
+		Path: "reports/iam-report.md",
+		Digest: "sha256:" + hex.EncodeToString(sum[:]), SizeBytes: int64(len(report)),
+	}
+	ctx := context.Background()
+	key, err := reader.objectPath(tenant, workspaceID, asset.Digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// S3 IAM revocation must affect the real object that was successfully
+	// read before the user was disabled. It is never a 404/missing-object.
+	status := realIAMStatus(t, ctx, reader, http.MethodGet, key, nil, false)
+	if status != http.StatusForbidden {
+		t.Fatalf("disabled read identity remained authorized: HTTP %d (expected 403)", status)
+	}
+	if err := reader.VerifyAsset(ctx, tenant, workspaceID, asset); !errors.Is(err, ErrStorage) {
+		t.Fatalf("revoked read authorization misclassified as missing or success: %v", err)
+	}
+	t.Log("real MinIO user disable enforced by provider; read denial remains ErrStorage, not ErrObjectMissing")
+}
