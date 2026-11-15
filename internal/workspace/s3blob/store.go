@@ -198,14 +198,82 @@ func (s *Store) signedRequest(ctx context.Context, method, path string, body []b
 	return req, nil
 }
 
-// Upload creates a new content-addressed object and immediately re-downloads
-// its bytes to confirm integrity. A 412 collision is accepted only if the
-// existing immutable key actually contains exactly the requested bytes.
+// SplitRoleStore composes two independent MinIO IAM identities without
+// elevating either identity. The writer only performs conditional PUT and the
+// reader only performs verified GET. No admin identity or DeleteObject API
+// exists on this adapter.
+type SplitRoleStore struct {
+	writer *Store
+	reader *Store
+}
+
+// NewSplitRoleStore refuses one combined principal. IAM restrictions must be
+// enforced by the REAL provider; checking different access-key identifiers
+// here does not itself provide authorization or credential attestation.
+func NewSplitRoleStore(writer, reader *Store) (*SplitRoleStore, error) {
+	if writer == nil || reader == nil || writer.accessKey == "" ||
+		writer.accessKey == reader.accessKey ||
+		writer.bucket != reader.bucket || writer.region != reader.region ||
+		writer.endpoint.String() != reader.endpoint.String() {
+		return nil, ErrInvalidConfig
+	}
+	return &SplitRoleStore{writer: writer, reader: reader}, nil
+}
+
+// Upload sends bytes only using the scoped writer and verifies the actual
+// object separately using the scoped reader. A missing/forbidden remote GET
+// is an error, never a successful upload or silent re-PUT.
+func (s *SplitRoleStore) Upload(
+	ctx context.Context, tenant, workspaceID, logicalPath string, content io.Reader,
+) (workspace.Asset, error) {
+	if s == nil || s.writer == nil || s.reader == nil {
+		return workspace.Asset{}, ErrInvalidConfig
+	}
+	asset, err := s.writer.putOnce(ctx, tenant, workspaceID, logicalPath, content)
+	if err != nil {
+		return workspace.Asset{}, err
+	}
+	if err := s.reader.VerifyAsset(ctx, tenant, workspaceID, asset); err != nil {
+		return workspace.Asset{}, err
+	}
+	return asset, nil
+}
+
+// VerifyAsset and ReadAsset exclusively use the read-only provider identity.
+func (s *SplitRoleStore) VerifyAsset(ctx context.Context, tenant, workspaceID string, asset workspace.Asset) error {
+	if s == nil || s.reader == nil {
+		return ErrInvalidConfig
+	}
+	return s.reader.VerifyAsset(ctx, tenant, workspaceID, asset)
+}
+
+func (s *SplitRoleStore) ReadAsset(ctx context.Context, tenant, workspaceID string, asset workspace.Asset) ([]byte, error) {
+	if s == nil || s.reader == nil {
+		return nil, ErrInvalidConfig
+	}
+	return s.reader.ReadAsset(ctx, tenant, workspaceID, asset)
+}
+
+// Upload preserves its original behavior for callers with a combined trusted
+// identity. New least-privilege callers should instead use SplitRoleStore.
 func (s *Store) Upload(ctx context.Context, tenant, workspaceID, logicalPath string, content io.Reader) (workspace.Asset, error) {
-	if content == nil || !workspace.ValidID(tenant) || !workspace.ValidID(workspaceID) {
+	asset, err := s.putOnce(ctx, tenant, workspaceID, logicalPath, content)
+	if err != nil {
+		return workspace.Asset{}, err
+	}
+	if err := s.VerifyAsset(ctx, tenant, workspaceID, asset); err != nil {
+		return workspace.Asset{}, err
+	}
+	return asset, nil
+}
+
+// putOnce makes exactly one conditional PutObject with a server-derived
+// content-addressed key. It does not claim remote byte verification on its
+// own; the caller MUST verify with a separately authorized reader.
+func (s *Store) putOnce(ctx context.Context, tenant, workspaceID, logicalPath string, content io.Reader) (workspace.Asset, error) {
+	if s == nil || content == nil || !workspace.ValidID(tenant) || !workspace.ValidID(workspaceID) {
 		return workspace.Asset{}, ErrInvalidObject
 	}
-	// Enforce the same logical path rules as the authoritative Manifest.
 	probe := workspace.Asset{Path: logicalPath, Digest: "sha256:" + strings.Repeat("0", 64), SizeBytes: 0}
 	if err := validateAsset(probe); err != nil {
 		return workspace.Asset{}, err
@@ -232,9 +300,6 @@ func (s *Store) Upload(ctx context.Context, tenant, workspaceID, logicalPath str
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated &&
 		resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusPreconditionFailed {
 		return workspace.Asset{}, ErrStorage
-	}
-	if err := s.VerifyAsset(ctx, tenant, workspaceID, asset); err != nil {
-		return workspace.Asset{}, err
 	}
 	return asset, nil
 }

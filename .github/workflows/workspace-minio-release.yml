@@ -10,6 +10,9 @@ on:
     paths:
       - '.github/workflows/workspace-minio-release.yml'
       - 'internal/workspace/s3blob/**'
+      - '.github/fixtures/minio/**'
+      - 'internal/runintent/postgres/workspace_minio_iam_integration_test.go'
+      - 'docs/implementation/WORKSPACE-MINIO-SCOPED-IAM.md'
       - 'internal/runintent/postgres/workspace_real_minio_integration_test.go'
       - 'internal/runintent/postgres/workspace_minio_sigkill_integration_test.go'
       - 'docs/implementation/WORKSPACE-REAL-MINIO-ACCEPTANCE.md'
@@ -95,6 +98,83 @@ jobs:
           set -euo pipefail
           go test -race -count=1 -v -run '^TestMinIOBackend$' ./internal/workspace/s3blob | tee "$RUNNER_TEMP/minio-s3-test.log"
           grep --fixed-strings -- '--- PASS: TestMinIOBackend (' "$RUNNER_TEMP/minio-s3-test.log"
+      - name: Download SHA256-pinned official historical MinIO client for IAM fixtures
+        shell: bash
+        env:
+          MC_RELEASE_URL: https://github.com/minio/mc/releases/download/RELEASE.2025-08-13T08-35-41Z/mc.linux-amd64.RELEASE.2025-08-13T08-35-41Z
+          # SHA256 from official minio/mc GitHub Release assets[].digest.
+          MC_RELEASE_SHA256: 01f866e9c5f9b87c2b09116fa5d7c06695b106242d829a8bb32990c00312e891
+        run: |
+          set -euo pipefail
+          curl --fail --location --silent --show-error \
+            --retry 5 --retry-delay 3 --retry-all-errors \
+            --output "$RUNNER_TEMP/mc-official" "$MC_RELEASE_URL"
+          printf '%s  %s\n' "$MC_RELEASE_SHA256" "$RUNNER_TEMP/mc-official" | sha256sum --check --status
+          chmod 0700 "$RUNNER_TEMP/mc-official"
+          "$RUNNER_TEMP/mc-official" --version | tee "$RUNNER_TEMP/mc-version.txt"
+          grep --fixed-strings 'RELEASE.2025-08-13T08-35-41Z' "$RUNNER_TEMP/mc-version.txt"
+      - name: Provision four separate real server IAM identities (admin confined to this step)
+        shell: bash
+        env:
+          MINIO_ROOT_USER: acp-ci-access
+          MINIO_ROOT_PASSWORD: acp-ci-secret-only
+        run: |
+          set -euo pipefail
+          umask 077
+          export MC_CONFIG_DIR="$RUNNER_TEMP/acp-minio-mc-config"
+          mc="$RUNNER_TEMP/mc-official"
+          "$mc" alias set acp-admin http://127.0.0.1:9000 \
+            "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" --api S3v4
+          for role in WRITER READER OTHER DENIED; do
+            role_lower="$(printf '%s' "$role" | tr '[:upper:]' '[:lower:]')"
+            user="acp-ci-$role_lower"
+            secret="$(openssl rand -hex 24)"
+            echo "::add-mask::$secret"
+            "$mc" admin user add acp-admin "$user" "$secret"
+            printf 'S3BLOB_IAM_%s_ACCESS_KEY=%s\n' "$role" "$user" >>"$GITHUB_ENV"
+            printf 'S3BLOB_IAM_%s_SECRET_KEY=%s\n' "$role" "$secret" >>"$GITHUB_ENV"
+          done
+          "$mc" admin policy create acp-admin acp-ci-put-only .github/fixtures/minio/iam-writer-a.json
+          "$mc" admin policy create acp-admin acp-ci-get-only .github/fixtures/minio/iam-reader-a.json
+          "$mc" admin policy create acp-admin acp-ci-tenant-b .github/fixtures/minio/iam-tenant-b.json
+          "$mc" admin policy attach acp-admin acp-ci-put-only --user acp-ci-writer
+          "$mc" admin policy attach acp-admin acp-ci-get-only --user acp-ci-reader
+          "$mc" admin policy attach acp-admin acp-ci-tenant-b --user acp-ci-other
+          # acp-ci-denied intentionally receives no policy.
+          "$mc" admin policy info acp-admin acp-ci-put-only >"$RUNNER_TEMP/minio-writer-policy-evidence.json"
+          "$mc" admin policy info acp-admin acp-ci-get-only >"$RUNNER_TEMP/minio-reader-policy-evidence.json"
+          "$mc" admin policy info acp-admin acp-ci-tenant-b >"$RUNNER_TEMP/minio-other-policy-evidence.json"
+          echo 'Real service policies provisioned; no fixture root credential exported to subsequent test steps.'
+      - name: Provider-enforced real MinIO scoped IAM denial matrix (no fixture admin credentials)
+        shell: bash
+        env:
+          S3BLOB_MINIO_TEST_ENDPOINT: http://127.0.0.1:9000
+        run: |
+          set -euo pipefail
+          go test -race -count=1 -v -run '^TestMinIORealScopedIAM$' ./internal/workspace/s3blob | tee "$RUNNER_TEMP/minio-iam-test.log"
+          grep --fixed-strings -- '--- PASS: TestMinIORealScopedIAM (' "$RUNNER_TEMP/minio-iam-test.log"
+          for case in writer-cannot-read reader-cannot-put reader-cannot-delete writer-cannot-delete other-tenant-cannot-read other-tenant-cannot-write unassigned-cannot-read unassigned-cannot-write writer-cannot-list-buckets; do
+            grep --fixed-strings -- "--- PASS: TestMinIORealScopedIAM/$case (" "$RUNNER_TEMP/minio-iam-test.log"
+          done
+      - name: Real MinIO split-role IAM + PostgreSQL verified Workspace CAS
+        shell: bash
+        env:
+          S3BLOB_MINIO_TEST_ENDPOINT: http://127.0.0.1:9000
+        run: |
+          set -euo pipefail
+          go test -race -count=1 -v -run '^TestWorkspaceRealMinIOScopedIAMPG$' ./internal/runintent/postgres | tee "$RUNNER_TEMP/minio-iam-pg-test.log"
+          grep --fixed-strings -- '--- PASS: TestWorkspaceRealMinIOScopedIAMPG (' "$RUNNER_TEMP/minio-iam-pg-test.log"
+      - name: Revoke real reader principal and prove provider blocks existing object
+        shell: bash
+        env:
+          S3BLOB_MINIO_TEST_ENDPOINT: http://127.0.0.1:9000
+        run: |
+          set -euo pipefail
+          export MC_CONFIG_DIR="$RUNNER_TEMP/acp-minio-mc-config"
+          "$RUNNER_TEMP/mc-official" admin user disable acp-admin acp-ci-reader
+          go test -race -count=1 -v -run '^TestMinIORealIAMDisabledReader$' ./internal/workspace/s3blob | tee "$RUNNER_TEMP/minio-iam-revoked.log"
+          grep --fixed-strings -- '--- PASS: TestMinIORealIAMDisabledReader (' "$RUNNER_TEMP/minio-iam-revoked.log"
+          grep --fixed-strings -- 'real MinIO user disable enforced by provider;' "$RUNNER_TEMP/minio-iam-revoked.log"
       - name: Real MinIO and PostgreSQL pinned Workspace + lost ACK reconciliation
         env:
           S3BLOB_MINIO_TEST_ENDPOINT: http://127.0.0.1:9000
