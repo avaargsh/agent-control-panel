@@ -20,13 +20,13 @@ func TestAWSWriteOncePolicyTemplateRejectsMissingCondition(t *testing.T) {
 		t.Fatal(err)
 	}
 	var policy struct {
-		Version string
+		Version   string
 		Statement []struct {
-			Sid string
-			Effect string
+			Sid       string
+			Effect    string
 			Principal string
-			Action string
-			Resource string
+			Action    string
+			Resource  string
 			Condition map[string]map[string]string
 		}
 	}
