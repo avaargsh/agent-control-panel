@@ -142,6 +142,18 @@ func (r *Repository) readUploadIntent(ctx context.Context, lock researchlock.Loc
 		v.ArtifactDigest != lock.ArtifactDigest {
 		return WorkspaceUploadIntent{}, ErrWorkspaceScope
 	}
+	// The database server clock is authoritative for the upload lease.
+	var fresh bool
+	if err := tx.QueryRow(ctx, `
+		SELECT expires_at > clock_timestamp()
+		FROM workspace_upload_intents
+		WHERE tenant_id=$1 AND workspace_id=$2 AND owner_principal_id=$3 AND intent_id=$4
+	`, lock.TenantID, lock.WorkspaceID, lock.PrincipalID, intentID).Scan(&fresh); err != nil {
+		return WorkspaceUploadIntent{}, fmt.Errorf("check upload intent expiry: %w", err)
+	}
+	if !fresh {
+		return WorkspaceUploadIntent{}, ErrUploadIntentExpired
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return WorkspaceUploadIntent{}, fmt.Errorf("commit upload intent read: %w", err)
 	}
@@ -201,12 +213,8 @@ func (r *Repository) UploadWorkspaceObject(ctx context.Context, lock researchloc
 	if !created {
 		return r.ReconcileWorkspaceUpload(ctx, lock, in.IntentID, uploader)
 	}
-	intent, err := r.readUploadIntent(ctx, lock, in.IntentID)
-	if err != nil {
+	if _, err := r.readUploadIntent(ctx, lock, in.IntentID); err != nil {
 		return BlobStage{}, err
-	}
-	if !time.Now().Before(intent.ExpiresAt) {
-		return BlobStage{}, ErrUploadIntentExpired
 	}
 	actual, uploadErr := uploader.Upload(ctx, lock.TenantID, lock.WorkspaceID, in.Asset.Path, bytes.NewReader(data))
 	if uploadErr != nil || actual != in.Asset {
@@ -228,17 +236,16 @@ func (r *Repository) ReconcileWorkspaceUpload(ctx context.Context, lock research
 	if err != nil {
 		return BlobStage{}, err
 	}
-	if !time.Now().Before(intent.ExpiresAt) {
-		return BlobStage{}, ErrUploadIntentExpired
-	}
 	if err := verifier.VerifyAsset(ctx, lock.TenantID, lock.WorkspaceID, intent.Asset); err != nil {
 		if e := r.appendUploadObservation(ctx, lock, intentID, "UNKNOWN"); e != nil {
 			return BlobStage{}, errors.Join(ErrUploadOutcomeUnknown, e)
 		}
 		return BlobStage{}, ErrUploadOutcomeUnknown
 	}
-	if !time.Now().Before(intent.ExpiresAt) {
-		return BlobStage{}, ErrUploadIntentExpired
+	// Recheck expiration against the database clock after remote GET and
+	// before creating Stage evidence.
+	if _, err := r.readUploadIntent(ctx, lock, intentID); err != nil {
+		return BlobStage{}, err
 	}
 	stage, _, err := r.StageWorkspaceAsset(ctx, lock, intentID, intent.Asset, intent.LeaseSeconds, verifier)
 	if err != nil {
