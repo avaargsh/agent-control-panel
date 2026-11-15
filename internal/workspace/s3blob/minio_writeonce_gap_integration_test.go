@@ -35,8 +35,8 @@ func TestMinIOLegacyUnconditionalOverwriteGap(t *testing.T) {
 	original := []byte("P0-2B5c: legacy provider conditional write is client-controlled, not server-mandated")
 	sum := sha256.Sum256(original)
 	asset := workspace.Asset{
-		Path: "reports/legacy-write-once-gap.md",
-		Digest: "sha256:" + hex.EncodeToString(sum[:]),
+		Path:      "reports/legacy-write-once-gap.md",
+		Digest:    "sha256:" + hex.EncodeToString(sum[:]),
 		SizeBytes: int64(len(original)),
 	}
 	key, err := writer.objectPath(tenant, workspaceID, asset.Digest)
