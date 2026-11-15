@@ -146,7 +146,7 @@ func TestMinIORealIAMDisabledReader(t *testing.T) {
 	report := []byte("P0-2B5b real MinIO separate writer and verified reader, not bootstrap administrator")
 	sum := sha256.Sum256(report)
 	asset := workspace.Asset{
-		Path: "reports/iam-report.md",
+		Path:   "reports/iam-report.md",
 		Digest: "sha256:" + hex.EncodeToString(sum[:]), SizeBytes: int64(len(report)),
 	}
 	ctx := context.Background()
