@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/avaargsh/agent-control-panel/internal/workspace"
 	"github.com/avaargsh/agent-control-panel/internal/researchlock"
+	"github.com/avaargsh/agent-control-panel/internal/workspace"
 )
 
 func gcBlob(name, letter string) workspace.Asset {
@@ -223,34 +223,49 @@ func TestGCClaimSchemaDriftFailClosedAndNonownerRLS(t *testing.T) {
 			t.Fatal(err)
 		}
 		var schema string
-		if err := repo.pool.QueryRow(ctx, "SELECT current_schema()").Scan(&schema); err != nil { t.Fatal(err) }
+		if err := repo.pool.QueryRow(ctx, "SELECT current_schema()").Scan(&schema); err != nil {
+			t.Fatal(err)
+		}
 		role := fmt.Sprintf("gc_reader_%d", time.Now().UnixNano())
-		if _, err := repo.pool.Exec(ctx, "CREATE ROLE "+role+" NOLOGIN"); err != nil { t.Fatal(err) }
+		if _, err := repo.pool.Exec(ctx, "CREATE ROLE "+role+" NOLOGIN"); err != nil {
+			t.Fatal(err)
+		}
 		t.Cleanup(func() {
 			_, _ = repo.pool.Exec(context.Background(), "DROP OWNED BY "+role)
 			_, _ = repo.pool.Exec(context.Background(), "DROP ROLE "+role)
 		})
 		for _, sql := range []string{
-			"GRANT USAGE ON SCHEMA "+schema+" TO "+role,
-			"GRANT SELECT ON "+schema+".workspace_gc_claims TO "+role,
-			"GRANT SELECT ON "+schema+".workspace_gc_observations TO "+role,
+			"GRANT USAGE ON SCHEMA " + schema + " TO " + role,
+			"GRANT SELECT ON " + schema + ".workspace_gc_claims TO " + role,
+			"GRANT SELECT ON " + schema + ".workspace_gc_observations TO " + role,
 		} {
-			if _, err := repo.pool.Exec(ctx, sql); err != nil { t.Fatal(err) }
+			if _, err := repo.pool.Exec(ctx, sql); err != nil {
+				t.Fatal(err)
+			}
 		}
 		tx, err := repo.pool.Begin(ctx)
-		if err != nil { t.Fatal(err) }
-		defer func(){ _=tx.Rollback(context.Background()) }()
-		if _, err := tx.Exec(ctx, "SET LOCAL ROLE "+role); err != nil { t.Fatal(err) }
-		for _, tc := range []struct{tenant, principal string; want int} {
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = tx.Rollback(context.Background()) }()
+		if _, err := tx.Exec(ctx, "SET LOCAL ROLE "+role); err != nil {
+			t.Fatal(err)
+		}
+		for _, tc := range []struct {
+			tenant, principal string
+			want              int
+		}{
 			{lock.TenantID, lock.PrincipalID, 1},
 			{"other", lock.PrincipalID, 0},
 			{lock.TenantID, "other", 0},
 		} {
-			if _, err := tx.Exec(ctx, "SELECT set_config('app.tenant_id',$1,true),set_config('app.principal_id',$2,true)",tc.tenant,tc.principal);err!=nil{t.Fatal(err)}
-			for _, table := range []string{"workspace_gc_claims","workspace_gc_observations"} {
+			if _, err := tx.Exec(ctx, "SELECT set_config('app.tenant_id',$1,true),set_config('app.principal_id',$2,true)", tc.tenant, tc.principal); err != nil {
+				t.Fatal(err)
+			}
+			for _, table := range []string{"workspace_gc_claims", "workspace_gc_observations"} {
 				var n int
-				if err:=tx.QueryRow(ctx,"SELECT count(*) FROM "+table).Scan(&n);err!=nil||n!=tc.want{
-					t.Fatalf("%s RLS visible count=%d expected=%d err=%v",table,n,tc.want,err)
+				if err := tx.QueryRow(ctx, "SELECT count(*) FROM "+table).Scan(&n); err != nil || n != tc.want {
+					t.Fatalf("%s RLS visible count=%d expected=%d err=%v", table, n, tc.want, err)
 				}
 			}
 		}
