@@ -40,9 +40,9 @@ func rawS3SignedRequest(ctx context.Context, identity *Store, method, path strin
 	request.Header.Set("X-Amz-Date", date)
 	request.Header.Set("X-Amz-Content-Sha256", payloadHash)
 	canonicalHeaders := map[string]string{
-		"host": request.URL.Host,
+		"host":                 request.URL.Host,
 		"x-amz-content-sha256": payloadHash,
-		"x-amz-date": date,
+		"x-amz-date":           date,
 	}
 	if ifNoneMatch {
 		request.Header.Set("If-None-Match", "*")
@@ -118,9 +118,9 @@ func rawS3Status(t *testing.T, ctx context.Context, identity *Store, method, pat
 
 func TestIndependentRawSigV4BindsConditionalHeaderAndPayload(t *testing.T) {
 	identity, err := New(Config{
-		Endpoint: "https://s3.us-east-1.amazonaws.com",
-		Bucket: "acp-writeonce-probe-fixture",
-		Region: "us-east-1",
+		Endpoint:  "https://s3.us-east-1.amazonaws.com",
+		Bucket:    "acp-writeonce-probe-fixture",
+		Region:    "us-east-1",
 		AccessKey: "scoped-test-id",
 		SecretKey: "scoped-test-secret",
 	})
