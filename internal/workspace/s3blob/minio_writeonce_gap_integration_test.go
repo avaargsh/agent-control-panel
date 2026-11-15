@@ -44,13 +44,13 @@ func TestMinIOLegacyUnconditionalOverwriteGap(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if status := realIAMStatus(t, ctx, writer, http.MethodPut, key, original, true); status != http.StatusOK {
+	if status := rawS3Status(t, ctx, writer, http.MethodPut, key, original, true); status != http.StatusOK {
 		t.Fatalf("initial scoped conditional PUT rejected HTTP %d", status)
 	}
 	if err := reader.VerifyAsset(ctx, tenant, workspaceID, asset); err != nil {
 		t.Fatalf("initial real scoped byte verification failed: %v", err)
 	}
-	if status := realIAMStatus(t, ctx, writer, http.MethodPut, key, original, true); status != http.StatusPreconditionFailed {
+	if status := rawS3Status(t, ctx, writer, http.MethodPut, key, original, true); status != http.StatusPreconditionFailed {
 		t.Fatalf("compliant duplicate conditional PUT was not 412: HTTP %d", status)
 	}
 
@@ -59,7 +59,7 @@ func TestMinIOLegacyUnconditionalOverwriteGap(t *testing.T) {
 	// Same digest-derived KEY but different BYTES. This raw signed request
 	// deliberately BYPASSES the ACP conditional-put method. It is not a new
 	// product capability, and it runs only on the temporary CI MinIO server.
-	if status := realIAMStatus(t, ctx, writer, http.MethodPut, key, malicious, false); status != http.StatusOK {
+	if status := rawS3Status(t, ctx, writer, http.MethodPut, key, malicious, false); status != http.StatusOK {
 		t.Fatalf("legacy provider behavior changed: unconditional PUT now HTTP %d (re-evaluate policy and security gate)", status)
 	}
 	// The independent, read-only principal must detect corruption even
@@ -67,7 +67,7 @@ func TestMinIOLegacyUnconditionalOverwriteGap(t *testing.T) {
 	if err := reader.VerifyAsset(ctx, tenant, workspaceID, asset); !errors.Is(err, ErrIntegrity) {
 		t.Fatalf("post-overwrite verified reader did not reject malicious bytes: %v", err)
 	}
-	request, err := reader.signedRequest(ctx, http.MethodGet, key, nil, false)
+	request, err := rawS3SignedRequest(ctx, reader, http.MethodGet, key, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}
