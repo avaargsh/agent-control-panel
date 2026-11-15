@@ -1,0 +1,17 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DenyObjectCreationWithoutIfNoneMatchInDisposableWorkspacePrefix",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": "s3:PutObject",
+      "Resource": "arn:aws:s3:::acp-writeonce-probe-REPLACE/v1/tenant/tenant-security-probe/workspace/workspace-writeonce-probe/sha256/*",
+      "Condition": {
+        "Null": {
+          "s3:if-none-match": "true"
+        }
+      }
+    }
+  ]
+}
