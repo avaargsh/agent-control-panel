@@ -64,9 +64,9 @@ func minioProcessStore(t *testing.T, action, phase string) minioProcessBackend {
 	if os.Getenv("ACP_MINIO_PROCESS_MODE") == "" {
 		store, err := s3blob.New(s3blob.Config{
 			Endpoint: os.Getenv("S3BLOB_MINIO_TEST_ENDPOINT"),
-			Bucket: "research-artifacts", Region: "us-east-1",
-			AccessKey: os.Getenv("S3BLOB_MINIO_TEST_ACCESS_KEY"),
-			SecretKey: os.Getenv("S3BLOB_MINIO_TEST_SECRET_KEY"),
+			Bucket:   "research-artifacts", Region: "us-east-1",
+			AccessKey:         os.Getenv("S3BLOB_MINIO_TEST_ACCESS_KEY"),
+			SecretKey:         os.Getenv("S3BLOB_MINIO_TEST_SECRET_KEY"),
 			AllowHTTPForTests: true,
 		})
 		if err != nil {
@@ -97,7 +97,7 @@ func minioProcessStore(t *testing.T, action, phase string) minioProcessBackend {
 		}
 		store, err := s3blob.New(s3blob.Config{
 			Endpoint: os.Getenv("S3BLOB_MINIO_TEST_ENDPOINT"),
-			Bucket: "research-artifacts", Region: "us-east-1",
+			Bucket:   "research-artifacts", Region: "us-east-1",
 			AccessKey: access, SecretKey: secret, AllowHTTPForTests: true,
 		})
 		if err != nil {
