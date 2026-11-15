@@ -104,6 +104,10 @@ func TestGCClaimRejectsHistoricalV6AndV7Retention(t *testing.T) {
 			if _, err := repo.ClaimWorkspaceBlob(ctx, lock, asset.Digest, "collector-a", 60); !errors.Is(err, ErrGCNotEligible) {
 				t.Fatalf("historical reference not retained: %v", err)
 			}
+			var retained int
+			if err := repo.pool.QueryRow(ctx, "SELECT count(*) FROM workspace_gc_observations WHERE disposition='RETAINED'").Scan(&retained); err != nil || retained != 1 {
+				t.Fatalf("historical retention reason was not recorded: count=%d err=%v", retained, err)
+			}
 		})
 	}
 }
@@ -142,6 +146,10 @@ func TestGCClaimFailsClosedForUnknownAndActiveUploads(t *testing.T) {
 	}
 	if _, err := repo.ClaimWorkspaceBlob(ctx, lock, asset.Digest, "collector-a", 30); !errors.Is(err, ErrGCNotEligible) {
 		t.Fatalf("active upload intent eligible: %v", err)
+	}
+	var unknown int
+	if err := repo.pool.QueryRow(ctx, "SELECT count(*) FROM workspace_gc_observations WHERE disposition='UNKNOWN'").Scan(&unknown); err != nil || unknown != 1 {
+		t.Fatalf("active upload was not audited UNKNOWN: count=%d err=%v", unknown, err)
 	}
 	// Even an expired intent with no VERIFIED observation must remain UNKNOWN
 	// rather than authorize reclaim based solely on elapsed time.
@@ -270,4 +278,24 @@ func TestGCClaimSchemaDriftFailClosedAndNonownerRLS(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestGCClaimExpiredUploadWithoutVerifiedBytesRemainsUnknown(t *testing.T) {
+	repo, asset, lock := gcFixture(t, 150801)
+	ctx := context.Background()
+	if _, _, err := repo.BeginWorkspaceUpload(ctx, lock, WorkspaceUploadInput{
+		IntentID: "expired-ack-loss", Asset: asset, LeaseSeconds: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.pool.Exec(ctx, "SELECT pg_sleep(1.15)"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.ClaimWorkspaceBlob(ctx, lock, asset.Digest, "collector", 60); !errors.Is(err, ErrGCNotEligible) {
+		t.Fatalf("expired UNKNOWN remote PUT eligible: %v", err)
+	}
+	var disposition string
+	if err := repo.pool.QueryRow(ctx, "SELECT disposition FROM workspace_gc_observations ORDER BY observation_id DESC LIMIT 1").Scan(&disposition); err != nil || disposition != "UNKNOWN" {
+		t.Fatalf("expired unresolved upload not recorded as UNKNOWN: %q err=%v", disposition, err)
+	}
 }
