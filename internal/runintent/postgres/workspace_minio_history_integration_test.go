@@ -79,8 +79,8 @@ func TestWorkspaceRealMinIOHistoricalRetainedBytesPG(t *testing.T) {
 			SizeBytes: int64(len(payload)),
 		}
 		intent := WorkspaceUploadInput{
-			IntentID:   []string{"history-upload-v1", "history-upload-v2"}[idx],
-			Asset:      asset,
+			IntentID:     []string{"history-upload-v1", "history-upload-v2"}[idx],
+			Asset:        asset,
 			LeaseSeconds: 300,
 		}
 		stage, err := repo.UploadWorkspaceObject(ctx, lock, intent, bytes.NewReader(payload), split)
@@ -88,9 +88,9 @@ func TestWorkspaceRealMinIOHistoricalRetainedBytesPG(t *testing.T) {
 			t.Fatalf("real scoped upload revision %d: stage=%+v err=%v", idx+1, stage, err)
 		}
 		input := WorkspaceCommitInput{
-			CommitID:        []string{"history-commit-v1", "history-commit-v2"}[idx],
+			CommitID:         []string{"history-commit-v1", "history-commit-v2"}[idx],
 			ExpectedRevision: int64(idx),
-			Assets:          []workspace.Asset{asset},
+			Assets:           []workspace.Asset{asset},
 		}
 		receipt, err := New(pool).CommitStagedWorkspace(ctx, lock, input, split)
 		if err != nil || receipt.Revision != int64(idx+1) {
