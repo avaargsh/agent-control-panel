@@ -4,7 +4,7 @@ This is an internal **development-only, non-destructive** claim protocol, not a 
 
 ## Authority and serializability
 
-ACP remains the only writer for Workspace identity, revision, immutable manifest and referenced asset ledger. GC claims use one mutable, tenant+Workspace+SHA256-keyed `workspace_gc_claims` row with a monotonic `generation`, trusted `holder_id`, and a server-clock lease bounded to 1–300 seconds. Every acquisition, new generation, or eligibility denial can append immutable `workspace_gc_observations`.
+ACP remains the only writer for Workspace identity, revision, immutable manifest and referenced asset ledger. GC claims use one mutable, tenant+Workspace+SHA256-keyed `workspace_gc_claims` row with a monotonic `generation`, trusted `holder_id`, and a server-clock lease bounded to 1–300 seconds. Every acquisition and new generation appends immutable `workspace_gc_observations`; eligibility denials are classified as `RETAINED` (historical manifest/ref), `UNKNOWN` (active or unresolved upload) or `NOT_ELIGIBLE` (no expired staged candidate or another live stage).
 
 All claim operations obtain the ACP-scoped `research_workspaces` row `FOR UPDATE` before checking historical retention or changing a claim. New upload intents also take that row lock before inserting intent evidence. New verified stages take it after reading object bytes but before writing Stage. Both legacy `CommitWorkspace` and strict `CommitStagedWorkspace` acquire the same row lock through CAS UPDATE and refuse any new manifest asset whose digest currently has a live GC claim; refusal rolls back the revision. Existing committed idempotency replays remain read-only.
 
