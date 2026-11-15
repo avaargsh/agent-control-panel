@@ -23,7 +23,7 @@ func minioRoleStore(t *testing.T, role string) *Store {
 	}
 	store, err := New(Config{
 		Endpoint: os.Getenv("S3BLOB_MINIO_TEST_ENDPOINT"),
-		Bucket: "research-artifacts", Region: "us-east-1",
+		Bucket:   "research-artifacts", Region: "us-east-1",
 		AccessKey: access, SecretKey: secret, AllowHTTPForTests: true,
 	})
 	if err != nil {
@@ -67,7 +67,7 @@ func TestMinIORealScopedIAM(t *testing.T) {
 	payload := []byte("P0-2B5b real MinIO separate writer and verified reader, not bootstrap administrator")
 	sum := sha256.Sum256(payload)
 	asset := workspace.Asset{
-		Path: "reports/iam-report.md",
+		Path:   "reports/iam-report.md",
 		Digest: "sha256:" + hex.EncodeToString(sum[:]), SizeBytes: int64(len(payload)),
 	}
 	tenant, workspaceID := "tenant-integration", "workspace-1"
@@ -91,9 +91,9 @@ func TestMinIORealScopedIAM(t *testing.T) {
 
 	for _, tc := range []struct {
 		name, method, path string
-		store *Store
-		data []byte
-		conditional bool
+		store              *Store
+		data               []byte
+		conditional        bool
 	}{
 		{"writer-cannot-read", http.MethodGet, key, writer, nil, false},
 		{"reader-cannot-put", http.MethodPut, key, reader, payload, true},
@@ -107,7 +107,7 @@ func TestMinIORealScopedIAM(t *testing.T) {
 		{"reader-cannot-list-buckets", http.MethodGet, "/", reader, nil, false},
 		{"other-tenant-cannot-list-buckets", http.MethodGet, "/", other, nil, false},
 		{"unauthorized-cannot-list-buckets", http.MethodGet, "/", denied, nil, false},
-	}{
+	} {
 		t.Run(tc.name, func(t *testing.T) {
 			status := realIAMStatus(t, ctx, tc.store, tc.method, tc.path, tc.data, tc.conditional)
 			if status != http.StatusForbidden {
@@ -124,7 +124,9 @@ func TestMinIORealScopedIAM(t *testing.T) {
 	if status := realIAMStatus(t, ctx, other, http.MethodPut,
 		func() string {
 			k, e := other.objectPath(bTenant, bWorkspace, asset.Digest)
-			if e != nil { t.Fatal(e) }
+			if e != nil {
+				t.Fatal(e)
+			}
 			return k
 		}(), payload, true); status != http.StatusOK {
 		t.Fatalf("other tenant cannot write its OWN prefix: HTTP %d", status)
