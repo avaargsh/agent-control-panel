@@ -92,7 +92,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          go test -race -count=1 -v -run '^TestMinIOBackend
+          go test -race -count=1 -v -run '^TestMinIOBackend$' ./internal/workspace/s3blob | tee "$RUNNER_TEMP/minio-s3-test.log"
+          grep --fixed-strings -- '--- PASS: TestMinIOBackend (' "$RUNNER_TEMP/minio-s3-test.log"
       - name: Real MinIO and PostgreSQL pinned Workspace + lost ACK reconciliation
         env:
           S3BLOB_MINIO_TEST_ENDPOINT: http://127.0.0.1:9000
@@ -101,57 +102,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          go test -race -count=1 -v -run '^TestWorkspaceRealMinIOPGReconcile
-      - name: Stop disposable server and retain bounded diagnostics
-        if: always()
-        shell: bash
-        run: |
-          if [[ -f "$RUNNER_TEMP/minio-server.log" ]]; then
-            tail -n 60 "$RUNNER_TEMP/minio-server.log" || true
-          fi
-          if [[ -f "$RUNNER_TEMP/minio-server.pid" ]]; then
-            kill "$(cat "$RUNNER_TEMP/minio-server.pid")" || true
-          fi
- ./internal/workspace/s3blob | tee "$RUNNER_TEMP/minio-s3-test.log"
-          grep --fixed-strings -- '--- PASS: TestMinIOBackend (' "$RUNNER_TEMP/minio-s3-test.log"
-      - name: Real MinIO and PostgreSQL pinned Workspace + lost ACK reconciliation
-        env:
-          S3BLOB_MINIO_TEST_ENDPOINT: http://127.0.0.1:9000
-          S3BLOB_MINIO_TEST_ACCESS_KEY: acp-ci-access
-          S3BLOB_MINIO_TEST_SECRET_KEY: acp-ci-secret-only
-        run: |
-          go test -race -count=1 -v -run '^TestWorkspaceRealMinIOPGReconcile$' ./internal/runintent/postgres
-      - name: Stop disposable server and retain bounded diagnostics
-        if: always()
-        shell: bash
-        run: |
-          if [[ -f "$RUNNER_TEMP/minio-server.log" ]]; then
-            tail -n 60 "$RUNNER_TEMP/minio-server.log" || true
-          fi
-          if [[ -f "$RUNNER_TEMP/minio-server.pid" ]]; then
-            kill "$(cat "$RUNNER_TEMP/minio-server.pid")" || true
-          fi
- ./internal/runintent/postgres | tee "$RUNNER_TEMP/minio-workspace-pg-test.log"
+          go test -race -count=1 -v -run '^TestWorkspaceRealMinIOPGReconcile$' ./internal/runintent/postgres | tee "$RUNNER_TEMP/minio-workspace-pg-test.log"
           grep --fixed-strings -- '--- PASS: TestWorkspaceRealMinIOPGReconcile (' "$RUNNER_TEMP/minio-workspace-pg-test.log"
-      - name: Stop disposable server and retain bounded diagnostics
-        if: always()
-        shell: bash
-        run: |
-          if [[ -f "$RUNNER_TEMP/minio-server.log" ]]; then
-            tail -n 60 "$RUNNER_TEMP/minio-server.log" || true
-          fi
-          if [[ -f "$RUNNER_TEMP/minio-server.pid" ]]; then
-            kill "$(cat "$RUNNER_TEMP/minio-server.pid")" || true
-          fi
- ./internal/workspace/s3blob | tee "$RUNNER_TEMP/minio-s3-test.log"
-          grep --fixed-strings -- '--- PASS: TestMinIOBackend (' "$RUNNER_TEMP/minio-s3-test.log"
-      - name: Real MinIO and PostgreSQL pinned Workspace + lost ACK reconciliation
-        env:
-          S3BLOB_MINIO_TEST_ENDPOINT: http://127.0.0.1:9000
-          S3BLOB_MINIO_TEST_ACCESS_KEY: acp-ci-access
-          S3BLOB_MINIO_TEST_SECRET_KEY: acp-ci-secret-only
-        run: |
-          go test -race -count=1 -v -run '^TestWorkspaceRealMinIOPGReconcile$' ./internal/runintent/postgres
       - name: Stop disposable server and retain bounded diagnostics
         if: always()
         shell: bash
