@@ -73,13 +73,13 @@ func TestApprovedS3WriteOnceSecurityGate(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if status := realIAMStatus(t, ctx, writer, http.MethodPut, key, original, true); status != http.StatusOK {
+	if status := rawS3Status(t, ctx, writer, http.MethodPut, key, original, true); status != http.StatusOK {
 		t.Fatalf("approved provider rejected initial conditional PUT: HTTP %d", status)
 	}
 	if err := reader.VerifyAsset(ctx, tenant, workspaceID, asset); err != nil {
 		t.Fatalf("approved provider did not return correct initial bytes: %v", err)
 	}
-	if status := realIAMStatus(t, ctx, writer, http.MethodPut, key, original, true); status != http.StatusPreconditionFailed {
+	if status := rawS3Status(t, ctx, writer, http.MethodPut, key, original, true); status != http.StatusPreconditionFailed {
 		t.Fatalf("approved provider must reject existing-key conditional PUT as 412, got %d", status)
 	}
 
@@ -100,16 +100,16 @@ func TestApprovedS3WriteOnceSecurityGate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status := realIAMStatus(t, ctx, writer, http.MethodPut, freshKey, fresh, false); status != http.StatusForbidden {
+	if status := rawS3Status(t, ctx, writer, http.MethodPut, freshKey, fresh, false); status != http.StatusForbidden {
 		t.Fatalf("P0 CONDITIONAL POLICY FAILURE: unconditioned FIRST PUT of fresh digest key returned %d instead of provider 403", status)
 	}
-	if status := realIAMStatus(t, ctx, writer, http.MethodPut, freshKey, fresh, true); status != http.StatusOK {
+	if status := rawS3Status(t, ctx, writer, http.MethodPut, freshKey, fresh, true); status != http.StatusOK {
 		t.Fatalf("policy denies valid conditional first PUT after raw 403: HTTP %d", status)
 	}
 	if err := reader.VerifyAsset(ctx, tenant, workspaceID, freshAsset); err != nil {
 		t.Fatalf("first conditional PUT after denied raw write did not preserve verified bytes: %v", err)
 	}
-	if status := realIAMStatus(t, ctx, writer, http.MethodPut, freshKey, fresh, false); status != http.StatusForbidden {
+	if status := rawS3Status(t, ctx, writer, http.MethodPut, freshKey, fresh, false); status != http.StatusForbidden {
 		t.Fatalf("fresh digest key became unconditionally overwriteable after creation: HTTP %d", status)
 	}
 	if err := reader.VerifyAsset(ctx, tenant, workspaceID, freshAsset); err != nil {
@@ -120,41 +120,41 @@ func TestApprovedS3WriteOnceSecurityGate(t *testing.T) {
 	different[0] ^= 0x01
 	// Reject a compliant conditional PUT carrying DIFFERENT bytes too.
 	// A 412 must leave the original object immutable regardless of payload.
-	if status := realIAMStatus(t, ctx, writer, http.MethodPut, key, different, true); status != http.StatusPreconditionFailed {
+	if status := rawS3Status(t, ctx, writer, http.MethodPut, key, different, true); status != http.StatusPreconditionFailed {
 		t.Fatalf("conditional altered-payload replay changed the digest key: HTTP %d (want 412)", status)
 	}
 	if err := reader.VerifyAsset(ctx, tenant, workspaceID, asset); err != nil {
 		t.Fatalf("conditional altered-payload replay changed original bytes: %v", err)
 	}
-	// Send one raw *signed* S3 PUT WITHOUT If-None-Match, deliberately
+	// Send an independently built raw *signed* S3 PUT WITHOUT If-None-Match, deliberately
 	// bypassing every ACP convenience upload method. Only the backend IAM
 	// policy can block this attempt. A 200 here is an immediate hard FAIL.
-	if status := realIAMStatus(t, ctx, writer, http.MethodPut, key, different, false); status != http.StatusForbidden {
+	if status := rawS3Status(t, ctx, writer, http.MethodPut, key, different, false); status != http.StatusForbidden {
 		t.Fatalf("P0 WRITE-ONCE FAILURE: valid scoped writer unconditionally re-PUT same key (status=%d, want provider 403)", status)
 	}
 	if err := reader.VerifyAsset(ctx, tenant, workspaceID, asset); err != nil {
 		t.Fatalf("write-once denial did not preserve immutable original bytes: %v", err)
 	}
-	if status := realIAMStatus(t, ctx, writer, http.MethodDelete, key, nil, false); status != http.StatusForbidden {
+	if status := rawS3Status(t, ctx, writer, http.MethodDelete, key, nil, false); status != http.StatusForbidden {
 		t.Fatalf("scoped writer could DELETE object despite WORM acceptance: HTTP %d", status)
 	}
-	if status := realIAMStatus(t, ctx, reader, http.MethodPut, key, different, false); status != http.StatusForbidden {
+	if status := rawS3Status(t, ctx, reader, http.MethodPut, key, different, false); status != http.StatusForbidden {
 		t.Fatalf("read-only identity could overwrite object: HTTP %d", status)
 	}
 	foreignKey, err := writer.objectPath("tenant-other-probe", workspaceID, asset.Digest)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status := realIAMStatus(t, ctx, writer, http.MethodPut, foreignKey, original, true); status != http.StatusForbidden {
+	if status := rawS3Status(t, ctx, writer, http.MethodPut, foreignKey, original, true); status != http.StatusForbidden {
 		t.Fatalf("scoped writer could cross tenant boundary: HTTP %d", status)
 	}
 	// A trusted reader has access only to its tenant and workspace prefix.
 	// This checks provider IAM, not ACP's in-process lock validation.
-	if status := realIAMStatus(t, ctx, reader, http.MethodGet, foreignKey, nil, false); status != http.StatusForbidden {
+	if status := rawS3Status(t, ctx, reader, http.MethodGet, foreignKey, nil, false); status != http.StatusForbidden {
 		t.Fatalf("read-only identity could GET a foreign tenant prefix: HTTP %d", status)
 	}
 	for _, role := range []*Store{writer, reader} {
-		if status := realIAMStatus(t, ctx, role, http.MethodGet, "/", nil, false); status != http.StatusForbidden {
+		if status := rawS3Status(t, ctx, role, http.MethodGet, "/", nil, false); status != http.StatusForbidden {
 			t.Fatalf("scoped principal could enumerate buckets: HTTP %d", status)
 		}
 	}
@@ -198,7 +198,7 @@ func TestApprovedS3WriteOnceSecurityGate(t *testing.T) {
 	for i := 0; i < 4; i++ {
 		go func() {
 			<-start
-			req, e := writer.signedRequest(ctx, http.MethodPut, racingKey, racingBytes, true)
+			req, e := rawS3SignedRequest(ctx, writer, http.MethodPut, racingKey, racingBytes, true)
 			if e != nil {
 				resultChannel <- responseResult{err: e}
 				return
