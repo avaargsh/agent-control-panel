@@ -91,6 +91,14 @@ func (r *Repository) StageWorkspaceAsset(ctx context.Context, lock researchlock.
 	if err := verifier.VerifyAsset(ctx, lock.TenantID, lock.WorkspaceID, asset); err != nil {
 		return BlobStage{}, false, ErrWorkspaceUnverifiedAsset
 	}
+	// No claim can be acquired between this lock and the stage receipt
+	// insertion. Verification itself occurs BEFORE taking the row lock.
+	if err := lockGCWorkspace(ctx, tx, lock); err != nil {
+		return BlobStage{}, false, err
+	}
+	if err := assertNoActiveGC(ctx, tx, lock, asset.Digest); err != nil {
+		return BlobStage{}, false, err
+	}
 	staged, err := scanBlobStage(tx.QueryRow(ctx, `INSERT INTO workspace_blob_stages (
 		tenant_id,workspace_id,owner_principal_id,stage_id,source_run_intent_id,session_id,
 		das_digest,asset_path,artifact_digest,size_bytes,lease_seconds,expires_at
