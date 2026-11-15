@@ -164,6 +164,17 @@ jobs:
           set -euo pipefail
           go test -race -count=1 -v -run '^TestWorkspaceRealMinIOScopedIAMPG$' ./internal/runintent/postgres | tee "$RUNNER_TEMP/minio-iam-pg-test.log"
           grep --fixed-strings -- '--- PASS: TestWorkspaceRealMinIOScopedIAMPG (' "$RUNNER_TEMP/minio-iam-pg-test.log"
+      - name: Revoke real reader principal and prove provider blocks existing object
+        shell: bash
+        env:
+          S3BLOB_MINIO_TEST_ENDPOINT: http://127.0.0.1:9000
+        run: |
+          set -euo pipefail
+          export MC_CONFIG_DIR="$RUNNER_TEMP/acp-minio-mc-config"
+          "$RUNNER_TEMP/mc-official" admin user disable acp-admin acp-ci-reader
+          go test -race -count=1 -v -run '^TestMinIORealIAMDisabledReader$' ./internal/workspace/s3blob | tee "$RUNNER_TEMP/minio-iam-revoked.log"
+          grep --fixed-strings -- '--- PASS: TestMinIORealIAMDisabledReader (' "$RUNNER_TEMP/minio-iam-revoked.log"
+          grep --fixed-strings -- 'real MinIO user disable enforced by provider;' "$RUNNER_TEMP/minio-iam-revoked.log"
       - name: Real MinIO and PostgreSQL pinned Workspace + lost ACK reconciliation
         env:
           S3BLOB_MINIO_TEST_ENDPOINT: http://127.0.0.1:9000
