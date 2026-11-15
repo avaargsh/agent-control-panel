@@ -11,6 +11,7 @@ on:
       - '.github/workflows/workspace-minio-release.yml'
       - 'internal/workspace/s3blob/**'
       - 'internal/runintent/postgres/workspace_real_minio_integration_test.go'
+      - 'internal/runintent/postgres/workspace_minio_sigkill_integration_test.go'
       - 'docs/implementation/WORKSPACE-REAL-MINIO-ACCEPTANCE.md'
   workflow_dispatch:
 
@@ -104,6 +105,20 @@ jobs:
           set -euo pipefail
           go test -race -count=1 -v -run '^TestWorkspaceRealMinIOPGReconcile$' ./internal/runintent/postgres | tee "$RUNNER_TEMP/minio-workspace-pg-test.log"
           grep --fixed-strings -- '--- PASS: TestWorkspaceRealMinIOPGReconcile (' "$RUNNER_TEMP/minio-workspace-pg-test.log"
+      - name: Real process SIGKILL + retained PG/MinIO byte recovery at four boundaries
+        env:
+          S3BLOB_MINIO_TEST_ENDPOINT: http://127.0.0.1:9000
+          S3BLOB_MINIO_TEST_ACCESS_KEY: acp-ci-access
+          S3BLOB_MINIO_TEST_SECRET_KEY: acp-ci-secret-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -race -count=1 -v -run '^TestWorkspaceRealMinIOProcessSIGKILLRecovery$' ./internal/runintent/postgres | tee "$RUNNER_TEMP/minio-sigkill-pg-test.log"
+          grep --fixed-strings -- '--- PASS: TestWorkspaceRealMinIOProcessSIGKILLRecovery (' "$RUNNER_TEMP/minio-sigkill-pg-test.log"
+          for phase in before-put after-put after-stage after-cas; do
+            grep --fixed-strings -- "--- PASS: TestWorkspaceRealMinIOProcessSIGKILLRecovery/$phase (" "$RUNNER_TEMP/minio-sigkill-pg-test.log"
+            grep --fixed-strings -- "real SIGKILL verified for phase=$phase;" "$RUNNER_TEMP/minio-sigkill-pg-test.log"
+          done
       - name: Stop disposable server and retain bounded diagnostics
         if: always()
         shell: bash
