@@ -74,14 +74,13 @@ func TestWorkspaceSignedS3BlobRecoveryAndCorruption(t *testing.T) {
 		t.Fatal(err)
 	}
 	report := []byte("Research report with signed object-store persistence")
-	asset, err := store.Upload(ctx, lock.TenantID, lock.WorkspaceID,
-		"reports/research.md", bytes.NewReader(report))
-	if err != nil {
-		t.Fatalf("upload raw bytes: %v", err)
-	}
-	stage, staged, err := repo.StageWorkspaceAsset(ctx, lock, "signed-upload", asset, 300, store)
-	if err != nil || !staged || stage.Asset != asset {
-		t.Fatalf("stage verified S3 bytes: %+v inserted=%v err=%v", stage, staged, err)
+	hash := sha256.Sum256(report)
+	asset := workspace.Asset{Path: "reports/research.md", Digest: "sha256:" + hex.EncodeToString(hash[:]), SizeBytes: int64(len(report))}
+	stage, err := repo.UploadWorkspaceObject(ctx, lock, WorkspaceUploadInput{
+		IntentID: "signed-upload", Asset: asset, LeaseSeconds: 300,
+	}, bytes.NewReader(report), store)
+	if err != nil || stage.Asset != asset {
+		t.Fatalf("pre-PUT intent, signed bytes and Stage: %+v err=%v", stage, err)
 	}
 	receipt, err := repo.CommitStagedWorkspace(ctx, lock, WorkspaceCommitInput{
 		CommitID: "commit-http-report", ExpectedRevision: 0, Assets: []workspace.Asset{asset},

@@ -317,6 +317,17 @@ func TestCompareAndSwapRequiresNewFenceForNewLease(t *testing.T) {
 func dropPrincipalSnapshotMigrationForTest(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 	ctx := context.Background()
+	// Older migration fixtures must first remove the future v8 upload-intent evidence.
+	for _, statement := range []string{
+		"DROP TABLE workspace_upload_observations",
+		"DROP TABLE workspace_upload_intents",
+		"DROP FUNCTION reject_workspace_upload_evidence_mutation()",
+		"DELETE FROM schema_migrations WHERE version=8",
+	} {
+		if _, err := pool.Exec(ctx, statement); err != nil {
+			t.Fatalf("remove future upload-intent migration: %v", err)
+		}
+	}
 	// Recorded v1 upgrade must first remove the dependent v7 stage ledger.
 	for _, statement := range []string{
 		"DROP TABLE workspace_blob_commit_refs",
