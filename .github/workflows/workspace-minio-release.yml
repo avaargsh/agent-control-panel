@@ -18,6 +18,7 @@ on:
       - 'internal/runintent/postgres/workspace_real_minio_integration_test.go'
       - 'internal/runintent/postgres/workspace_minio_sigkill_integration_test.go'
       - 'internal/runintent/postgres/workspace_minio_split_iam_sigkill_integration_test.go'
+      - 'docs/implementation/WORKSPACE-MINIO-SPLIT-IAM-CRASH.md'
       - 'docs/implementation/WORKSPACE-REAL-MINIO-ACCEPTANCE.md'
   workflow_dispatch:
 
@@ -191,6 +192,10 @@ jobs:
           for phase in before-put after-put after-stage after-cas; do
             grep --fixed-strings -- "--- PASS: TestWorkspaceRealMinIOSplitIAMProcessSIGKILLRecovery/$phase (" "$RUNNER_TEMP/minio-iam-sigkill-pg-test.log"
             grep --fixed-strings -- "real SIGKILL verified for phase=$phase;" "$RUNNER_TEMP/minio-iam-sigkill-pg-test.log"
+            grep --fixed-strings -- "verified separate OS reopen phase=$phase contains reader-only MinIO IAM identity;" "$RUNNER_TEMP/minio-iam-sigkill-pg-test.log"
+            if [[ "$phase" != before-put ]]; then
+              grep --fixed-strings -- "verified separate OS recover phase=$phase contains reader-only MinIO IAM identity;" "$RUNNER_TEMP/minio-iam-sigkill-pg-test.log"
+            fi
           done
           grep --fixed-strings -- 'four SIGKILL phases passed using separate writer/reader service identities' "$RUNNER_TEMP/minio-iam-sigkill-pg-test.log"
       - name: Revoke real reader principal and prove provider blocks existing object
