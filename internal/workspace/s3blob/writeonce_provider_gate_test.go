@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -105,6 +106,67 @@ func TestApprovedS3WriteOnceSecurityGate(t *testing.T) {
 	}
 	if status := realIAMStatus(t, ctx, writer, http.MethodPut, foreignKey, original, true); status != http.StatusForbidden {
 		t.Fatalf("scoped writer could cross tenant boundary: HTTP %d", status)
+	}
+	// Independent concurrent first-writer attempts against the SAME digest
+	// must produce one created object and three rejected conditional PUTs.
+	// This is additional evidence against multi-writer clobbering, not
+	// proof of Object Lock or version-pinned historical reads.
+	racingBytes := []byte(fmt.Sprintf("P0-2B5c simultaneous digest creation canary=%x", nonce))
+	racingDigest := sha256.Sum256(racingBytes)
+	racingAsset := workspace.Asset{
+		Path: "reports/concurrent-writeonce-gate.md",
+		Digest: "sha256:" + hex.EncodeToString(racingDigest[:]),
+		SizeBytes: int64(len(racingBytes)),
+	}
+	racingKey, err := writer.objectPath(tenant, workspaceID, racingAsset.Digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	type responseResult struct {
+		status int
+		err error
+	}
+	resultChannel := make(chan responseResult, 4)
+	start := make(chan struct{})
+	for i := 0; i < 4; i++ {
+		go func() {
+			<-start
+			req, e := writer.signedRequest(ctx, http.MethodPut, racingKey, racingBytes, true)
+			if e != nil {
+				resultChannel <- responseResult{err: e}
+				return
+			}
+			resp, e := writer.client.Do(req)
+			if e != nil {
+				resultChannel <- responseResult{err: e}
+				return
+			}
+			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+			_ = resp.Body.Close()
+			resultChannel <- responseResult{status: resp.StatusCode}
+		}()
+	}
+	close(start)
+	created, rejected := 0, 0
+	for i := 0; i < 4; i++ {
+		got := <-resultChannel
+		if got.err != nil {
+			t.Fatalf("concurrent provider PUT failed: %v", got.err)
+		}
+		switch got.status {
+		case http.StatusOK:
+			created++
+		case http.StatusPreconditionFailed:
+			rejected++
+		default:
+			t.Fatalf("concurrent PUT returned unsupported status %d", got.status)
+		}
+	}
+	if created != 1 || rejected != 3 {
+		t.Fatalf("concurrent same-key PUT must have exactly one 200 and three 412: created=%d rejected=%d", created, rejected)
+	}
+	if err := reader.VerifyAsset(ctx, tenant, workspaceID, racingAsset); err != nil {
+		t.Fatalf("concurrent first-writer asset did not retain verified bytes: %v", err)
 	}
 	// Even if a future object-store implementation reports an error for
 	// 403, it must remain distinguishable from a missing object.
