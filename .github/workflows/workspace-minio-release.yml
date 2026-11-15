@@ -13,6 +13,8 @@ on:
       - '.github/fixtures/minio/**'
       - 'internal/runintent/postgres/workspace_minio_iam_integration_test.go'
       - 'docs/implementation/WORKSPACE-MINIO-SCOPED-IAM.md'
+      - 'docs/implementation/WORKSPACE-WRITEONCE-PROVIDER-GATE.md'
+      - '.github/fixtures/aws-s3/**'
       - 'internal/runintent/postgres/workspace_real_minio_integration_test.go'
       - 'internal/runintent/postgres/workspace_minio_sigkill_integration_test.go'
       - 'docs/implementation/WORKSPACE-REAL-MINIO-ACCEPTANCE.md'
@@ -164,6 +166,17 @@ jobs:
           set -euo pipefail
           go test -race -count=1 -v -run '^TestWorkspaceRealMinIOScopedIAMPG$' ./internal/runintent/postgres | tee "$RUNNER_TEMP/minio-iam-pg-test.log"
           grep --fixed-strings -- '--- PASS: TestWorkspaceRealMinIOScopedIAMPG (' "$RUNNER_TEMP/minio-iam-pg-test.log"
+      - name: Expected SECURITY BLOCKER - legacy MinIO scoped writer bypasses conditional PUT
+        shell: bash
+        env:
+          S3BLOB_MINIO_TEST_ENDPOINT: http://127.0.0.1:9000
+        run: |
+          set -euo pipefail
+          # A PASS here means the 2025 legacy server is demonstrably NOT
+          # write-once safe, not that production WORM is accepted.
+          go test -race -count=1 -v -run '^TestMinIOLegacyUnconditionalOverwriteGap$' ./internal/workspace/s3blob | tee "$RUNNER_TEMP/minio-writeonce-gap.log"
+          grep --fixed-strings -- '--- PASS: TestMinIOLegacyUnconditionalOverwriteGap (' "$RUNNER_TEMP/minio-writeonce-gap.log"
+          grep --fixed-strings -- 'EXPECTED SECURITY BLOCKER: legacy scoped writer bypassed If-None-Match' "$RUNNER_TEMP/minio-writeonce-gap.log"
       - name: Revoke real reader principal and prove provider blocks existing object
         shell: bash
         env:
