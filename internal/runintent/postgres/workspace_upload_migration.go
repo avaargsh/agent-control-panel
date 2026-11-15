@@ -52,7 +52,9 @@ func verifyUploadIntentSchema(ctx context.Context, tx pgx.Tx) error {
 	`).Scan(&durable); err != nil {
 		return fmt.Errorf("verify upload evidence durability and FORCE RLS: %w", err)
 	}
-	if !durable { return ErrSchemaDrift }
+	if !durable {
+		return ErrSchemaDrift
+	}
 
 	var fields bool
 	if err := tx.QueryRow(ctx, `
@@ -86,7 +88,9 @@ func verifyUploadIntentSchema(ctx context.Context, tx pgx.Tx) error {
 	`).Scan(&fields); err != nil {
 		return fmt.Errorf("verify upload-intent authoritative columns: %w", err)
 	}
-	if !fields { return ErrSchemaDrift }
+	if !fields {
+		return ErrSchemaDrift
+	}
 
 	var keys bool
 	if err := tx.QueryRow(ctx, `
@@ -127,7 +131,9 @@ func verifyUploadIntentSchema(ctx context.Context, tx pgx.Tx) error {
 	`).Scan(&keys); err != nil {
 		return fmt.Errorf("verify upload intent and observation FKs: %w", err)
 	}
-	if !keys { return ErrSchemaDrift }
+	if !keys {
+		return ErrSchemaDrift
+	}
 
 	if _, err := tx.Exec(ctx, `
 		CREATE TEMP TABLE acp_expected_upload_scope (
@@ -156,7 +162,9 @@ func verifyUploadIntentSchema(ctx context.Context, tx pgx.Tx) error {
 	`).Scan(&policy); err != nil {
 		return fmt.Errorf("verify upload-intent tenant/principal RLS: %w", err)
 	}
-	if !policy { return ErrSchemaDrift }
+	if !policy {
+		return ErrSchemaDrift
+	}
 
 	var triggers bool
 	if err := tx.QueryRow(ctx, `
@@ -175,7 +183,9 @@ func verifyUploadIntentSchema(ctx context.Context, tx pgx.Tx) error {
 	`).Scan(&triggers); err != nil {
 		return fmt.Errorf("verify upload-intent immutable trigger wiring: %w", err)
 	}
-	if !triggers { return ErrSchemaDrift }
+	if !triggers {
+		return ErrSchemaDrift
+	}
 	var actual string
 	err := tx.QueryRow(ctx, `
 		SELECT p.prosrc FROM pg_proc p
@@ -185,9 +195,13 @@ func verifyUploadIntentSchema(ctx context.Context, tx pgx.Tx) error {
 		  AND p.prorettype='trigger'::regtype
 		  AND p.provolatile='v' AND NOT p.prosecdef AND p.proconfig IS NULL
 	`).Scan(&actual)
-	if errors.Is(err,pgx.ErrNoRows){return ErrSchemaDrift}
-	if err!=nil{return fmt.Errorf("verify upload-intent guard function: %w",err)}
-	if strings.TrimSpace(actual)!="BEGIN\n    RAISE EXCEPTION 'Workspace upload evidence is immutable';\nEND;"{
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrSchemaDrift
+	}
+	if err != nil {
+		return fmt.Errorf("verify upload-intent guard function: %w", err)
+	}
+	if strings.TrimSpace(actual) != "BEGIN\n    RAISE EXCEPTION 'Workspace upload evidence is immutable';\nEND;" {
 		return ErrSchemaDrift
 	}
 	return nil
