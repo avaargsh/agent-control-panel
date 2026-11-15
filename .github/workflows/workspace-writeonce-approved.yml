@@ -50,7 +50,7 @@ jobs:
           test "$WRITER_KEY" != "$READER_KEY"
           test "$(go env GOVERSION)" = go1.27.4
           echo "Approved HTTPS scratch endpoint/region present; distinct credentials supplied; provider security claims still depend on real test."
-      - name: Assert real provider denies raw unconditional same-key PUT
+      - name: Assert raw unconditional PUT denied for fresh and existing digest keys
         shell: bash
         env:
           S3BLOB_WORM_GATE_APPROVAL: ${{ inputs.authorization }}
@@ -65,4 +65,4 @@ jobs:
           set -euo pipefail
           go test -race -count=1 -v -run '^TestApprovedS3WriteOnceSecurityGate$' ./internal/workspace/s3blob | tee "$RUNNER_TEMP/approved-s3-writeonce.log"
           grep --fixed-strings -- '--- PASS: TestApprovedS3WriteOnceSecurityGate (' "$RUNNER_TEMP/approved-s3-writeonce.log"
-          grep --fixed-strings -- 'APPROVED S3 WORM CONTRACT PASS: provider 403 for raw unconditional PUT' "$RUNNER_TEMP/approved-s3-writeonce.log"
+          grep --fixed-strings -- 'APPROVED S3 WORM CONTRACT PASS: unconditional fresh-key and same-key PUT both 403;' "$RUNNER_TEMP/approved-s3-writeonce.log"

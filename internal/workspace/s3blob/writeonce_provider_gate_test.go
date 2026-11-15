@@ -83,8 +83,49 @@ func TestApprovedS3WriteOnceSecurityGate(t *testing.T) {
 		t.Fatalf("approved provider must reject existing-key conditional PUT as 412, got %d", status)
 	}
 
+	// A policy that blocks only replacement of known existing keys would
+	// appear safe in the basic test, but still allows NEW unconditioned
+	// objects. Enforce If-None-Match for the entire digest prefix, then
+	// prove legitimate conditional creation of that same previously absent
+	// key works. This distinguishes a true conditional-write policy from a
+	// blanket PutObject denial.
+	fresh := []byte(fmt.Sprintf("P0-2B5c raw first-write bypass canary=%x", nonce))
+	freshDigest := sha256.Sum256(fresh)
+	freshAsset := workspace.Asset{
+		Path:      "reports/approved-fresh-key-policy.md",
+		Digest:    "sha256:" + hex.EncodeToString(freshDigest[:]),
+		SizeBytes: int64(len(fresh)),
+	}
+	freshKey, err := writer.objectPath(tenant, workspaceID, freshAsset.Digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status := realIAMStatus(t, ctx, writer, http.MethodPut, freshKey, fresh, false); status != http.StatusForbidden {
+		t.Fatalf("P0 CONDITIONAL POLICY FAILURE: unconditioned FIRST PUT of fresh digest key returned %d instead of provider 403", status)
+	}
+	if status := realIAMStatus(t, ctx, writer, http.MethodPut, freshKey, fresh, true); status != http.StatusOK {
+		t.Fatalf("policy denies valid conditional first PUT after raw 403: HTTP %d", status)
+	}
+	if err := reader.VerifyAsset(ctx, tenant, workspaceID, freshAsset); err != nil {
+		t.Fatalf("first conditional PUT after denied raw write did not preserve verified bytes: %v", err)
+	}
+	if status := realIAMStatus(t, ctx, writer, http.MethodPut, freshKey, fresh, false); status != http.StatusForbidden {
+		t.Fatalf("fresh digest key became unconditionally overwriteable after creation: HTTP %d", status)
+	}
+	if err := reader.VerifyAsset(ctx, tenant, workspaceID, freshAsset); err != nil {
+		t.Fatalf("fresh digest key changed after denied unconditional overwrite: %v", err)
+	}
+
 	different := bytes.Clone(original)
 	different[0] ^= 0x01
+	// Reject a compliant conditional PUT carrying DIFFERENT bytes too.
+	// A 412 must leave the original object immutable regardless of payload.
+	if status := realIAMStatus(t, ctx, writer, http.MethodPut, key, different, true); status != http.StatusPreconditionFailed {
+		t.Fatalf("conditional altered-payload replay changed the digest key: HTTP %d (want 412)", status)
+	}
+	if err := reader.VerifyAsset(ctx, tenant, workspaceID, asset); err != nil {
+		t.Fatalf("conditional altered-payload replay changed original bytes: %v", err)
+	}
 	// Send one raw *signed* S3 PUT WITHOUT If-None-Match, deliberately
 	// bypassing every ACP convenience upload method. Only the backend IAM
 	// policy can block this attempt. A 200 here is an immediate hard FAIL.
@@ -107,6 +148,32 @@ func TestApprovedS3WriteOnceSecurityGate(t *testing.T) {
 	if status := realIAMStatus(t, ctx, writer, http.MethodPut, foreignKey, original, true); status != http.StatusForbidden {
 		t.Fatalf("scoped writer could cross tenant boundary: HTTP %d", status)
 	}
+	// A trusted reader has access only to its tenant and workspace prefix.
+	// This checks provider IAM, not ACP's in-process lock validation.
+	if status := realIAMStatus(t, ctx, reader, http.MethodGet, foreignKey, nil, false); status != http.StatusForbidden {
+		t.Fatalf("read-only identity could GET a foreign tenant prefix: HTTP %d", status)
+	}
+	for _, role := range []*Store{writer, reader} {
+		if status := realIAMStatus(t, ctx, role, http.MethodGet, "/", nil, false); status != http.StatusForbidden {
+			t.Fatalf("scoped principal could enumerate buckets: HTTP %d", status)
+		}
+	}
+	// Do not use an unsigned response code as evidence of conditional
+	// write-once enforcement; it is solely an additional auth negative.
+	unsigned, err := http.NewRequestWithContext(ctx, http.MethodGet, reader.endpoint.String()+"/", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unsignedResp, err := reader.client.Do(unsigned)
+	if err != nil {
+		t.Fatalf("unsigned S3 request failed before provider authorization: %v", err)
+	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(unsignedResp.Body, 4096))
+	_ = unsignedResp.Body.Close()
+	if unsignedResp.StatusCode != http.StatusForbidden {
+		t.Fatalf("unsigned request unexpectedly received HTTP %d", unsignedResp.StatusCode)
+	}
+
 	// Independent concurrent first-writer attempts against the SAME digest
 	// must produce one created object and three rejected conditional PUTs.
 	// This is additional evidence against multi-writer clobbering, not
@@ -173,5 +240,5 @@ func TestApprovedS3WriteOnceSecurityGate(t *testing.T) {
 	if err := writer.VerifyAsset(ctx, tenant, workspaceID, asset); !errors.Is(err, ErrStorage) {
 		t.Fatalf("write-only principal GET denial must be ErrStorage, got %v", err)
 	}
-	t.Log("APPROVED S3 WORM CONTRACT PASS: provider 403 for raw unconditional PUT, 412 for duplicate conditional PUT; original bytes preserved; DELETE and tenant escape denied")
+	t.Log("APPROVED S3 WORM CONTRACT PASS: unconditional fresh-key and same-key PUT both 403; conditional new key 200, duplicate/altered conditional PUT 412; original bytes preserved; tenant scope, bucket listing and DELETE denied")
 }
