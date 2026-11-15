@@ -92,8 +92,8 @@ func TestApprovedS3WriteOnceSecurityGate(t *testing.T) {
 	fresh := []byte(fmt.Sprintf("P0-2B5c raw first-write bypass canary=%x", nonce))
 	freshDigest := sha256.Sum256(fresh)
 	freshAsset := workspace.Asset{
-		Path: "reports/approved-fresh-key-policy.md",
-		Digest: "sha256:" + hex.EncodeToString(freshDigest[:]),
+		Path:      "reports/approved-fresh-key-policy.md",
+		Digest:    "sha256:" + hex.EncodeToString(freshDigest[:]),
 		SizeBytes: int64(len(fresh)),
 	}
 	freshKey, err := writer.objectPath(tenant, workspaceID, freshAsset.Digest)
