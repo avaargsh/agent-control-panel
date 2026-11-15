@@ -22,6 +22,7 @@ type uploadMemoryBlob struct {
 	mu      sync.Mutex
 	data    map[string][]byte
 	loseACK bool
+	puts    int
 }
 
 func (b *uploadMemoryBlob) Upload(_ context.Context, tenant, ws, path string, content io.Reader) (workspace.Asset, error) {
@@ -32,6 +33,7 @@ func (b *uploadMemoryBlob) Upload(_ context.Context, tenant, ws, path string, co
 	digest := sha256HexUploadTest(got)
 	asset := workspace.Asset{Path: path, Digest: "sha256:" + digest, SizeBytes: int64(len(got))}
 	b.mu.Lock()
+	b.puts++
 	if b.data == nil {
 		b.data = map[string][]byte{}
 	}
@@ -107,6 +109,18 @@ func TestUploadIntentSurvivesLostPutACKAndFreshProcessReconcile(t *testing.T) {
 	if err != nil || again != stage {
 		t.Fatalf("replay exact stage: %+v err=%v", again, err)
 	}
+	// A duplicate UploadWorkspaceObject must NEVER issue a second PUT,
+	// including after an ACK was lost but the remote bytes exist.
+	retried, err := New(pool).UploadWorkspaceObject(ctx, lock, input, bytes.NewReader(payload), blob)
+	if err != nil || retried != stage {
+		t.Fatalf("duplicate intent not recovered read-only: %+v err=%v", retried, err)
+	}
+	blob.mu.Lock()
+	puts := blob.puts
+	blob.mu.Unlock()
+	if puts != 1 {
+		t.Fatalf("duplicate intent caused remote side effects: puts=%d", puts)
+	}
 	var verified int
 	if err := pool.QueryRow(ctx, "SELECT count(*) FROM workspace_upload_observations WHERE disposition='VERIFIED'").Scan(&verified); err != nil || verified < 1 {
 		t.Fatalf("not reconciled: verified=%d err=%v", verified, err)
@@ -155,11 +169,18 @@ func TestUploadIntentFailedBytesNeverBecomeVerified(t *testing.T) {
 	declared := workspace.Asset{Path: "data/expected.csv", Digest: "sha256:" + sha256HexUploadTest([]byte("expected")), SizeBytes: 8}
 	input := WorkspaceUploadInput{IntentID: "mismatch-upload", Asset: declared, LeaseSeconds: 120}
 	blob := &uploadMemoryBlob{}
-	if _, err := repo.UploadWorkspaceObject(ctx, lock, input, strings.NewReader("otherbytes"), blob); !errors.Is(err, ErrUploadOutcomeUnknown) {
-		t.Fatalf("wrong bytes accepted: %v", err)
+	if _, err := repo.UploadWorkspaceObject(ctx, lock, input, strings.NewReader("otherbytes"), blob); !errors.Is(err, ErrUploadPayloadMismatch) {
+		t.Fatalf("wrong pre-PUT bytes accepted: %v", err)
 	}
-	if _, err := repo.ReconcileWorkspaceUpload(ctx, lock, input.IntentID, blob); !errors.Is(err, ErrUploadOutcomeUnknown) {
-		t.Fatalf("forged object claim reconciled: %v", err)
+	blob.mu.Lock()
+	puts := blob.puts
+	blob.mu.Unlock()
+	if puts != 0 {
+		t.Fatalf("wrong digest data was PUT to a different content key: puts=%d", puts)
+	}
+	var intents int
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM workspace_upload_intents").Scan(&intents); err != nil || intents != 0 {
+		t.Fatalf("invalid payload created unusable intent: count=%d err=%v", intents, err)
 	}
 	var stages int
 	if err := pool.QueryRow(ctx, "SELECT count(*) FROM workspace_blob_stages").Scan(&stages); err != nil || stages != 0 {
