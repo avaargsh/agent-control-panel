@@ -19,6 +19,8 @@ CREATE TABLE workspace_upload_intents (
     expires_at timestamptz NOT NULL,
     CONSTRAINT workspace_upload_intents_pkey
         PRIMARY KEY (tenant_id,workspace_id,intent_id),
+    CONSTRAINT workspace_upload_intents_owner_identity UNIQUE
+        (tenant_id,workspace_id,intent_id,owner_principal_id),
     CONSTRAINT workspace_upload_intent_owner_fkey FOREIGN KEY
         (tenant_id,workspace_id,owner_principal_id)
         REFERENCES research_workspaces (tenant_id,workspace_id,owner_principal_id)
@@ -39,8 +41,9 @@ CREATE TABLE workspace_upload_observations (
     disposition text NOT NULL CHECK (disposition IN ('UNKNOWN','VERIFIED')),
     observed_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     CONSTRAINT workspace_upload_observation_intent_fkey FOREIGN KEY
-        (tenant_id,workspace_id,intent_id)
-        REFERENCES workspace_upload_intents (tenant_id,workspace_id,intent_id)
+        (tenant_id,workspace_id,intent_id,owner_principal_id)
+        REFERENCES workspace_upload_intents
+            (tenant_id,workspace_id,intent_id,owner_principal_id)
         ON UPDATE RESTRICT ON DELETE RESTRICT
 );
 
