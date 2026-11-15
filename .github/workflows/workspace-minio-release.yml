@@ -1,0 +1,116 @@
+name: Workspace real MinIO byte + PostgreSQL acceptance (official legacy release)
+
+# A *real* MinIO server, not httptest: the historical official GitHub
+# release asset is fixed by its upstream GitHub Release SHA-256 digest.
+# This is interoperability evidence ONLY, not a supported production server.
+# MinIO Community Edition now distributes source rather than maintained
+# precompiled binaries. Never replace this with a mutable mirror/container.
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/workspace-minio-release.yml'
+      - 'internal/workspace/s3blob/**'
+      - 'internal/runintent/postgres/workspace_real_minio_integration_test.go'
+      - 'docs/implementation/WORKSPACE-REAL-MINIO-ACCEPTANCE.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GOTOOLCHAIN: local
+  PGTEST_DSN: postgres://postgres:agent-ci@127.0.0.1:5432/postgres?sslmode=disable
+
+jobs:
+  real-minio-pg:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: agent-ci
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6 pinned
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6 pinned
+        with:
+          go-version: '1.27.4'
+          cache: false
+      - name: Verify patched Go toolchain
+        run: test "$(go env GOVERSION)" = "go1.27.4"
+      - name: Download SHA256-pinned OFFICIAL legacy MinIO release binary
+        shell: bash
+        env:
+          MINIO_RELEASE_URL: https://github.com/minio/minio/releases/download/RELEASE.2025-09-07T16-13-09Z/minio.linux-amd64.RELEASE.2025-09-07T16-13-09Z
+          # Upstream minio/minio GitHub Releases API asset.digest, NOT an
+          # unreviewed third-party mirror or mutable 'latest' pointer.
+          MINIO_RELEASE_SHA256: 7c5bd8512c6e966455b1d198209358b2d191c77a83ab377c4073281065fb855f
+        run: |
+          set -euo pipefail
+          curl --fail --location --silent --show-error \
+            --retry 5 --retry-delay 3 --retry-all-errors \
+            --output "$RUNNER_TEMP/minio-official" "$MINIO_RELEASE_URL"
+          printf '%s  %s\n' "$MINIO_RELEASE_SHA256" "$RUNNER_TEMP/minio-official" | sha256sum --check --status
+          chmod 0700 "$RUNNER_TEMP/minio-official"
+          "$RUNNER_TEMP/minio-official" --version | tee "$RUNNER_TEMP/minio-version.txt"
+          grep --fixed-strings 'RELEASE.2025-09-07T16-13-09Z' "$RUNNER_TEMP/minio-version.txt"
+      - name: Start isolated real MinIO server
+        shell: bash
+        env:
+          MINIO_ROOT_USER: acp-ci-access
+          MINIO_ROOT_PASSWORD: acp-ci-secret-only
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/minio-data"
+          nohup "$RUNNER_TEMP/minio-official" server "$RUNNER_TEMP/minio-data" \
+            --address 127.0.0.1:9000 --console-address 127.0.0.1:9001 \
+            >"$RUNNER_TEMP/minio-server.log" 2>&1 </dev/null &
+          echo $! >"$RUNNER_TEMP/minio-server.pid"
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent --show-error http://127.0.0.1:9000/minio/health/live >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 1
+          done
+          tail -n 50 "$RUNNER_TEMP/minio-server.log" || true
+          echo 'Real MinIO server failed to become healthy' >&2
+          exit 1
+      - name: Real MinIO SigV4 PUT/GET/412 and corruption/deletion rejection
+        env:
+          S3BLOB_MINIO_TEST_ENDPOINT: http://127.0.0.1:9000
+          S3BLOB_MINIO_TEST_ACCESS_KEY: acp-ci-access
+          S3BLOB_MINIO_TEST_SECRET_KEY: acp-ci-secret-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -race -count=1 -v -run '^TestMinIOBackend$' ./internal/workspace/s3blob | tee "$RUNNER_TEMP/minio-s3-test.log"
+          grep --fixed-strings -- '--- PASS: TestMinIOBackend (' "$RUNNER_TEMP/minio-s3-test.log"
+      - name: Real MinIO and PostgreSQL pinned Workspace + lost ACK reconciliation
+        env:
+          S3BLOB_MINIO_TEST_ENDPOINT: http://127.0.0.1:9000
+          S3BLOB_MINIO_TEST_ACCESS_KEY: acp-ci-access
+          S3BLOB_MINIO_TEST_SECRET_KEY: acp-ci-secret-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -race -count=1 -v -run '^TestWorkspaceRealMinIOPGReconcile$' ./internal/runintent/postgres | tee "$RUNNER_TEMP/minio-workspace-pg-test.log"
+          grep --fixed-strings -- '--- PASS: TestWorkspaceRealMinIOPGReconcile (' "$RUNNER_TEMP/minio-workspace-pg-test.log"
+      - name: Stop disposable server and retain bounded diagnostics
+        if: always()
+        shell: bash
+        run: |
+          if [[ -f "$RUNNER_TEMP/minio-server.log" ]]; then
+            tail -n 60 "$RUNNER_TEMP/minio-server.log" || true
+          fi
+          if [[ -f "$RUNNER_TEMP/minio-server.pid" ]]; then
+            kill "$(cat "$RUNNER_TEMP/minio-server.pid")" || true
+          fi
