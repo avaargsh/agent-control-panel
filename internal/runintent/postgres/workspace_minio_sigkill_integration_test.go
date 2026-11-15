@@ -29,8 +29,8 @@ func minioCrashAsset(phase string) (workspace.Asset, []byte) {
 	body := []byte("P0-2B5 durable independent-process MinIO report; phase=" + phase)
 	sum := sha256.Sum256(body)
 	return workspace.Asset{
-		Path: "reports/process-" + phase + ".md",
-		Digest: "sha256:" + hex.EncodeToString(sum[:]),
+		Path:      "reports/process-" + phase + ".md",
+		Digest:    "sha256:" + hex.EncodeToString(sum[:]),
 		SizeBytes: int64(len(body)),
 	}, body
 }
@@ -50,9 +50,9 @@ func minioProcessStore(t *testing.T) *s3blob.Store {
 	t.Helper()
 	store, err := s3blob.New(s3blob.Config{
 		Endpoint: os.Getenv("S3BLOB_MINIO_TEST_ENDPOINT"),
-		Bucket: "research-artifacts", Region: "us-east-1",
-		AccessKey: os.Getenv("S3BLOB_MINIO_TEST_ACCESS_KEY"),
-		SecretKey: os.Getenv("S3BLOB_MINIO_TEST_SECRET_KEY"),
+		Bucket:   "research-artifacts", Region: "us-east-1",
+		AccessKey:         os.Getenv("S3BLOB_MINIO_TEST_ACCESS_KEY"),
+		SecretKey:         os.Getenv("S3BLOB_MINIO_TEST_SECRET_KEY"),
 		AllowHTTPForTests: true,
 	})
 	if err != nil {
