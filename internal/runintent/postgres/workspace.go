@@ -324,6 +324,14 @@ func (r *Repository) commitWorkspace(
 	if err != nil {
 		return WorkspaceCommitReceipt{}, fmt.Errorf("CAS Workspace manifest revision: %w", err)
 	}
+	// The CAS UPDATE now holds the same Workspace row lock used to acquire
+	// GC claims. Reject *both* strict and legacy new manifest references
+	// when a claim is live. A denial rolls back the revision increment.
+	for _, asset := range input.Assets {
+		if err := assertNoActiveGC(ctx, tx, lock, asset.Digest); err != nil {
+			return WorkspaceCommitReceipt{}, err
+		}
+	}
 
 	receipt, err := scanWorkspaceReceipt(tx.QueryRow(ctx, `
 		INSERT INTO workspace_manifest_commits (

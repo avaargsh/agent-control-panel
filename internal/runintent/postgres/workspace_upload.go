@@ -86,6 +86,12 @@ func (r *Repository) BeginWorkspaceUpload(ctx context.Context, lock researchlock
 	if err := workspaceTransaction(ctx, tx, lock); err != nil {
 		return WorkspaceUploadIntent{}, false, err
 	}
+	if err := lockGCWorkspace(ctx, tx, lock); err != nil {
+		return WorkspaceUploadIntent{}, false, err
+	}
+	if err := assertNoActiveGC(ctx, tx, lock, in.Asset.Digest); err != nil {
+		return WorkspaceUploadIntent{}, false, err
+	}
 	if _, err := readWorkspace(ctx, tx, lock); err != nil {
 		return WorkspaceUploadIntent{}, false, err
 	}

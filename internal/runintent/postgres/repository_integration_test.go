@@ -317,6 +317,17 @@ func TestCompareAndSwapRequiresNewFenceForNewLease(t *testing.T) {
 func dropPrincipalSnapshotMigrationForTest(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 	ctx := context.Background()
+	// Old-version fixture must first remove dependent future v9 GC evidence.
+	for _, statement := range []string{
+		"DROP TABLE workspace_gc_observations",
+		"DROP TABLE workspace_gc_claims",
+		"DROP FUNCTION reject_workspace_gc_identity_mutation()",
+		"DELETE FROM schema_migrations WHERE version=9",
+	} {
+		if _, err := pool.Exec(ctx, statement); err != nil {
+			t.Fatalf("remove future GC claim migration: %v", err)
+		}
+	}
 	// Older migration fixtures must first remove the future v8 upload-intent evidence.
 	for _, statement := range []string{
 		"DROP TABLE workspace_upload_observations",
