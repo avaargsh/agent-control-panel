@@ -32,8 +32,9 @@ func TestApprovedS3WriteOnceSecurityGate(t *testing.T) {
 	}
 	endpoint := os.Getenv("S3BLOB_WORM_ENDPOINT")
 	bucket := os.Getenv("S3BLOB_WORM_BUCKET")
+	region := os.Getenv("S3BLOB_WORM_REGION")
 	if !strings.HasPrefix(endpoint, "https://") ||
-		!strings.HasPrefix(bucket, "acp-writeonce-probe-") {
+		!strings.HasPrefix(bucket, "acp-writeonce-probe-") || !validRegion(region) {
 		t.Fatal("refuse non-HTTPS endpoint or non-disposable probe bucket")
 	}
 	access := os.Getenv("S3BLOB_WORM_WRITER_ACCESS_KEY")
@@ -43,11 +44,11 @@ func TestApprovedS3WriteOnceSecurityGate(t *testing.T) {
 	if access == "" || secret == "" || readAccess == "" || readSecret == "" || access == readAccess {
 		t.Fatal("require separately provisioned, distinct approved writer-only and reader-only principals")
 	}
-	writer, err := New(Config{Endpoint: endpoint, Bucket: bucket, Region: "us-east-1", AccessKey: access, SecretKey: secret})
+	writer, err := New(Config{Endpoint: endpoint, Bucket: bucket, Region: region, AccessKey: access, SecretKey: secret})
 	if err != nil {
 		t.Fatalf("approved writer config: %v", err)
 	}
-	reader, err := New(Config{Endpoint: endpoint, Bucket: bucket, Region: "us-east-1", AccessKey: readAccess, SecretKey: readSecret})
+	reader, err := New(Config{Endpoint: endpoint, Bucket: bucket, Region: region, AccessKey: readAccess, SecretKey: readSecret})
 	if err != nil {
 		t.Fatalf("approved reader config: %v", err)
 	}
