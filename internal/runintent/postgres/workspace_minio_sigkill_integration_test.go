@@ -26,7 +26,7 @@ import (
 const minioProcessMarker = "ACP_MINIO_PROCESS_BOUNDARY="
 
 func minioCrashAsset(phase string) (workspace.Asset, []byte) {
-	body := []byte("P0-2B5 durable independent-process MinIO report; phase=" + phase)
+	body := []byte("P0-2B5 durable independent-process MinIO report; phase=" + phase + "; mode=" + os.Getenv("ACP_MINIO_PROCESS_MODE"))
 	sum := sha256.Sum256(body)
 	return workspace.Asset{
 		Path:      "reports/process-" + phase + ".md",
@@ -46,19 +46,81 @@ func minioCrashCommit(phase string, asset workspace.Asset) WorkspaceCommitInput 
 	}
 }
 
-func minioProcessStore(t *testing.T) *s3blob.Store {
+// minioProcessBackend permits the same real PG+S3 recovery algorithm to be
+// tested with either the legacy combined fixture identity or separate IAM
+// identities. A read-only worker receives ONLY a GetObject service identity.
+type minioProcessBackend interface {
+	Upload(context.Context, string, string, string, io.Reader) (workspace.Asset, error)
+	VerifyAsset(context.Context, string, string, workspace.Asset) error
+	ReadAsset(context.Context, string, string, workspace.Asset) ([]byte, error)
+}
+
+func minioProcessReaderOnly(action, phase string) bool {
+	return action == "reopen" || (action == "recover" && phase != "before-put")
+}
+
+func minioProcessStore(t *testing.T, action, phase string) minioProcessBackend {
 	t.Helper()
-	store, err := s3blob.New(s3blob.Config{
-		Endpoint: os.Getenv("S3BLOB_MINIO_TEST_ENDPOINT"),
-		Bucket:   "research-artifacts", Region: "us-east-1",
-		AccessKey:         os.Getenv("S3BLOB_MINIO_TEST_ACCESS_KEY"),
-		SecretKey:         os.Getenv("S3BLOB_MINIO_TEST_SECRET_KEY"),
-		AllowHTTPForTests: true,
-	})
-	if err != nil {
-		t.Fatalf("real MinIO client config: %v", err)
+	if os.Getenv("ACP_MINIO_PROCESS_MODE") == "" {
+		store, err := s3blob.New(s3blob.Config{
+			Endpoint: os.Getenv("S3BLOB_MINIO_TEST_ENDPOINT"),
+			Bucket:   "research-artifacts", Region: "us-east-1",
+			AccessKey:         os.Getenv("S3BLOB_MINIO_TEST_ACCESS_KEY"),
+			SecretKey:         os.Getenv("S3BLOB_MINIO_TEST_SECRET_KEY"),
+			AllowHTTPForTests: true,
+		})
+		if err != nil {
+			t.Fatalf("real MinIO client config: %v", err)
+		}
+		return store
 	}
-	return store
+	if os.Getenv("ACP_MINIO_PROCESS_MODE") != "split" {
+		t.Fatal("unrecognized MinIO process IAM mode")
+	}
+	// A real independent child is NOT allowed to inherit fixture-root or
+	// foreign-tenant keys, even when only using a read operation.
+	for _, name := range []string{
+		"S3BLOB_MINIO_TEST_ACCESS_KEY", "S3BLOB_MINIO_TEST_SECRET_KEY",
+		"MINIO_ROOT_USER", "MINIO_ROOT_PASSWORD",
+		"S3BLOB_IAM_OTHER_ACCESS_KEY", "S3BLOB_IAM_OTHER_SECRET_KEY",
+		"S3BLOB_IAM_DENIED_ACCESS_KEY", "S3BLOB_IAM_DENIED_SECRET_KEY",
+	} {
+		if os.Getenv(name) != "" {
+			t.Fatalf("scoped child inherited privileged or unrelated identity %s", name)
+		}
+	}
+	newRole := func(role string) *s3blob.Store {
+		access := os.Getenv("S3BLOB_IAM_" + role + "_ACCESS_KEY")
+		secret := os.Getenv("S3BLOB_IAM_" + role + "_SECRET_KEY")
+		if access == "" || secret == "" {
+			t.Fatalf("missing actual MinIO %s service principal", role)
+		}
+		store, err := s3blob.New(s3blob.Config{
+			Endpoint: os.Getenv("S3BLOB_MINIO_TEST_ENDPOINT"),
+			Bucket:   "research-artifacts", Region: "us-east-1",
+			AccessKey: access, SecretKey: secret, AllowHTTPForTests: true,
+		})
+		if err != nil {
+			t.Fatalf("connect scoped %s service identity: %v", role, err)
+		}
+		return store
+	}
+	reader := newRole("READER")
+	if minioProcessReaderOnly(action, phase) {
+		if os.Getenv("S3BLOB_IAM_WRITER_ACCESS_KEY") != "" ||
+			os.Getenv("S3BLOB_IAM_WRITER_SECRET_KEY") != "" {
+			t.Fatal("read-only recovery/reopen worker inherited scoped writer key")
+		}
+		fmt.Println(minioProcessMarker + "IDENTITY:READER_ONLY:" + action + ":" + phase)
+		return reader
+	}
+	writer := newRole("WRITER")
+	split, err := s3blob.NewSplitRoleStore(writer, reader)
+	if err != nil {
+		t.Fatalf("split writer/reader real MinIO IAM client: %v", err)
+	}
+	fmt.Println(minioProcessMarker + "IDENTITY:WRITE_AND_READ:" + action + ":" + phase)
+	return split
 }
 
 // TestWorkspaceMinIOCrashWorker is launched as a NEW OS process through the
@@ -92,7 +154,7 @@ func TestWorkspaceMinIOCrashWorker(t *testing.T) {
 	}
 	defer pool.Close()
 	repo := New(pool)
-	store := minioProcessStore(t)
+	store := minioProcessStore(t, action, phase)
 	asset, report := minioCrashAsset(phase)
 	intent := minioCrashIntent(phase, asset)
 
@@ -184,6 +246,46 @@ func TestWorkspaceMinIOCrashWorker(t *testing.T) {
 	}
 }
 
+// minioChildCredentialEnvironment strips every unrelated MinIO/CI IAM
+// credential before exec. Following successful provider PUT, recovery and
+// reopen workers receive only the read principal, not writer or bootstrap.
+// Only a deliberate explicit new attempt after a before-PUT crash may be
+// entrusted with a writer principal.
+func minioChildCredentialEnvironment(action, phase string) []string {
+	base := os.Environ()
+	if os.Getenv("ACP_MINIO_PROCESS_MODE") != "split" {
+		return base
+	}
+	env := make([]string, 0, len(base))
+	for _, pair := range base {
+		name, _, _ := strings.Cut(pair, "=")
+		switch {
+		case strings.HasPrefix(name, "S3BLOB_IAM_"),
+			strings.HasPrefix(name, "S3BLOB_MINIO_TEST_ACCESS_KEY"),
+			strings.HasPrefix(name, "S3BLOB_MINIO_TEST_SECRET_KEY"),
+			strings.HasPrefix(name, "MINIO_ROOT_"),
+			strings.HasPrefix(name, "AWS_"),
+			name == "MC_CONFIG_DIR":
+			continue
+		default:
+			env = append(env, pair)
+		}
+	}
+	roles := []string{"READER"}
+	if !minioProcessReaderOnly(action, phase) {
+		roles = append(roles, "WRITER")
+	}
+	for _, role := range roles {
+		for _, suffix := range []string{"ACCESS_KEY", "SECRET_KEY"} {
+			name := "S3BLOB_IAM_" + role + "_" + suffix
+			if value := os.Getenv(name); value != "" {
+				env = append(env, name+"="+value)
+			}
+		}
+	}
+	return env
+}
+
 func runMinIOProcessBoundary(t *testing.T, schema, phase, action string, lock researchlock.Lock, kill bool) {
 	t.Helper()
 	serialized, err := json.Marshal(lock)
@@ -193,7 +295,7 @@ func runMinIOProcessBoundary(t *testing.T, schema, phase, action string, lock re
 	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestWorkspaceMinIOCrashWorker$", "-test.v")
-	cmd.Env = append(os.Environ(),
+	cmd.Env = append(minioChildCredentialEnvironment(action, phase),
 		"ACP_MINIO_CHILD_ACTION="+action,
 		"ACP_MINIO_CHILD_PHASE="+phase,
 		"ACP_MINIO_CHILD_SCHEMA="+schema,
@@ -251,6 +353,13 @@ func runMinIOProcessBoundary(t *testing.T, schema, phase, action string, lock re
 	_, _ = io.Copy(io.Discard, reader)
 	if err := cmd.Wait(); err != nil {
 		t.Fatalf("recovery child exited unsuccessfully: %v, stdout=%q stderr=%q", err, trace.String(), stderr.String())
+	}
+	if os.Getenv("ACP_MINIO_PROCESS_MODE") == "split" && minioProcessReaderOnly(action, phase) {
+		expected := minioProcessMarker + "IDENTITY:READER_ONLY:" + action + ":" + phase
+		if !strings.Contains(trace.String(), expected) {
+			t.Fatalf("read-only child role evidence missing: role=%q trace=%q", expected, trace.String())
+		}
+		t.Logf("verified separate OS %s phase=%s contains reader-only MinIO IAM identity; writer and admin credentials redacted", action, phase)
 	}
 }
 
