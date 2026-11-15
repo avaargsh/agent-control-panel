@@ -14,7 +14,7 @@ These boundaries serialize *committed metadata references* against claims. They 
 
 A claim requires at least one **expired, verified Stage** and no still-live Stage for the same scoped digest. Any reference in **any** historical immutable v6+ JSON manifest, including a superseded revision, blocks the claim. v7 committed reference rows are a second independent retention barrier.
 
-Any v8 upload intent with a future deadline blocks the claim, as does an expired intent whose latest observation is absent or not `VERIFIED`. A missing/unknown/lost-ACK object is **not proven safe to delete**. A read-only `ClaimWorkspaceBlob`, `RenewWorkspaceGCClaim`, or `CheckWorkspaceGCClaim` validates these conditions under the Workspace lock; active rival holder, expired old holder or invalid generation fail closed.
+Any v8 upload intent with a future deadline blocks the claim, as does an expired intent whose latest observation is absent or not `VERIFIED`. A missing/unknown/lost-ACK object is **not proven safe to delete**. The legacy read-only `ListExpiredBlobCandidates` now also excludes live stages, active/UNKNOWN upload intents and active GC claims, not just committed manifests, without granting DeleteObject authority. A read-only `ClaimWorkspaceBlob`, `RenewWorkspaceGCClaim`, or `CheckWorkspaceGCClaim` validates these conditions under the Workspace lock; active rival holder, expired old holder or invalid generation fail closed.
 
 A same-holder retry returns the identical live claim **without renewing** its expiry. Renew always increases generation and invalidates the old one; an expired claim may be reclaimed only with a strictly greater generation.
 
