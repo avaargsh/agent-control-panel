@@ -29,6 +29,7 @@ It requires all of the following real-provider outcomes:
 | Reader after the forbidden overwrite | SHA256 and size still match the original |
 | Writer `DeleteObject`, reader `PutObject`, writer PUT across tenant prefix | 403 |
 | Writer attempting GET | Forbidden and classified as `ErrStorage` rather than `ErrObjectMissing` |
+| Four simultaneous conditional PUTs of one new digest key | Exactly one 200, three 412; independent reader verifies winning bytes |
 
 Source: AWS S3 official [Enforce conditional writes on buckets](https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes-enforce.html). AWS documents `s3:if-none-match` in bucket policies, including the `Null` condition for missing headers. This is not a claim that historical community MinIO implements the same IAM condition; the [MinIO PBAC documentation](https://github.com/minio/docs/blob/main/source/administration/identity-access-management/policy-based-access-control.rst) lists only a subset of supported condition keys and does **not** list `s3:if-none-match`.
 
@@ -38,7 +39,7 @@ The manual workflow `.github/workflows/workspace-writeonce-approved.yml` uses th
 
 ## Mandatory remaining checks for Issue #47
 
-The current gate covers a single existing-key conditional/unconditional S3 PUT, byte-integrity, basic tenant and DELETE separation. Full Issue #47 acceptance still requires a security-supported provider/version and independent evidence for concurrent writers, CopyObject and multipart rejection, object versioning/deletion markers or a correctly verified Object Lock and pinned version ID when used, bucket policy mutation privileges, historical manifest retention across revisions, provider restart and operational audit. If versioned bucket reads are adopted, ACP receipts must pin the exact version ID; **Object Lock protects versions, not the meaning of the mutable unversioned current-key lookup**. See [MinIO Object Lock guidance](https://docs.min.io/aistor/administration/object-locking-and-immutability/) for version/delete-marker semantics.
+The approved gate additionally starts **four simultaneous conditional PutObject requests** for one new digest key, requiring exactly one HTTP 200 and three HTTP 412 responses and then byte-verifying the winner. This is still **unexecuted** until an approved provider is configured. Full Issue #47 acceptance still requires a security-supported provider/version and independent evidence for CopyObject and multipart rejection, object versioning/deletion markers or a correctly verified Object Lock and pinned version ID when used, bucket policy mutation privileges, historical manifest retention across revisions, provider restart and operational audit. If versioned bucket reads are adopted, ACP receipts must pin the exact version ID; **Object Lock protects versions, not the meaning of the mutable unversioned current-key lookup**. See [MinIO Object Lock guidance](https://docs.min.io/aistor/administration/object-locking-and-immutability/) for version/delete-marker semantics.
 
 ACP still owns tenant/Workspace/Session/RunIntent/DAS, v8 UploadIntent, v7 Stage/retention receipts and v9 database-only GC claims. Neither a database claim nor a compliant client header supplies a cross-system irreversible-effect guarantee. #35, #38, #43, #45 and #47 remain OPEN. No production deletion or G01–G05 promotion is authorized.
 
