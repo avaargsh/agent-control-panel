@@ -23,9 +23,15 @@ type uploadMemoryBlob struct {
 	data    map[string][]byte
 	loseACK bool
 	puts    int
+	before  func() error
 }
 
 func (b *uploadMemoryBlob) Upload(_ context.Context, tenant, ws, path string, content io.Reader) (workspace.Asset, error) {
+	if b.before != nil {
+		if err := b.before(); err != nil {
+			return workspace.Asset{}, err
+		}
+	}
 	got, err := io.ReadAll(content)
 	if err != nil {
 		return workspace.Asset{}, err
@@ -253,5 +259,64 @@ func TestUploadIntentSchemaDriftFailClosed(t *testing.T) {
 	}
 	if err := Migrate(context.Background(), pool); !errors.Is(err, ErrSchemaDrift) {
 		t.Fatalf("schema drift allowed: %v", err)
+	}
+}
+
+func TestUploadIntentIsDurableBeforeObjectPut(t *testing.T) {
+	repo, pool, lock := setupUploadWorkspace(t, 133401)
+	ctx := context.Background()
+	payload := []byte("signed object upload")
+	asset := workspace.Asset{Path: "research/signed.md", Digest: "sha256:" + sha256HexUploadTest(payload), SizeBytes: int64(len(payload))}
+	intent := WorkspaceUploadInput{IntentID: "before-network", Asset: asset, LeaseSeconds: 300}
+	checked := false
+	blob := &uploadMemoryBlob{before: func() error {
+		var count int
+		err := pool.QueryRow(ctx, `SELECT count(*) FROM workspace_upload_intents
+			WHERE tenant_id=$1 AND workspace_id=$2 AND intent_id=$3 AND artifact_digest=$4`,
+			lock.TenantID, lock.WorkspaceID, intent.IntentID, asset.Digest).Scan(&count)
+		if err != nil {
+			return err
+		}
+		if count != 1 {
+			return fmt.Errorf("remote PUT before committing intent: count=%d", count)
+		}
+		checked = true
+		return nil
+	}}
+	stage, err := repo.UploadWorkspaceObject(ctx, lock, intent, bytes.NewReader(payload), blob)
+	if err != nil || stage.Asset != asset || !checked {
+		t.Fatalf("unproven intent-first side effect: %+v checked=%v err=%v", stage, checked, err)
+	}
+}
+
+func TestWorkspaceUploadConcurrentIdempotentIntentCreation(t *testing.T) {
+	repo, pool, lock := setupUploadWorkspace(t, 133501)
+	ctx := context.Background()
+	asset := workspace.Asset{Path: "research/report.md", Digest: "sha256:" + sha256HexUploadTest([]byte("concurrent")), SizeBytes: 10}
+	in := WorkspaceUploadInput{IntentID: "one-intent", Asset: asset, LeaseSeconds: 300}
+	var wg sync.WaitGroup
+	results := make(chan bool, 8)
+	errs := make(chan error, 8)
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, created, err := repo.BeginWorkspaceUpload(ctx, lock, in)
+			if err != nil { errs <- err } else { results <- created }
+		}()
+	}
+	wg.Wait()
+	close(results)
+	close(errs)
+	for err := range errs { t.Errorf("concurrent Begin failed: %v", err) }
+	created := 0
+	observed := 0
+	for result := range results { observed++; if result {created++} }
+	if observed != 8 || created != 1 {
+		t.Fatalf("concurrent upload ID registration: callers=%d creators=%d", observed, created)
+	}
+	var rows int
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM workspace_upload_intents").Scan(&rows); err != nil || rows != 1 {
+		t.Fatalf("concurrent upload duplicated intent: %d err=%v", rows, err)
 	}
 }
