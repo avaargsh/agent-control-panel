@@ -29,7 +29,7 @@ CREATE TABLE workspace_gc_observations (
     holder_id text NOT NULL CHECK (length(holder_id) BETWEEN 1 AND 128),
     generation bigint NOT NULL CHECK (generation >= 0),
     disposition text NOT NULL CHECK (disposition IN
-        ('ACQUIRED','RECLAIMED','RENEWED','NOT_ELIGIBLE','UNKNOWN')),
+        ('ACQUIRED','RECLAIMED','RENEWED','RETAINED','NOT_ELIGIBLE','UNKNOWN')),
     observed_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     CONSTRAINT workspace_gc_observations_owner_fkey FOREIGN KEY
         (tenant_id,workspace_id,owner_principal_id)
