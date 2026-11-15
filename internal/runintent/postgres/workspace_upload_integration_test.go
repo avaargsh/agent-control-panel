@@ -302,16 +302,27 @@ func TestWorkspaceUploadConcurrentIdempotentIntentCreation(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			_, created, err := repo.BeginWorkspaceUpload(ctx, lock, in)
-			if err != nil { errs <- err } else { results <- created }
+			if err != nil {
+				errs <- err
+			} else {
+				results <- created
+			}
 		}()
 	}
 	wg.Wait()
 	close(results)
 	close(errs)
-	for err := range errs { t.Errorf("concurrent Begin failed: %v", err) }
+	for err := range errs {
+		t.Errorf("concurrent Begin failed: %v", err)
+	}
 	created := 0
 	observed := 0
-	for result := range results { observed++; if result {created++} }
+	for result := range results {
+		observed++
+		if result {
+			created++
+		}
+	}
 	if observed != 8 || created != 1 {
 		t.Fatalf("concurrent upload ID registration: callers=%d creators=%d", observed, created)
 	}
