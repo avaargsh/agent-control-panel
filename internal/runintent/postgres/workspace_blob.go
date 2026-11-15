@@ -144,6 +144,28 @@ func (r *Repository) ListExpiredBlobCandidates(ctx context.Context, lock researc
 	rows, err := tx.Query(ctx, `SELECT `+selectBlobStage+` FROM workspace_blob_stages s
 		WHERE s.tenant_id=$1 AND s.workspace_id=$2 AND s.owner_principal_id=$3
 		  AND s.expires_at<=clock_timestamp()
+		  -- Candidate listing follows the same conservative retention gates
+		  -- as v9 fenced claims; it still confers NO delete privilege.
+		  AND NOT EXISTS (SELECT 1 FROM workspace_blob_stages live
+			  WHERE live.tenant_id=s.tenant_id AND live.workspace_id=s.workspace_id
+			    AND live.owner_principal_id=s.owner_principal_id
+			    AND live.artifact_digest=s.artifact_digest
+			    AND live.expires_at>clock_timestamp())
+		  AND NOT EXISTS (SELECT 1 FROM workspace_upload_intents u
+			  WHERE u.tenant_id=s.tenant_id AND u.workspace_id=s.workspace_id
+			    AND u.owner_principal_id=s.owner_principal_id
+			    AND u.artifact_digest=s.artifact_digest
+			    AND (u.expires_at>clock_timestamp() OR
+			       COALESCE((SELECT o.disposition FROM workspace_upload_observations o
+					  WHERE o.tenant_id=u.tenant_id AND o.workspace_id=u.workspace_id
+					    AND o.owner_principal_id=u.owner_principal_id
+					    AND o.intent_id=u.intent_id
+					  ORDER BY o.observation_id DESC LIMIT 1),'UNKNOWN')<>'VERIFIED'))
+		  AND NOT EXISTS (SELECT 1 FROM workspace_gc_claims g
+			  WHERE g.tenant_id=s.tenant_id AND g.workspace_id=s.workspace_id
+			    AND g.owner_principal_id=s.owner_principal_id
+			    AND g.artifact_digest=s.artifact_digest
+			    AND g.expires_at>clock_timestamp())
 		  AND NOT EXISTS (SELECT 1 FROM workspace_blob_commit_refs ref
 			  WHERE ref.tenant_id=s.tenant_id AND ref.workspace_id=s.workspace_id
 			    AND ref.owner_principal_id=s.owner_principal_id AND ref.artifact_digest=s.artifact_digest)
