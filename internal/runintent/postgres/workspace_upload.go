@@ -136,7 +136,11 @@ func(r *Repository) appendUploadObservation(ctx context.Context,lock researchloc
 // error stays UNKNOWN; callers must reconcile, never blindly retry effects.
 func(r *Repository) UploadWorkspaceObject(ctx context.Context,lock researchlock.Lock,in WorkspaceUploadInput,bytes io.Reader,uploader WorkspaceObjectUploader)(BlobStage,error){
 	if bytes==nil || uploader==nil {return BlobStage{},ErrWorkspaceUnverifiedAsset}
-	if _,_,err:=r.BeginWorkspaceUpload(ctx,lock,in);err!=nil{return BlobStage{},err}
+	_,created,err:=r.BeginWorkspaceUpload(ctx,lock,in)
+	if err!=nil{return BlobStage{},err}
+	// An existing intent represents a possibly completed remote PUT.
+	// NEVER issue a second blind PUT; use a read-only byte reconciliation.
+	if !created{return r.ReconcileWorkspaceUpload(ctx,lock,in.IntentID,uploader)}
 	intent,err:=r.readUploadIntent(ctx,lock,in.IntentID)
 	if err!=nil{return BlobStage{},err}
 	if !time.Now().Before(intent.ExpiresAt){return BlobStage{},ErrUploadIntentExpired}
@@ -160,6 +164,9 @@ func(r *Repository) ReconcileWorkspaceUpload(ctx context.Context,lock researchlo
 	if err:=verifier.VerifyAsset(ctx,lock.TenantID,lock.WorkspaceID,intent.Asset);err!=nil {
 		if e:=r.appendUploadObservation(ctx,lock,intentID,"UNKNOWN");e!=nil{return BlobStage{},errors.Join(ErrUploadOutcomeUnknown,e)}
 		return BlobStage{},ErrUploadOutcomeUnknown
+	}
+	if !time.Now().Before(intent.ExpiresAt){
+		return BlobStage{},ErrUploadIntentExpired
 	}
 	stage,_,err:=r.StageWorkspaceAsset(ctx,lock,intentID,intent.Asset,intent.LeaseSeconds,verifier)
 	if err!=nil {
