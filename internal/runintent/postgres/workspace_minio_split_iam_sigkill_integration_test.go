@@ -52,7 +52,7 @@ func TestMinioChildCredentialEnvironmentIsLeastPrivileged(t *testing.T) {
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "not-for-worker-secret")
 	for _, tc := range []struct {
 		name, action, phase string
-		writerAllowed bool
+		writerAllowed       bool
 	}{
 		{"crash-before-put", "crash", "before-put", true},
 		{"crash-after-put", "crash", "after-put", true},
