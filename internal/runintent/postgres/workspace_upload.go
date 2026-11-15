@@ -16,10 +16,10 @@ import (
 )
 
 var (
-	ErrUploadIntentConflict = errors.New("Workspace upload intent ID reused for different asset or DAS identity")
-	ErrUploadIntentExpired  = errors.New("Workspace upload intent expired before verification")
-	ErrUploadIntentMissing  = errors.New("Workspace upload intent not found")
-	ErrUploadOutcomeUnknown = errors.New("Workspace S3 upload outcome UNKNOWN; reconcile before committing")
+	ErrUploadIntentConflict  = errors.New("Workspace upload intent ID reused for different asset or DAS identity")
+	ErrUploadIntentExpired   = errors.New("Workspace upload intent expired before verification")
+	ErrUploadIntentMissing   = errors.New("Workspace upload intent not found")
+	ErrUploadOutcomeUnknown  = errors.New("Workspace S3 upload outcome UNKNOWN; reconcile before committing")
 	ErrUploadPayloadMismatch = errors.New("upload stream digest/size does not match predeclared Workspace asset")
 )
 
