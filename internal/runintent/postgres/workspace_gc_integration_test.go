@@ -299,3 +299,30 @@ func TestGCClaimExpiredUploadWithoutVerifiedBytesRemainsUnknown(t *testing.T) {
 		t.Fatalf("expired unresolved upload not recorded as UNKNOWN: %q err=%v", disposition, err)
 	}
 }
+
+func TestReadOnlyOrphanCandidatesExcludeActiveClaimAndUnknownUploads(t *testing.T) {
+	t.Run("active fenced claim", func(t *testing.T) {
+		repo, asset, lock := gcFixture(t, 150901)
+		ctx := context.Background()
+		if _, err := repo.ClaimWorkspaceBlob(ctx, lock, asset.Digest, "collector", 60); err != nil {
+			t.Fatal(err)
+		}
+		candidates, err := repo.ListExpiredBlobCandidates(ctx, lock, 10)
+		if err != nil || len(candidates) != 0 {
+			t.Fatalf("active GC lease leaked into orphan list: %+v %v", candidates, err)
+		}
+	})
+	t.Run("active or unknown upload", func(t *testing.T) {
+		repo, asset, lock := gcFixture(t, 150911)
+		ctx := context.Background()
+		if _, _, err := repo.BeginWorkspaceUpload(ctx, lock, WorkspaceUploadInput{
+			IntentID: "unknown-upload", Asset: asset, LeaseSeconds: 300,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		candidates, err := repo.ListExpiredBlobCandidates(ctx, lock, 10)
+		if err != nil || len(candidates) != 0 {
+			t.Fatalf("upload UNKNOWN leaked into orphan list: %+v %v", candidates, err)
+		}
+	})
+}
