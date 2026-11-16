@@ -202,8 +202,8 @@ func TestApprovedS3WriteOnceSecurityGate(t *testing.T) {
 	copyAllowedBytes := []byte(fmt.Sprintf("P0-2B5g scoped copier conditional PUT canary=%x", nonce))
 	copyAllowedDigest := sha256.Sum256(copyAllowedBytes)
 	copyAllowedAsset := workspace.Asset{
-		Path: "reports/copier-allowed-conditional-put.md",
-		Digest: "sha256:" + hex.EncodeToString(copyAllowedDigest[:]),
+		Path:      "reports/copier-allowed-conditional-put.md",
+		Digest:    "sha256:" + hex.EncodeToString(copyAllowedDigest[:]),
 		SizeBytes: int64(len(copyAllowedBytes)),
 	}
 	copyAllowedKey, err := copier.objectPath(tenant, workspaceID, copyAllowedAsset.Digest)
@@ -230,8 +230,8 @@ func TestApprovedS3WriteOnceSecurityGate(t *testing.T) {
 	copyFreshBytes := []byte(fmt.Sprintf("P0-2B5g COPY absent-key canary=%x", nonce))
 	copyFreshDigest := sha256.Sum256(copyFreshBytes)
 	copyFreshAsset := workspace.Asset{
-		Path: "reports/copy-absent-key-policy.md",
-		Digest: "sha256:" + hex.EncodeToString(copyFreshDigest[:]),
+		Path:      "reports/copy-absent-key-policy.md",
+		Digest:    "sha256:" + hex.EncodeToString(copyFreshDigest[:]),
 		SizeBytes: int64(len(copyFreshBytes)),
 	}
 	copyFreshKey, err := copier.objectPath(tenant, workspaceID, copyFreshAsset.Digest)
