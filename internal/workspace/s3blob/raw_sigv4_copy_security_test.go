@@ -1,10 +1,10 @@
 package s3blob
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"bytes"
 	"io"
 	"net/http"
 	"strings"
@@ -15,9 +15,9 @@ import (
 // request whose copy-source header is not signed is NOT provider policy proof.
 func TestIndependentRawSigV4CopySourceIsSigned(t *testing.T) {
 	identity, err := New(Config{
-		Endpoint: "https://s3.us-east-1.amazonaws.com",
-		Bucket: "acp-writeonce-probe-fixture",
-		Region: "us-east-1",
+		Endpoint:  "https://s3.us-east-1.amazonaws.com",
+		Bucket:    "acp-writeonce-probe-fixture",
+		Region:    "us-east-1",
 		AccessKey: "scoped-copy-probe",
 		SecretKey: "scoped-copy-secret",
 	})
@@ -97,16 +97,16 @@ func rawS3ReadCopyCanary(t *testing.T, ctx context.Context, identity *Store, pat
 
 func TestIndependentRawSigV4CopyRequestRejectsUnsafeSource(t *testing.T) {
 	identity, err := New(Config{
-		Endpoint: "https://s3.us-east-1.amazonaws.com",
-		Bucket: "acp-writeonce-probe-fixture",
-		Region: "us-east-1",
+		Endpoint:  "https://s3.us-east-1.amazonaws.com",
+		Bucket:    "acp-writeonce-probe-fixture",
+		Region:    "us-east-1",
 		AccessKey: "scoped-copy-probe",
 		SecretKey: "scoped-copy-secret",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, source := range []string{"bucket/key", "/bucket/key?versionId=secret", "/bucket/key\\r\\nX-Amz-Evil: true"} {
+	for _, source := range []string{"bucket/key", "/bucket/key?versionId=secret", "/bucket/key\r\nX-Amz-Evil: true"} {
 		if _, err := rawS3SignedCopyRequest(context.Background(), identity, "/bucket/destination", source); err == nil {
 			t.Fatalf("unsafe copy source was accepted: %q", source)
 		}
@@ -115,9 +115,9 @@ func TestIndependentRawSigV4CopyRequestRejectsUnsafeSource(t *testing.T) {
 
 func TestIndependentRawSigV4CopyHasNoAccidentalPayload(t *testing.T) {
 	identity, err := New(Config{
-		Endpoint: "https://s3.us-east-1.amazonaws.com",
-		Bucket: "acp-writeonce-probe-fixture",
-		Region: "us-east-1",
+		Endpoint:  "https://s3.us-east-1.amazonaws.com",
+		Bucket:    "acp-writeonce-probe-fixture",
+		Region:    "us-east-1",
 		AccessKey: "scoped-copy-probe",
 		SecretKey: "scoped-copy-secret",
 	})
