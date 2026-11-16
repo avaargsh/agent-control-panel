@@ -113,7 +113,7 @@ class EvidenceTests(unittest.TestCase):
         marker = '      - name: Fail closed on non-main or unreviewed code'
         self.assertIn(marker, content)
         block = content.split(marker, 1)[1].split('  approved-s3-writeonce:', 1)[0]
-        match = re.search(r'(?m)^        run: \\|\\n((?:          .*\\n)+)', block)
+        match = re.search(r'(?m)^        run: \|\n((?:          .*\n)+)', block)
         self.assertIsNotNone(match, 'manual preflight must have a standalone Bash script')
         script = textwrap.dedent(match.group(1))
         for name, ref, run_sha, approved, allowed in [
