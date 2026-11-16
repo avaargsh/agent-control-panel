@@ -40,17 +40,22 @@ jobs:
           WRITER_SECRET: ${{ secrets.ACP_WORM_TEST_WRITER_SECRET_KEY }}
           READER_KEY: ${{ secrets.ACP_WORM_TEST_READER_ACCESS_KEY }}
           READER_SECRET: ${{ secrets.ACP_WORM_TEST_READER_SECRET_KEY }}
+          COPY_KEY: ${{ secrets.ACP_WORM_TEST_COPY_ACCESS_KEY }}
+          COPY_SECRET: ${{ secrets.ACP_WORM_TEST_COPY_SECRET_KEY }}
         run: |
           set -euo pipefail
           test "$OPERATOR_AUTHORIZATION" = approved-disposable-provider
           test -n "$WORM_ENDPOINT" && test -n "$WORM_REGION" && test -n "$WORM_BUCKET"
           test -n "$WRITER_KEY" && test -n "$WRITER_SECRET" && test -n "$READER_KEY" && test -n "$READER_SECRET"
+          test -n "$COPY_KEY" && test -n "$COPY_SECRET"
           [[ "$WORM_ENDPOINT" == https://* ]]
           [[ "$WORM_BUCKET" == acp-writeonce-probe-* ]]
           test "$WRITER_KEY" != "$READER_KEY"
+          test "$WRITER_KEY" != "$COPY_KEY"
+          test "$READER_KEY" != "$COPY_KEY"
           test "$(go env GOVERSION)" = go1.27.4
           echo "Approved HTTPS scratch endpoint/region present; distinct credentials supplied; provider security claims still depend on real test."
-      - name: Assert raw unconditional PUT denied for fresh and existing digest keys
+      - name: Assert raw PUT and independently authorized CopyObject bypasses denied
         shell: bash
         env:
           S3BLOB_WORM_GATE_APPROVAL: ${{ inputs.authorization }}
@@ -61,8 +66,11 @@ jobs:
           S3BLOB_WORM_WRITER_SECRET_KEY: ${{ secrets.ACP_WORM_TEST_WRITER_SECRET_KEY }}
           S3BLOB_WORM_READER_ACCESS_KEY: ${{ secrets.ACP_WORM_TEST_READER_ACCESS_KEY }}
           S3BLOB_WORM_READER_SECRET_KEY: ${{ secrets.ACP_WORM_TEST_READER_SECRET_KEY }}
+          S3BLOB_WORM_COPY_ACCESS_KEY: ${{ secrets.ACP_WORM_TEST_COPY_ACCESS_KEY }}
+          S3BLOB_WORM_COPY_SECRET_KEY: ${{ secrets.ACP_WORM_TEST_COPY_SECRET_KEY }}
         run: |
           set -euo pipefail
           go test -race -count=1 -v -run '^TestApprovedS3WriteOnceSecurityGate$' ./internal/workspace/s3blob | tee "$RUNNER_TEMP/approved-s3-writeonce.log"
           grep --fixed-strings -- '--- PASS: TestApprovedS3WriteOnceSecurityGate (' "$RUNNER_TEMP/approved-s3-writeonce.log"
           grep --fixed-strings -- 'APPROVED S3 WORM CONTRACT PASS: unconditional fresh-key and same-key PUT both 403;' "$RUNNER_TEMP/approved-s3-writeonce.log"
+          grep --fixed-strings -- 'APPROVED COPY WORM CONTRACT PASS: copy-capable principal passed actual source COPY/GET and protected conditional PUT positive controls' "$RUNNER_TEMP/approved-s3-writeonce.log"
