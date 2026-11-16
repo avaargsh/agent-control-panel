@@ -84,6 +84,8 @@ class EvidenceTests(unittest.TestCase):
 
         content = (Path(__file__).resolve().parents[1] / '.github' / 'workflows'
                    / 'workspace-writeonce-approved.yml').read_text(encoding='utf-8')
+        self.assertIn('  validate-acceptance-ref:', content)
+        self.assertIn('    needs: validate-acceptance-ref', content)
         self.assertIn("    if: github.ref == 'refs/heads/main'", content)
         self.assertIn('test "$GITHUB_REF" = "refs/heads/main"', content)
 
@@ -96,6 +98,8 @@ class EvidenceTests(unittest.TestCase):
         self.assertIn('          APPROVED_SHA: ${{ inputs.expected_sha }}', content)
         self.assertIn('[[ "$APPROVED_SHA" =~ ^[0-9a-f]{40}$ ]]', content)
         self.assertIn('test "$GITHUB_SHA" = "$APPROVED_SHA"', content)
+        self.assertIn('          ref: ${{ inputs.expected_sha }}', content)
+        self.assertIn('test "$(git rev-parse HEAD)" = "$APPROVED_SHA"', content)
 
     def test_s3_manual_acceptance_checkout_does_not_persist_token(self):
         from pathlib import Path
