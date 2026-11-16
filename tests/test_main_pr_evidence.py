@@ -79,6 +79,32 @@ class EvidenceTests(unittest.TestCase):
     def test_unverified_rulesets_can_be_explicitly_unknown(self):
         self.assertEqual(validate(event(body())), [])
 
+    def test_s3_manual_acceptance_requires_main_ref_before_environment_secrets(self):
+        from pathlib import Path
+
+        content = (Path(__file__).resolve().parents[1] / '.github' / 'workflows'
+                   / 'workspace-writeonce-approved.yml').read_text(encoding='utf-8')
+        self.assertIn("    if: github.ref == 'refs/heads/main'", content)
+        self.assertIn('test "$GITHUB_REF" = "refs/heads/main"', content)
+
+    def test_s3_manual_acceptance_requires_exact_dispatch_commit(self):
+        from pathlib import Path
+
+        content = (Path(__file__).resolve().parents[1] / '.github' / 'workflows'
+                   / 'workspace-writeonce-approved.yml').read_text(encoding='utf-8')
+        self.assertIn('      expected_sha:', content)
+        self.assertIn('          APPROVED_SHA: ${{ inputs.expected_sha }}', content)
+        self.assertIn('[[ "$APPROVED_SHA" =~ ^[0-9a-f]{40}$ ]]', content)
+        self.assertIn('test "$GITHUB_SHA" = "$APPROVED_SHA"', content)
+
+    def test_s3_manual_acceptance_checkout_does_not_persist_token(self):
+        from pathlib import Path
+
+        content = (Path(__file__).resolve().parents[1] / '.github' / 'workflows'
+                   / 'workspace-writeonce-approved.yml').read_text(encoding='utf-8')
+        self.assertIn('          persist-credentials: false', content)
+
+
 
 if __name__ == '__main__':
     unittest.main()
