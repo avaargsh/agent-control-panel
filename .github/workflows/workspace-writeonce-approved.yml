@@ -11,6 +11,10 @@ on:
         type: string
         required: true
         description: "Enter approved-disposable-provider after independently reviewing the dedicated S3 test bucket, IAM, retention and policy"
+      expected_sha:
+        type: string
+        required: true
+        description: "Exact 40-character lowercase SHA of the reviewed main commit; must match dispatch GITHUB_SHA"
 
 permissions:
   contents: read
@@ -19,12 +23,32 @@ env:
   GOTOOLCHAIN: local
 
 jobs:
+  # This job runs without any provider credentials. Wrong-ref dispatches
+  # must FAIL the workflow, rather than produce a misleading green SKIPPED gate.
+  validate-acceptance-ref:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail closed on non-main or unreviewed code
+        shell: bash
+        env:
+          APPROVED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/main"
+          [[ "$APPROVED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$GITHUB_SHA" = "$APPROVED_SHA"
+          echo "Reviewed main ref and exact dispatch commit verified before any S3 credentials can be used."
   approved-s3-writeonce:
+    needs: validate-acceptance-ref
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: acp-writeonce-acceptance
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6 pinned
+        with:
+          ref: ${{ inputs.expected_sha }}
+          persist-credentials: false
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6 pinned
         with:
           go-version: '1.27.4'
@@ -33,6 +57,7 @@ jobs:
         shell: bash
         env:
           OPERATOR_AUTHORIZATION: ${{ inputs.authorization }}
+          APPROVED_SHA: ${{ inputs.expected_sha }}
           WORM_BUCKET: ${{ secrets.ACP_WORM_TEST_BUCKET }}
           WORM_ENDPOINT: ${{ secrets.ACP_WORM_TEST_ENDPOINT }}
           WORM_REGION: ${{ secrets.ACP_WORM_TEST_REGION }}
@@ -45,6 +70,10 @@ jobs:
         run: |
           set -euo pipefail
           test "$OPERATOR_AUTHORIZATION" = approved-disposable-provider
+          test "$GITHUB_REF" = "refs/heads/main"
+          [[ "$APPROVED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$GITHUB_SHA" = "$APPROVED_SHA"
+          test "$(git rev-parse HEAD)" = "$APPROVED_SHA"
           test -n "$WORM_ENDPOINT" && test -n "$WORM_REGION" && test -n "$WORM_BUCKET"
           test -n "$WRITER_KEY" && test -n "$WRITER_SECRET" && test -n "$READER_KEY" && test -n "$READER_SECRET"
           test -n "$COPY_KEY" && test -n "$COPY_SECRET"
