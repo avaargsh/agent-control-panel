@@ -23,6 +23,20 @@ import (
 // These requests still use intentionally scoped fixture credentials. They
 // have no product entry point, policy mutation, or automatic object deletion.
 func rawS3SignedRequest(ctx context.Context, identity *Store, method, path string, payload []byte, ifNoneMatch bool) (*http.Request, error) {
+	return rawS3SignedRequestWithCopySource(ctx, identity, method, path, payload, ifNoneMatch, "")
+}
+
+// rawS3SignedCopyRequest deliberately omits If-None-Match while binding
+// x-amz-copy-source into the SigV4 canonical signed headers. The provider
+// must deny this independently authorized COPY to the protected digest prefix.
+func rawS3SignedCopyRequest(ctx context.Context, identity *Store, destination, source string) (*http.Request, error) {
+	if !strings.HasPrefix(source, "/") || strings.ContainsAny(source, "\r\n?") {
+		return nil, errors.New("raw COPY requires an absolute, query-free source path")
+	}
+	return rawS3SignedRequestWithCopySource(ctx, identity, http.MethodPut, destination, nil, false, source)
+}
+
+func rawS3SignedRequestWithCopySource(ctx context.Context, identity *Store, method, path string, payload []byte, ifNoneMatch bool, copySource string) (*http.Request, error) {
 	if identity == nil || identity.endpoint == nil || identity.accessKey == "" || identity.secretKey == "" {
 		return nil, errors.New("raw SigV4 requires real scoped credentials")
 	}
@@ -47,6 +61,10 @@ func rawS3SignedRequest(ctx context.Context, identity *Store, method, path strin
 	if ifNoneMatch {
 		request.Header.Set("If-None-Match", "*")
 		canonicalHeaders["if-none-match"] = "*"
+	}
+	if copySource != "" {
+		request.Header.Set("X-Amz-Copy-Source", copySource)
+		canonicalHeaders["x-amz-copy-source"] = copySource
 	}
 	if identity.session != "" {
 		request.Header.Set("X-Amz-Security-Token", identity.session)
