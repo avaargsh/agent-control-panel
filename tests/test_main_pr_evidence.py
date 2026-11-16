@@ -101,6 +101,37 @@ class EvidenceTests(unittest.TestCase):
         self.assertIn('          ref: ${{ inputs.expected_sha }}', content)
         self.assertIn('test "$(git rev-parse HEAD)" = "$APPROVED_SHA"', content)
 
+    def test_s3_preflight_shell_rejects_wrong_ref_or_sha_before_secrets(self):
+        import os
+        import re
+        import subprocess
+        import textwrap
+        from pathlib import Path
+
+        content = (Path(__file__).resolve().parents[1] / '.github' / 'workflows'
+                   / 'workspace-writeonce-approved.yml').read_text(encoding='utf-8')
+        marker = '      - name: Fail closed on non-main or unreviewed code'
+        self.assertIn(marker, content)
+        block = content.split(marker, 1)[1].split('  approved-s3-writeonce:', 1)[0]
+        match = re.search(r'(?m)^        run: \\|\\n((?:          .*\\n)+)', block)
+        self.assertIsNotNone(match, 'manual preflight must have a standalone Bash script')
+        script = textwrap.dedent(match.group(1))
+        for name, ref, run_sha, approved, allowed in [
+            ('approved-exact-main', 'refs/heads/main', 'a' * 40, 'a' * 40, True),
+            ('feature-branch', 'refs/heads/feature/unsafe', 'a' * 40, 'a' * 40, False),
+            ('tag', 'refs/tags/release', 'a' * 40, 'a' * 40, False),
+            ('different-sha', 'refs/heads/main', 'a' * 40, 'b' * 40, False),
+            ('short-sha', 'refs/heads/main', 'a' * 40, 'a' * 39, False),
+            ('uppercase-sha', 'refs/heads/main', 'a' * 40, 'A' * 40, False),
+        ]:
+            with self.subTest(name=name):
+                env = {'PATH': os.environ.get('PATH', '/usr/bin'), 'GITHUB_REF': ref,
+                       'GITHUB_SHA': run_sha, 'APPROVED_SHA': approved}
+                completed = subprocess.run(['bash', '-c', script], env=env,
+                                           capture_output=True, text=True, check=False)
+                self.assertEqual(completed.returncode == 0, allowed,
+                                 f'{name}: exit={completed.returncode}; stderr={completed.stderr}')
+
     def test_s3_manual_acceptance_checkout_does_not_persist_token(self):
         from pathlib import Path
 
