@@ -37,6 +37,7 @@ type Request struct {
 	Target         Target
 	IdempotencyKey string
 	RequestDigest  string
+	inputBound     bool // set only after ACP computes the exact input digest
 }
 
 // Grant is an internal assertion from the configured trusted ACP resolver,
@@ -78,6 +79,7 @@ func New(store Store, resolver Resolver) *Service {
 // Outbox or returns the original matching intent. This does not persist
 // raw task input, start a Run, or grant protected execution.
 func (s *Service) Admit(ctx context.Context, req Request) (runintent.Intent, bool, error) {
+	req.inputBound = false
 	return s.admit(ctx, req, nil)
 }
 
@@ -111,6 +113,7 @@ func (s *Service) AdmitWithInput(ctx context.Context, req Request, raw []byte) (
 		return runintent.Intent{}, false, runintent.ErrExecutionInputMismatch
 	}
 	req.RequestDigest = digest
+	req.inputBound = true
 	return s.admit(ctx, req, input)
 }
 
