@@ -25,6 +25,7 @@ import (
 type config struct {
 	dsn, cert, key, ca, peer, tenant, address string
 	releaseDirectory, publicationKey          string
+	guardPeer, guardAddress                   string
 }
 
 func readConfig(getenv func(string) string) (config, error) {
@@ -34,6 +35,8 @@ func readConfig(getenv func(string) string) (config, error) {
 		peer: getenv("ACP_AUTHORITY_PEER_SPIFFE_ID"), tenant: getenv("ACP_AUTHORITY_TENANT"),
 		address:          getenv("ACP_AUTHORITY_LISTEN_ADDR"),
 		releaseDirectory: getenv("ACP_AUTHORITY_RELEASE_DIRECTORY"), publicationKey: getenv("ACP_AUTHORITY_PUBLICATION_KEY"),
+		guardPeer: getenv("ACP_AUTHORITY_GUARD_PEER_SPIFFE_ID"),
+		guardAddress: getenv("ACP_AUTHORITY_GUARD_LISTEN_ADDR"),
 	}
 	if c.dsn == "" || c.cert == "" || c.key == "" || c.ca == "" || c.peer == "" || c.tenant == "" {
 		return config{}, errors.New("database, mTLS trust and tenant configuration required")
@@ -43,6 +46,11 @@ func readConfig(getenv func(string) string) (config, error) {
 	}
 	if c.address == "" {
 		c.address = "127.0.0.1:8444"
+	}
+	if (c.guardPeer == "") != (c.guardAddress == "") ||
+		c.guardPeer != "" && (c.publicationKey == "" ||
+			c.guardAddress == c.address || c.guardPeer == c.peer) {
+		return config{}, errors.New("Guard requires a distinct mTLS workload listener and current release publication")
 	}
 	return c, nil
 }
@@ -80,6 +88,7 @@ func serve(ctx context.Context, c config) error {
 	}
 	repo := runpg.New(pool)
 	var handler http.Handler
+	var guardHandler http.Handler
 	if c.publicationKey != "" {
 		file, err := os.Open(c.publicationKey)
 		if err != nil {
@@ -102,34 +111,64 @@ func serve(ctx context.Context, c config) error {
 		if err != nil {
 			return err
 		}
+		if c.guardPeer != "" {
+			guardHandler, err = authorityhttp.NewGuardCapabilityHandler(repo, publisher, c.guardPeer, c.tenant)
+			if err != nil {
+				return err
+			}
+		}
 	} else {
 		handler, err = authorityhttp.NewHandler(repo, c.peer, c.tenant)
 		if err != nil {
 			return err
 		}
 	}
-	srv := &http.Server{
-		Addr: c.address, Handler: handler,
-		TLSConfig: &tls.Config{
-			MinVersion: tls.VersionTLS13, ClientAuth: tls.RequireAndVerifyClientCert,
-			ClientCAs: cas, Certificates: []tls.Certificate{certificate},
-		},
-		ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 5 * time.Second,
-		WriteTimeout: 5 * time.Second, IdleTimeout: 15 * time.Second, MaxHeaderBytes: 8192,
+	// Two distinct TLS listeners, with separate exact client SPIFFE peers:
+	// a Decision/Runtime publication listener and an optional Guard-only
+	// read-only capability listener. No forwarded user identity is trusted.
+	newServer := func(addr string, h http.Handler) *http.Server {
+		return &http.Server{
+			Addr: addr, Handler: h,
+			TLSConfig: &tls.Config{
+				MinVersion: tls.VersionTLS13, ClientAuth: tls.RequireAndVerifyClientCert,
+				ClientCAs: cas, Certificates: []tls.Certificate{certificate},
+			},
+			ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 5 * time.Second,
+			WriteTimeout: 5 * time.Second, IdleTimeout: 15 * time.Second, MaxHeaderBytes: 8192,
+		}
 	}
-	errs := make(chan error, 1)
-	go func() { errs <- srv.ListenAndServeTLS("", "") }()
+	servers := []*http.Server{newServer(c.address, handler)}
+	if guardHandler != nil {
+		servers = append(servers, newServer(c.guardAddress, guardHandler))
+	}
+	errs := make(chan error, len(servers))
+	for _, server := range servers {
+		go func(s *http.Server) { errs <- s.ListenAndServeTLS("", "") }(server)
+	}
+	shutdown := func() error {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		for _, s := range servers {
+			if err := s.Shutdown(ctx); err != nil {
+				_ = s.Close()
+				return err
+			}
+		}
+		return nil
+	}
 	select {
 	case err := <-errs:
+		_ = shutdown()
 		return err
 	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := srv.Shutdown(shutdownCtx); err != nil {
-			_ = srv.Close()
+		if err := shutdown(); err != nil {
 			return err
 		}
-		<-errs
+		for range servers {
+			if err := <-errs; err != nil && !errors.Is(err, http.ErrServerClosed) {
+				return err
+			}
+		}
 		return nil
 	}
 }
