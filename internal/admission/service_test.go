@@ -22,9 +22,9 @@ func (f resolverFunc) Resolve(ctx context.Context, req Request) (Grant, error) {
 }
 
 type captureStore struct {
-	calls int
+	calls  int
 	intent runintent.Intent
-	event runpg.Event
+	event  runpg.Event
 }
 
 func (s *captureStore) Create(_ context.Context, i runintent.Intent, e runpg.Event) (runintent.Intent, bool, error) {
@@ -35,9 +35,9 @@ func (s *captureStore) Create(_ context.Context, i runintent.Intent, e runpg.Eve
 
 func fixture() (Request, Grant) {
 	req := Request{
-		Target: Target{TenantID: "tenant-a", ProjectID: "project-a", AgentID: "agent-a", ReleaseID: "release-a", SessionID: "session-a"},
+		Target:         Target{TenantID: "tenant-a", ProjectID: "project-a", AgentID: "agent-a", ReleaseID: "release-a", SessionID: "session-a"},
 		IdempotencyKey: "key-a",
-		RequestDigest: "sha256:" + strings.Repeat("a", 64),
+		RequestDigest:  "sha256:" + strings.Repeat("a", 64),
 	}
 	grant := Grant{
 		Target: req.Target, RequestDigest: req.RequestDigest, PrincipalID: "authenticated-principal",
@@ -89,9 +89,9 @@ func TestAdmitDenialOrInvalidGrantNeverWrites(t *testing.T) {
 	req, grant := fixture()
 	denial := errors.New("policy denied")
 	for _, tc := range []struct {
-		name string
+		name   string
 		mutate func(*Grant)
-		err error
+		err    error
 	}{
 		{name: "denied", err: denial},
 		{name: "tenant mismatch", mutate: func(g *Grant) { g.Target.TenantID = "tenant-b" }},
