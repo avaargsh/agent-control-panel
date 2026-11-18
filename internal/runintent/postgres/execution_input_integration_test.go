@@ -89,3 +89,56 @@ func TestExecutionInputMigrationRejectsDisabledGuard(t *testing.T) {
 		t.Fatalf("disabled input guard was accepted: %v", err)
 	}
 }
+
+func TestExecutionInputMigrationUpgradeRetainsLegacyAbsence(t *testing.T) {
+	repo, pool := testRepository(t)
+	ctx := context.Background()
+	legacy := testIntent(905)
+	if _, _, err := repo.Create(ctx, legacy, testEvent(legacy, 1, 90501, eventCreated)); err != nil {
+		t.Fatal(err)
+	}
+	for _, stmt := range []string{
+		"DROP TRIGGER run_intent_execution_input_immutable ON run_intents",
+		"DROP FUNCTION reject_run_intent_execution_input_mutation()",
+		"ALTER TABLE run_intents DROP COLUMN execution_input",
+		"DELETE FROM schema_migrations WHERE version=10",
+	} {
+		if _, err := pool.Exec(ctx, stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := Migrate(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	if err := Migrate(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.GetExecutionInput(ctx, legacy.TenantID, legacy.ID); !errors.Is(err, ErrExecutionInputUnavailable) {
+		t.Fatalf("legacy input not absent after migration: %v", err)
+	}
+}
+
+func TestExecutionInputReadFailsClosedOnCorruption(t *testing.T) {
+	repo, pool := testRepository(t)
+	ctx := context.Background()
+	intent := testIntent(906)
+	raw := []byte(`{"prompt":"original"}`)
+	var err error
+	intent.RequestDigest, err = runintent.ExecutionInputDigest(intent, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := repo.CreateWithInput(ctx, intent, testEvent(intent, 1, 90601, eventCreated), raw); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate out-of-band privileged storage corruption in disposable DB.
+	if _, err := pool.Exec(ctx, "ALTER TABLE run_intents DISABLE TRIGGER run_intent_execution_input_immutable"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, "UPDATE run_intents SET execution_input=$1 WHERE id=$2::uuid", []byte(`{"prompt":"tampered"}`), intent.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := repo.GetExecutionInput(ctx, intent.TenantID, intent.ID); !errors.Is(err, ErrCorruptRecord) || got != nil {
+		t.Fatalf("corrupt input returned to dispatcher: %v", err)
+	}
+}
