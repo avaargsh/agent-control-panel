@@ -42,8 +42,12 @@ func TestApprovedS3WriteOnceSecurityGate(t *testing.T) {
 	secret := os.Getenv("S3BLOB_WORM_WRITER_SECRET_KEY")
 	readAccess := os.Getenv("S3BLOB_WORM_READER_ACCESS_KEY")
 	readSecret := os.Getenv("S3BLOB_WORM_READER_SECRET_KEY")
-	if access == "" || secret == "" || readAccess == "" || readSecret == "" || access == readAccess {
-		t.Fatal("require separately provisioned, distinct approved writer-only and reader-only principals")
+	copyAccess := os.Getenv("S3BLOB_WORM_COPY_ACCESS_KEY")
+	copySecret := os.Getenv("S3BLOB_WORM_COPY_SECRET_KEY")
+	if access == "" || secret == "" || readAccess == "" || readSecret == "" ||
+		copyAccess == "" || copySecret == "" ||
+		access == readAccess || copyAccess == access || copyAccess == readAccess {
+		t.Fatal("require three distinct disposable writer, reader and independently copy-capable principals")
 	}
 	writer, err := New(Config{Endpoint: endpoint, Bucket: bucket, Region: region, AccessKey: access, SecretKey: secret})
 	if err != nil {
@@ -52,6 +56,14 @@ func TestApprovedS3WriteOnceSecurityGate(t *testing.T) {
 	reader, err := New(Config{Endpoint: endpoint, Bucket: bucket, Region: region, AccessKey: readAccess, SecretKey: readSecret})
 	if err != nil {
 		t.Fatalf("approved reader config: %v", err)
+	}
+	// The COPY principal MUST be allowed to GET an existing test source,
+	// conditionally PUT a protected digest key and CopyObject into a
+	// non-protected canary prefix. Without these positive controls a 403
+	// might reflect missing source read or destination write permissions.
+	copier, err := New(Config{Endpoint: endpoint, Bucket: bucket, Region: region, AccessKey: copyAccess, SecretKey: copySecret})
+	if err != nil {
+		t.Fatalf("approved copy-capable fixture config: %v", err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
@@ -102,6 +114,13 @@ func TestApprovedS3WriteOnceSecurityGate(t *testing.T) {
 	}
 	if status := rawS3Status(t, ctx, writer, http.MethodPut, freshKey, fresh, false); status != http.StatusForbidden {
 		t.Fatalf("P0 CONDITIONAL POLICY FAILURE: unconditioned FIRST PUT of fresh digest key returned %d instead of provider 403", status)
+	}
+	// A global conditional-write policy can deny an unconditional PUT even
+	// when a supposedly read-only principal has PutObject permission. Probe
+	// a valid conditional first PUT as that reader, before the writer creates
+	// the key. The writer's subsequent 200 also proves it remained absent.
+	if status := rawS3Status(t, ctx, reader, http.MethodPut, freshKey, fresh, true); status != http.StatusForbidden {
+		t.Fatalf("read-only principal could conditionally create a protected digest: HTTP %d", status)
 	}
 	if status := rawS3Status(t, ctx, writer, http.MethodPut, freshKey, fresh, true); status != http.StatusOK {
 		t.Fatalf("policy denies valid conditional first PUT after raw 403: HTTP %d", status)
@@ -173,6 +192,72 @@ func TestApprovedS3WriteOnceSecurityGate(t *testing.T) {
 	if unsignedResp.StatusCode != http.StatusForbidden {
 		t.Fatalf("unsigned request unexpectedly received HTTP %d", unsignedResp.StatusCode)
 	}
+
+	// COPY bypass matrix uses a third, deliberately COPY-capable IAM identity.
+	// First prove source read + non-protected destination CopyObject actually
+	// work, and that this SAME identity can conditionally create a protected
+	// digest key. A denied COPY without these controls proves nothing about
+	// enforcement of the protected destination's bucket policy.
+	copyPositivePath := fmt.Sprintf("/%s/validation/copy-positive/%x", bucket, nonce)
+	copyStatus, copyXML := rawS3CopyStatus(t, ctx, copier, copyPositivePath, freshKey)
+	if copyStatus != http.StatusOK || !strings.Contains(copyXML, "<CopyObjectResult") {
+		t.Fatalf("COPY positive control missing: HTTP %d; copy principal needs real source GET and scratch destination PUT", copyStatus)
+	}
+	if copied := rawS3ReadCopyCanary(t, ctx, copier, copyPositivePath); !bytes.Equal(copied, fresh) {
+		t.Fatal("COPY positive control did not retain exact source bytes")
+	}
+	copyAllowedBytes := []byte(fmt.Sprintf("P0-2B5g scoped copier conditional PUT canary=%x", nonce))
+	copyAllowedDigest := sha256.Sum256(copyAllowedBytes)
+	copyAllowedAsset := workspace.Asset{
+		Path:      "reports/copier-allowed-conditional-put.md",
+		Digest:    "sha256:" + hex.EncodeToString(copyAllowedDigest[:]),
+		SizeBytes: int64(len(copyAllowedBytes)),
+	}
+	copyAllowedKey, err := copier.objectPath(tenant, workspaceID, copyAllowedAsset.Digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status := rawS3Status(t, ctx, copier, http.MethodPut, copyAllowedKey, copyAllowedBytes, true); status != http.StatusOK {
+		t.Fatalf("COPY principal lacks positive conditional-PUT rights on protected prefix: HTTP %d", status)
+	}
+	if err := reader.VerifyAsset(ctx, tenant, workspaceID, copyAllowedAsset); err != nil {
+		t.Fatalf("COPY principal's protected conditional-PUT bytes were not verified: %v", err)
+	}
+
+	// Source and destination differ: a provider cannot short-circuit the
+	// test as an invalid same-key self-copy. The source's bytes differ
+	// from the destination's content-addressed digest.
+	if status, _ := rawS3CopyStatus(t, ctx, copier, key, freshKey); status != http.StatusForbidden {
+		t.Fatalf("P0 COPY WORM FAILURE: unconditioned CopyObject into existing protected digest returned %d (want server 403)", status)
+	}
+	if err := reader.VerifyAsset(ctx, tenant, workspaceID, asset); err != nil {
+		t.Fatalf("denied COPY into existing digest corrupted original: %v", err)
+	}
+
+	copyFreshBytes := []byte(fmt.Sprintf("P0-2B5g COPY absent-key canary=%x", nonce))
+	copyFreshDigest := sha256.Sum256(copyFreshBytes)
+	copyFreshAsset := workspace.Asset{
+		Path:      "reports/copy-absent-key-policy.md",
+		Digest:    "sha256:" + hex.EncodeToString(copyFreshDigest[:]),
+		SizeBytes: int64(len(copyFreshBytes)),
+	}
+	copyFreshKey, err := copier.objectPath(tenant, workspaceID, copyFreshAsset.Digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status, _ := rawS3CopyStatus(t, ctx, copier, copyFreshKey, freshKey); status != http.StatusForbidden {
+		t.Fatalf("P0 COPY WORM FAILURE: unconditioned CopyObject into ABSENT protected digest returned %d (want server 403)", status)
+	}
+	if _, err := reader.ReadAsset(ctx, tenant, workspaceID, copyFreshAsset); !errors.Is(err, ErrObjectMissing) {
+		t.Fatalf("denied COPY into absent digest left unexpected object or storage error: %v", err)
+	}
+	if status := rawS3Status(t, ctx, copier, http.MethodPut, copyFreshKey, copyFreshBytes, true); status != http.StatusOK {
+		t.Fatalf("protected fresh COPY destination rejected legitimate conditional PUT: HTTP %d", status)
+	}
+	if err := reader.VerifyAsset(ctx, tenant, workspaceID, copyFreshAsset); err != nil {
+		t.Fatalf("conditional PUT after denied COPY failed to retain verified bytes: %v", err)
+	}
+	t.Log("APPROVED COPY WORM CONTRACT PASS: copy-capable principal passed actual source COPY/GET and protected conditional PUT positive controls, while raw existing/fresh protected CopyObject both returned 403")
 
 	// Independent concurrent first-writer attempts against the SAME digest
 	// must produce one created object and three rejected conditional PUTs.
