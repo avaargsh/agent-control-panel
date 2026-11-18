@@ -97,6 +97,7 @@ func TestExecutionInputMigrationUpgradeRetainsLegacyAbsence(t *testing.T) {
 	if _, _, err := repo.Create(ctx, legacy, testEvent(legacy, 1, 90501, eventCreated)); err != nil {
 		t.Fatal(err)
 	}
+	dropAdmissionCatalogMigrationForTest(t, pool)
 	for _, stmt := range []string{
 		"DROP TRIGGER run_intent_execution_input_immutable ON run_intents",
 		"DROP FUNCTION reject_run_intent_execution_input_mutation()",
