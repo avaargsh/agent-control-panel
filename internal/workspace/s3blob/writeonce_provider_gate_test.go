@@ -115,6 +115,13 @@ func TestApprovedS3WriteOnceSecurityGate(t *testing.T) {
 	if status := rawS3Status(t, ctx, writer, http.MethodPut, freshKey, fresh, false); status != http.StatusForbidden {
 		t.Fatalf("P0 CONDITIONAL POLICY FAILURE: unconditioned FIRST PUT of fresh digest key returned %d instead of provider 403", status)
 	}
+	// A global conditional-write policy can deny an unconditional PUT even
+	// when a supposedly read-only principal has PutObject permission. Probe
+	// a valid conditional first PUT as that reader, before the writer creates
+	// the key. The writer's subsequent 200 also proves it remained absent.
+	if status := rawS3Status(t, ctx, reader, http.MethodPut, freshKey, fresh, true); status != http.StatusForbidden {
+		t.Fatalf("read-only principal could conditionally create a protected digest: HTTP %d", status)
+	}
 	if status := rawS3Status(t, ctx, writer, http.MethodPut, freshKey, fresh, true); status != http.StatusOK {
 		t.Fatalf("policy denies valid conditional first PUT after raw 403: HTTP %d", status)
 	}

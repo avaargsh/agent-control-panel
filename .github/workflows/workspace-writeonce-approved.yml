@@ -32,8 +32,10 @@ jobs:
         shell: bash
         env:
           APPROVED_SHA: ${{ inputs.expected_sha }}
+          OPERATOR_AUTHORIZATION: ${{ inputs.authorization }}
         run: |
           set -euo pipefail
+          test "$OPERATOR_AUTHORIZATION" = approved-disposable-provider
           test "$GITHUB_REF" = "refs/heads/main"
           [[ "$APPROVED_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$GITHUB_SHA" = "$APPROVED_SHA"

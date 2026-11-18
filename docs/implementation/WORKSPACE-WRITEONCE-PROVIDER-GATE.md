@@ -49,7 +49,7 @@ The manual `workspace-writeonce-approved.yml` is a protected **non-production te
 
 **Repository-workflow controls added here:**
 
-1. The new first `validate-acceptance-ref` job receives **no S3 credentials**. It requires `GITHUB_REF=refs/heads/main`, a 40-character lowercase `expected_sha` from the operator, and equality with `GITHUB_SHA`. Any mismatch **fails the entire workflow**, rather than producing an apparently green skipped provider gate.
+1. The new first `validate-acceptance-ref` job receives **no S3 credentials**. It requires `GITHUB_REF=refs/heads/main`, a 40-character lowercase `expected_sha` from the operator, and equality with `GITHUB_SHA`. It also requires the exact disposable-provider authorization string before the protected job is eligible. Any mismatch **fails the entire workflow**, rather than producing an apparently green skipped provider gate.
 2. The only secret-bearing `approved-s3-writeonce` job depends on that successful preflight and separately requires `github.ref == 'refs/heads/main'`. `actions/checkout` pins `inputs.expected_sha` and disables persisted GitHub checkout credentials; a second SHA check validates the checked-out HEAD **before** executing S3 test code.
 3. The user-facing `authorization=approved-disposable-provider` string is **not authentication**. An independently configured GitHub Environment reviewer/branch restriction, trusted bucket identities and exact code review are mandatory.
 
@@ -86,3 +86,7 @@ ACP still owns tenant/Workspace/Session/RunIntent/DAS, v8 UploadIntent, v7 Stage
 - Legacy negative proof: only count as **observed** after exact-head real MinIO CI logs show the named test actually ran and printed `EXPECTED SECURITY BLOCKER`.
 - Approved provider positive proof: **unverified** until an approved provider's exact-head manual workflow records the raw 403 and preserved bytes, with exact backend version, deployed policy and IAM evidence. A skipped test does not count.
 - Changing a denied/unsafe outcome into a passing policy assertion without provider-side evidence is prohibited.
+
+### P0 follow-up: independent reader authorization and secret-free dispatch rejection
+
+The secret-free preflight rejects missing or incorrect disposable-provider authorization before the Environment job is eligible. This string is an explicit operator acknowledgement, not identity or authentication. The protected job retains its redundant check. The real-provider matrix now also requires a conditional first PUT signed by the reader principal to return 403; the same fresh key must then accept a legitimate writer conditional PUT (200) and verify exact bytes. An unconditional reader PUT alone could be denied by the global WORM policy even if the reader had PutObject rights. This is a test-only correction; approved provider execution and server-side Environment settings remain unverified.
