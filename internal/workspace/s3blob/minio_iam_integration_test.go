@@ -32,7 +32,7 @@ func minioRoleStore(t *testing.T, role string) *Store {
 		HTTPClient: &http.Client{Transport: transport},
 		Endpoint:   os.Getenv("S3BLOB_MINIO_TEST_ENDPOINT"),
 		Bucket:     "research-artifacts", Region: "us-east-1",
-		AccessKey:  access, SecretKey: secret, AllowHTTPForTests: true,
+		AccessKey: access, SecretKey: secret, AllowHTTPForTests: true,
 	})
 	if err != nil {
 		t.Fatalf("create real MinIO %s role: %v", role, err)
