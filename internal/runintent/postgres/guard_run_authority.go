@@ -2,7 +2,6 @@ package postgres
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
@@ -37,15 +36,32 @@ func (r *Repository) GetGuardRunAuthority(ctx context.Context, tenantID, runID s
 	// The admitted Run and its immutable request digest are read from ACP's
 	// relational state, never from the untrusted Guard ActionSubmission.
 	sql := fmt.Sprintf(`SELECT id::text,request_digest FROM %s
-        WHERE tenant_id=$1 AND runtime_run_id=$2::uuid AND
+        WHERE tenant_id=$1 AND runtime_run_id=$2 AND
               status='ACCEPTED' AND workflow_id='agent-run/v1/'||$2`, table)
-	var intentID, digest string
-	err := r.pool.QueryRow(ctx, sql, tenantID, runID).Scan(&intentID, &digest)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return empty, nil, ErrCatalogDenied
-	}
+	// Do not arbitrarily choose the first Intent if more than one
+	// accepted record maps to this Runtime Run. Limit scan to two rows
+	// so a corrupt catalog always fails closed at bounded cost.
+	rows, err := r.pool.Query(ctx, sql+" LIMIT 2", tenantID, runID)
 	if err != nil {
 		return empty, nil, ErrCatalogUnavailable
+	}
+	defer rows.Close()
+	var intentID, digest string
+	count := 0
+	for rows.Next() {
+		count++
+		if count > 1 {
+			return empty, nil, ErrCatalogUnavailable
+		}
+		if err := rows.Scan(&intentID, &digest); err != nil {
+			return empty, nil, ErrCatalogUnavailable
+		}
+	}
+	if rows.Err() != nil {
+		return empty, nil, ErrCatalogUnavailable
+	}
+	if count == 0 {
+		return empty, nil, ErrCatalogDenied
 	}
 	if !executionAuthorityID.MatchString(intentID) || len(digest) != 71 || digest[:7] != "sha256:" {
 		return empty, nil, ErrCatalogUnavailable
