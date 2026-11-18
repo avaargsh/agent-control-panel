@@ -16,6 +16,9 @@ var ErrExecutionInputUnavailable = errors.New("run intent has no persisted execu
 // snapshot and Outbox event together. The legacy Create path cannot attach
 // bytes later or replay an input-bearing intent.
 func (r *Repository) CreateWithInput(ctx context.Context, intent runintent.Intent, event Event, raw []byte) (runintent.Intent, bool, error) {
+	if len(raw) > runintent.MaxExecutionInputBytes {
+		return runintent.Intent{}, false, runintent.ErrInvalidExecutionInput
+	}
 	input := bytes.Clone(raw)
 	if err := runintent.VerifyExecutionInput(intent, input); err != nil {
 		return runintent.Intent{}, false, err
