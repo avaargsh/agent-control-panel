@@ -523,7 +523,97 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 		if os.Getenv("ACP_LIVE_CONTINUATION") == "1" {
 			temporal.Env = append(temporal.Env, "RUNTIME_EXTERNAL_LIVE_CONTINUATION=1")
 		}
+		// A disposable ACP test controller, not Guard or Decision, changes the
+		// *actual Runtime PostgreSQL breaker generation* only after both
+		// Decision and ACP have positively verified the same Run. The Guard
+		// subprocess then makes its final real Runtime safety mTLS read.
+		// Restore the synthetic fault before the later source revocation
+		// assertions. This is never a production breaker transition API.
+		var postflightDone chan error
+		if composed {
+			syncDir := t.TempDir()
+			temporal.Env = append(temporal.Env, "DECISION_LIVE_GUARD_COMPOSED_SYNC_DIR="+syncDir)
+			postflightDone = make(chan error, 1)
+			go func() {
+				waitFile := func(filename string) error {
+					deadline := time.Now().Add(3 * time.Minute)
+					for time.Now().Before(deadline) {
+						raw, err := os.ReadFile(filepath.Join(syncDir, filename))
+						if err == nil && string(raw) == runID {
+							return nil
+						}
+						if err != nil && !os.IsNotExist(err) {
+							return fmt.Errorf("%s: %w", filename, err)
+						}
+						select {
+						case <-ctx.Done():
+							return ctx.Err()
+						case <-time.After(40 * time.Millisecond):
+						}
+					}
+					return fmt.Errorf("missing independent Guard postflight marker %s", filename)
+				}
+				if err := waitFile("postflight-capability-verified"); err != nil {
+					postflightDone <- err
+					return
+				}
+				var original int64
+				err := runtimePool.QueryRow(ctx, `
+					SELECT version FROM runtime_circuit_breakers
+					WHERE scope_kind='RUN' AND scope_id=$1
+				`, runID).Scan(&original)
+				if err != nil || original < 1 {
+					postflightDone <- fmt.Errorf("original Runtime breaker unavailable: %w", err)
+					return
+				}
+				change, err := runtimePool.Exec(ctx, `
+					UPDATE runtime_circuit_breakers
+					SET version=version+1, updated_at=clock_timestamp()
+					WHERE scope_kind='RUN' AND scope_id=$1 AND version=$2
+				`, runID, original)
+				if err != nil || change.RowsAffected() != 1 {
+					postflightDone <- fmt.Errorf("failed isolated breaker CAS: %v", err)
+					return
+				}
+				if err := os.WriteFile(filepath.Join(syncDir, "postflight-breaker-changed"), []byte(runID), 0600); err != nil {
+					postflightDone <- err
+					return
+				}
+				deniedErr := waitFile("postflight-denied")
+				// Even after a test failure, restore only the exact fixture
+				// value that this controller changed and never overwrite a
+				// concurrent unrelated breaker generation.
+				restore, restoreErr := runtimePool.Exec(ctx, `
+					UPDATE runtime_circuit_breakers
+					SET version=$2,updated_at=clock_timestamp()
+					WHERE scope_kind='RUN' AND scope_id=$1 AND version=$3
+				`, runID, original, original+1)
+				if restoreErr != nil || restore.RowsAffected() != 1 {
+					postflightDone <- fmt.Errorf("failed isolated breaker cleanup: %v; postflight: %v", restoreErr, deniedErr)
+					return
+				}
+				if deniedErr != nil {
+					postflightDone <- deniedErr
+					return
+				}
+				if err := os.WriteFile(filepath.Join(syncDir, "postflight-restored"), []byte(runID), 0600); err != nil {
+					postflightDone <- err
+					return
+				}
+				postflightDone <- nil
+			}()
+		}
 		out, runErr := temporal.CombinedOutput()
+		if composed {
+			select {
+			case err := <-postflightDone:
+				if err != nil {
+					t.Fatalf("real Guard postflight generation fault injection failed: %v, Temporal output: %s", err, out)
+				}
+			case <-time.After(3 * time.Second):
+				t.Fatalf("missing real Guard postflight completion: %v %s", runErr, out)
+			}
+		}
 		if runErr != nil || !bytes.Contains(out, []byte("--- PASS: TestExternalACPAdmissionTemporalRecovery")) {
 			t.Fatalf("same-Run Temporal execution/recovery failed: %v %s", runErr, out)
 		}
@@ -545,6 +635,12 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 			(!bytes.Contains(out, []byte("real EngageGuard DecisionPlanClient verified same-Run "+runID)) ||
 				!bytes.Contains(out, []byte("real EngageGuard DecisionPlanClient denied revoked same-Run "+runID))) {
 			t.Fatal("missing independently compiled EngageGuard client positive and revoked negative evidence")
+		}
+		if composed &&
+			(!bytes.Contains(out, []byte("real ComposedRunVerifier verified three authorities on same-Run "+runID)) ||
+				!bytes.Contains(out, []byte("real ComposedRunVerifier denied live postflight breaker drift same-Run "+runID)) ||
+				!bytes.Contains(out, []byte("real ComposedRunVerifier denied revoked source same-Run "+runID))) {
+			t.Fatal("missing independently authenticated triple-authority and postflight breaker-denial evidence")
 		}
 		t.Logf("same-Run Temporal evidence:\n%s", out)
 		if id := assertOne(); id != runID {
