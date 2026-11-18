@@ -329,6 +329,9 @@ func newLiveExecutionAuthorityReader(t *testing.T, pool *pgxpool.Pool, dsn, runt
 			"DECISION_LIVE_RUNTIME_ORIGIN=" + runtimeOrigin,
 			"DECISION_LIVE_DATABASE_URL=" + os.Getenv("ACP_DECISION_DATABASE_URL"),
 		}
+        if os.Getenv("ACP_LIVE_CONTINUATION") == "1" {
+            liveEnv = append(liveEnv, "RUNTIME_EXTERNAL_LIVE_CONTINUATION=1")
+        }
 	}
 	return func(want int) {
 		t.Helper()
