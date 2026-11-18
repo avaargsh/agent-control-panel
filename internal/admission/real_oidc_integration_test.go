@@ -50,8 +50,8 @@ func TestRealOIDCServiceAccountCatalogAdmission(t *testing.T) {
 		t.Fatal("invalid isolated issuer CA")
 	}
 	httpClient := &http.Client{
-		Transport: &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots}},
-		Timeout:   10 * time.Second,
+		Transport:     &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots}},
+		Timeout:       10 * time.Second,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
 	t.Cleanup(httpClient.CloseIdleConnections)
@@ -61,7 +61,7 @@ func TestRealOIDCServiceAccountCatalogAdmission(t *testing.T) {
 		t.Helper()
 		auth, err := NewIntrospector(IntrospectionConfig{
 			Endpoint: issuer + "/protocol/openid-connect/token/introspect",
-			Issuer: iss, Audience: aud, ClientID: resource, ClientSecret: secret, HTTPClient: httpClient,
+			Issuer:   iss, Audience: aud, ClientID: resource, ClientSecret: secret, HTTPClient: httpClient,
 		})
 		if err != nil {
 			t.Fatal(err)
