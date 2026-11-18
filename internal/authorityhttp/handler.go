@@ -1,6 +1,6 @@
 // Package authorityhttp exposes a read-only ACP catalog authority boundary.
 // It authenticates a configured workload and tenant; it is not a user API,
-// Decision evidence publisher, Guard Permit issuer or execution endpoint.
+// independent Evidence publisher, Guard Permit issuer or execution endpoint.
 package authorityhttp
 
 import (
@@ -22,12 +22,18 @@ import (
 )
 
 const PathPrefix = "/internal/v1/run-authority/"
+const PublicationPathPrefix = "/internal/v1/decision-publication/"
 
 var idPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 var digestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
 type Reader interface {
 	GetExecutionAuthority(context.Context, runpg.ExecutionAuthorityRef) (runpg.ExecutionAuthority, error)
+}
+
+type PublicationReader interface {
+	Reader
+	GetExecutionAuthorityInput(context.Context, runpg.ExecutionAuthorityRef) (runpg.ExecutionAuthority, []byte, error)
 }
 
 type Snapshot struct {
@@ -103,6 +109,19 @@ func nilReader(reader Reader) bool {
 // RequireAndVerifyClientCert and the dedicated trust-domain CA. The exact
 // workload and tenant are provisioned out-of-band, never request claims.
 func NewHandler(reader Reader, peer, tenant string) (http.Handler, error) {
+	return newHandler(reader, nil, peer, tenant)
+}
+
+// NewPublicationHandler serves both existing authority and signed
+// publication reads, under the same independent mTLS trust boundary.
+func NewPublicationHandler(reader PublicationReader, publisher *Publisher, peer, tenant string) (http.Handler, error) {
+	if publisher == nil || publisher.root == nil {
+		return nil, ErrPublicationUnavailable
+	}
+	return newHandler(reader, publisher, peer, tenant)
+}
+
+func newHandler(reader Reader, publisher *Publisher, peer, tenant string) (http.Handler, error) {
 	if nilReader(reader) || !validIdentity(peer) || !validTenant(tenant) {
 		return nil, errors.New("invalid ACP execution authority configuration")
 	}
@@ -123,9 +142,18 @@ func NewHandler(reader Reader, peer, tenant string) (http.Handler, error) {
 			fail(http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED")
 			return
 		}
-		intentID := strings.TrimPrefix(r.URL.Path, PathPrefix)
+		prefix := PathPrefix
+		publication := strings.HasPrefix(r.URL.Path, PublicationPathPrefix)
+		if publication {
+			if publisher == nil {
+				fail(http.StatusServiceUnavailable, "PUBLICATION_UNAVAILABLE")
+				return
+			}
+			prefix = PublicationPathPrefix
+		}
+		intentID := strings.TrimPrefix(r.URL.Path, prefix)
 		query, err := url.ParseQuery(r.URL.RawQuery)
-		if err != nil || r.URL.RawPath != "" || r.URL.ForceQuery || !strings.HasPrefix(r.URL.Path, PathPrefix) ||
+		if err != nil || r.URL.RawPath != "" || r.URL.ForceQuery || !strings.HasPrefix(r.URL.Path, prefix) ||
 			!idPattern.MatchString(intentID) || len(query) != 2 ||
 			len(query["run_id"]) != 1 || len(query["request_digest"]) != 1 ||
 			!idPattern.MatchString(query.Get("run_id")) || !digestPattern.MatchString(query.Get("request_digest")) ||
@@ -145,7 +173,13 @@ func NewHandler(reader Reader, peer, tenant string) (http.Handler, error) {
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 		defer cancel()
-		current, err := reader.GetExecutionAuthority(ctx, ref)
+		var current runpg.ExecutionAuthority
+		var input []byte
+		if publication {
+			current, input, err = reader.(PublicationReader).GetExecutionAuthorityInput(ctx, ref)
+		} else {
+			current, err = reader.GetExecutionAuthority(ctx, ref)
+		}
 		if errors.Is(err, runpg.ErrCatalogDenied) {
 			fail(http.StatusForbidden, "RUN_AUTHORITY_DENIED")
 			return
@@ -156,12 +190,25 @@ func NewHandler(reader Reader, peer, tenant string) (http.Handler, error) {
 			fail(http.StatusServiceUnavailable, "RUN_AUTHORITY_UNAVAILABLE")
 			return
 		}
-		_ = json.NewEncoder(w).Encode(Snapshot{
+		snapshot := Snapshot{
 			SchemaVersion: "acp.run-authority.v1", TenantID: tenant, RunIntentID: ref.RunIntentID,
 			RunID: ref.RunID, RequestDigest: ref.RequestDigest, ProjectID: current.Snapshot.ProjectID,
 			AgentID: current.AgentID, AgentReleaseID: current.ReleaseID, SessionID: current.SessionID,
 			PrincipalID: current.PrincipalID, SubjectID: current.Snapshot.SubjectID, ActorID: current.Snapshot.ActorID,
 			PolicyRevision: current.Snapshot.PolicyRevision, ConfigDigest: current.Snapshot.ConfigDigest,
-		})
+		}
+		if publication {
+			got, err := publisher.Publish(snapshot, input, time.Now().UTC())
+			switch {
+			case errors.Is(err, ErrPublicationDenied):
+				fail(http.StatusForbidden, "PUBLICATION_DENIED")
+			case err != nil:
+				fail(http.StatusServiceUnavailable, "PUBLICATION_UNAVAILABLE")
+			default:
+				_ = json.NewEncoder(w).Encode(got)
+			}
+			return
+		}
+		_ = json.NewEncoder(w).Encode(snapshot)
 	}), nil
 }
