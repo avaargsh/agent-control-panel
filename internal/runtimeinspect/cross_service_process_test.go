@@ -158,7 +158,7 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 			t.Fatal(err)
 		}
 		cmd.Stdout, cmd.Stderr = log, log
-		cmd.Env = append(os.Environ(),
+		cmd.Env = append(goldenPathChildEnvironment(),
 			"RUNTIME_DATABASE_URL="+runtimeDSN,
 			"RUNTIME_TLS_CERT="+certFile,
 			"RUNTIME_TLS_KEY="+keyFile,
@@ -210,7 +210,7 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 	// PostgreSQL input repository and verified mutual TLS. Its test-only
 	// transport discards the response after the real Runtime commits.
 	dispatch := exec.Command(os.Args[0], "-test.run=^TestDispatchLostACKChild$")
-	dispatch.Env = append(os.Environ(),
+	dispatch.Env = append(goldenPathChildEnvironment(),
 		"ACP_DISPATCH_CHILD=1",
 		"ACP_DATABASE_URL="+acpDSN,
 		"ACP_DISPATCH_TENANT="+intent.TenantID,
@@ -288,7 +288,7 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 	// ReconcileOnce, then blocks at Inspect. SIGKILL must leave the lease
 	// durable so the restarted worker can fence it after database expiry.
 	crash := exec.Command(os.Args[0], "-test.run=^TestCrashReconcilerAfterClaimChild$")
-	crash.Env = append(os.Environ(),
+	crash.Env = append(goldenPathChildEnvironment(),
 		"ACP_RECOVERY_CRASH_CHILD=1",
 		"ACP_DATABASE_URL="+acpDSN,
 		"ACP_RECOVERY_TENANT="+intent.TenantID,
@@ -437,7 +437,7 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 	if golden {
 		temporal := exec.CommandContext(ctx, os.Getenv("ACP_RUNTIME_TEMPORAL_TEST_BIN"),
 			"-test.v", "-test.run=^TestExternalACPAdmissionTemporalRecovery$", "-test.timeout=6m")
-		temporal.Env = append(os.Environ(),
+		temporal.Env = append(goldenPathChildEnvironment(),
 			"RUNTIME_EXTERNAL_ACP_TEST=1",
 			"RUNTIME_EXTERNAL_DATABASE_URL="+runtimeDSN,
 			"RUNTIME_EXTERNAL_TENANT="+intent.TenantID,
@@ -661,4 +661,17 @@ func TestDispatchLostACKChild(t *testing.T) {
 		got.Version != 3 || drop.calls != 1 {
 		t.Fatalf("subprocess must persist one committed-but-unacknowledged acceptance: %+v %v calls=%d dropped=%v", got, dispatchErr, drop.calls, drop.dropped)
 	}
+}
+
+// Child Runtime and recovery processes never receive the disposable OAuth
+// client secrets (nor inherited CI credentials). Only explicit runtime
+// configuration is appended by the caller.
+func goldenPathChildEnvironment() []string {
+	var env []string
+	for _, key := range []string{"PATH", "HOME", "TMPDIR", "TMP", "TEMP", "USER", "LANG", "LC_ALL", "SSL_CERT_FILE", "SSL_CERT_DIR"} {
+		if value, present := os.LookupEnv(key); present {
+			env = append(env, key+"="+value)
+		}
+	}
+	return env
 }
