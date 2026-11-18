@@ -487,6 +487,11 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 		if runErr != nil || !bytes.Contains(out, []byte("--- PASS: TestExternalACPAdmissionTemporalRecovery")) {
 			t.Fatalf("same-Run Temporal execution/recovery failed: %v %s", runErr, out)
 		}
+		if os.Getenv("ACP_LIVE_DECISION") == "1" &&
+			(!bytes.Contains(out, []byte("--- PASS: TestExternalLiveDecisionCore ")) ||
+				!bytes.Contains(out, []byte("actual same-Run DecisionRecord "))) {
+			t.Fatal("missing actual independently verified DecisionRecord PASS evidence")
+		}
 		t.Logf("same-Run Temporal evidence:\n%s", out)
 		if id := assertOne(); id != runID {
 			t.Fatal("Temporal recovered a different Runtime Run")
