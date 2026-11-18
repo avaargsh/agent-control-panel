@@ -77,6 +77,44 @@ func TestPublishExactReleaseContentAndRejectTamper(t *testing.T) {
 		record.Capabilities[0].InputSchemaRef != "sha256:"+sha256Hex(config.Capabilities[0].InputSchema) {
 		t.Fatalf("publication does not bind actual release and Run: %+v", record)
 	}
+	// Guard must not promote a previously published capability to a
+	// transferable grant. Only the fresh ACP-owned release, original
+	// Run admission and resource service can validate this narrow selector.
+	selectStep := GuardCapabilityRequest{
+		SchemaVersion: GuardCapabilitySchema, RunID: authority.RunID,
+		AgentID: authority.AgentID, AgentReleaseID: authority.AgentReleaseID,
+		SessionID: authority.SessionID, CapabilityID: "sre.metrics.read",
+		CapabilityVersion: "1.0.0", ResourceRef: "payments",
+	}
+	verified, err := MatchGuardCapability(record, selectStep)
+	if err != nil || verified.Status != "VERIFIED" ||
+		verified.ContractSHA256 != record.Capabilities[0].ContractSHA256 ||
+		verified.PolicyRevision != authority.PolicyRevision {
+		t.Fatalf("fresh authority did not bind exact read-only capability: %+v %v", verified, err)
+	}
+	for _, tc := range []struct{
+		name string
+		change func(*Publication, *GuardCapabilityRequest)
+	}{
+		{"different Run", func(_ *Publication, q *GuardCapabilityRequest){q.RunID="33333333-3333-4333-8333-333333333333"}},
+		{"different Release", func(_ *Publication, q *GuardCapabilityRequest){q.AgentReleaseID="release-attacker"}},
+		{"different Session", func(_ *Publication, q *GuardCapabilityRequest){q.SessionID="session-attacker"}},
+		{"different capability", func(_ *Publication, q *GuardCapabilityRequest){q.CapabilityID="workspace.write"}},
+		{"wrong version", func(_ *Publication, q *GuardCapabilityRequest){q.CapabilityVersion="2.0.0"}},
+		{"other resource", func(_ *Publication, q *GuardCapabilityRequest){q.ResourceRef="other"}},
+		{"effectful capability", func(a *Publication, _ *GuardCapabilityRequest){a.Capabilities[0].EffectClass="write"}},
+		{"unsafe idempotency", func(a *Publication, _ *GuardCapabilityRequest){a.Capabilities[0].Idempotency="unsafe"}},
+	} {
+		t.Run("Guard rejects "+tc.name, func(t *testing.T){
+			a:=record
+			a.Capabilities=append([]CapabilityRef{}, record.Capabilities...)
+			q:=selectStep
+			tc.change(&a,&q)
+			if _,err:=MatchGuardCapability(a,q);err==nil {
+				t.Fatal("untrusted capability selector granted by ACP")
+			}
+		})
+	}
 	if bytes.Contains(first.Payload, []byte("execution_input")) || bytes.Contains(first.Payload, []byte("access_token")) {
 		t.Fatal("publication exposed raw input or credential")
 	}
