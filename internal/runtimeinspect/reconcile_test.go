@@ -23,6 +23,10 @@ func (s *recoveryStoreFixture) Get(_ context.Context, tenantID, intentID string)
 	return s.intent, nil
 }
 
+func (s *recoveryStoreFixture) GetExecutionInput(context.Context, string, string) ([]byte, error) {
+	return nil, runpg.ErrExecutionInputUnavailable
+}
+
 func (s *recoveryStoreFixture) CompareAndSwap(_ context.Context, tenantID, intentID string, version uint64, next runintent.Intent, event runpg.Event) (runintent.Intent, error) {
 	if tenantID != s.intent.TenantID || intentID != s.intent.ID || version != s.intent.Version || next.Version != version+1 {
 		return runintent.Intent{}, errors.New("stale or unscoped CAS")
