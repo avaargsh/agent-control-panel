@@ -444,6 +444,8 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 		if err != nil || authority.Ref != ref || authority.Snapshot != intent.PrincipalSnapshot {
 			t.Fatalf("live OAuth accepted Run lost catalog authority: %+v %v", authority, err)
 		}
+		readAuthority := newLiveExecutionAuthorityReader(t, runpg.New(pool), ref)
+		readAuthority(http.StatusOK)
 		if _, err := pool.Exec(ctx, "INSERT INTO admission_memberships VALUES ($1,$2,$3,'other-ci-client','RUNNER',true)", intent.TenantID, intent.ProjectID, intent.PrincipalID); err != nil {
 			t.Fatal(err)
 		}
@@ -453,12 +455,14 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 		if _, err := repo.GetExecutionAuthority(ctx, ref); !errors.Is(err, runpg.ErrCatalogDenied) {
 			t.Fatalf("revoked original OAuth client obtained continuation: %v", err)
 		}
+		readAuthority(http.StatusForbidden)
 		if _, err := pool.Exec(ctx, "UPDATE admission_memberships SET enabled=true WHERE tenant_id=$1 AND client_id='acp-ci-runner'", intent.TenantID); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := repo.GetExecutionAuthority(ctx, ref); err != nil {
 			t.Fatalf("restored catalog authority not observed: %v", err)
 		}
+		readAuthority(http.StatusOK)
 		t.Logf("live OAuth origin bound to recovered Run %s; different active client did not bypass revocation", runID)
 		temporal := exec.CommandContext(ctx, os.Getenv("ACP_RUNTIME_TEMPORAL_TEST_BIN"),
 			"-test.v", "-test.run=^TestExternalACPAdmissionTemporalRecovery$", "-test.timeout=6m")
