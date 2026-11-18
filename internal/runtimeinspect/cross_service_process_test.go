@@ -449,7 +449,7 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 		if err != nil || authority.Ref != ref || authority.Snapshot != intent.PrincipalSnapshot {
 			t.Fatalf("live OAuth accepted Run lost catalog authority: %+v %v", authority, err)
 		}
-		readAuthority := newLiveExecutionAuthorityReader(t, pool, acpDSN, runpg.New(pool), ref, releaseArtifact)
+		readAuthority := newLiveExecutionAuthorityReader(t, pool, acpDSN, runpg.New(pool), ref, intent, releaseArtifact)
 		readAuthority(http.StatusOK)
 		if _, err := pool.Exec(ctx, "INSERT INTO admission_memberships VALUES ($1,$2,$3,'other-ci-client','RUNNER',true)", intent.TenantID, intent.ProjectID, intent.PrincipalID); err != nil {
 			t.Fatal(err)
