@@ -440,6 +440,10 @@ func writeProcessCertificate(t *testing.T, certFile, keyFile string, identity tl
 
 type blockedReconciliationInspector struct{}
 
+func (b blockedReconciliationInspector) InspectBound(ctx context.Context, _ runintent.Intent, _ []byte) (Inspection, error) {
+	return b.Inspect(ctx, InspectRequest{})
+}
+
 func (blockedReconciliationInspector) Inspect(ctx context.Context, _ InspectRequest) (Inspection, error) {
 	<-ctx.Done()
 	return Inspection{}, ctx.Err()
