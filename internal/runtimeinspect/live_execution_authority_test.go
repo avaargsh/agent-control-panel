@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/pem"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -55,8 +56,20 @@ func newLiveExecutionAuthorityReader(t *testing.T, pool *pgxpool.Pool, dsn strin
 		}
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DROP OWNED BY "+quoted)
-		_, _ = pool.Exec(ctx, "DROP ROLE "+quoted)
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		admin, err := pgx.Connect(cleanupCtx, dsn)
+		if err != nil {
+			t.Error("could not connect for isolated role cleanup")
+			return
+		}
+		defer admin.Close(cleanupCtx)
+		if _, err := admin.Exec(cleanupCtx, "DROP OWNED BY "+quoted); err != nil {
+			t.Error("could not release isolated role grants")
+		}
+		if _, err := admin.Exec(cleanupCtx, "DROP ROLE "+quoted); err != nil {
+			t.Error("could not remove isolated authority LOGIN")
+		}
 	})
 	dbURL, err := url.Parse(dsn)
 	if err != nil || dbURL.Host == "" {
@@ -98,6 +111,14 @@ func newLiveExecutionAuthorityReader(t *testing.T, pool *pgxpool.Pool, dsn strin
 	t.Cleanup(func() { _ = proc.Process.Kill(); _ = proc.Wait() })
 	transport := &http.Transport{TLSClientConfig: &tls.Config{
 		MinVersion: tls.VersionTLS13, RootCAs: roots, Certificates: []tls.Certificate{clientCert},
+		VerifyConnection: func(state tls.ConnectionState) error {
+			if len(state.VerifiedChains) == 0 || len(state.PeerCertificates) == 0 ||
+				len(state.PeerCertificates[0].URIs) != 1 ||
+				state.PeerCertificates[0].URIs[0].String() != "spiffe://example.org/acp" {
+				return errors.New("unexpected ACP authority identity")
+			}
+			return nil
+		},
 	}}
 	t.Cleanup(transport.CloseIdleConnections)
 	h := &http.Client{Transport: transport, Timeout: 5 * time.Second}
