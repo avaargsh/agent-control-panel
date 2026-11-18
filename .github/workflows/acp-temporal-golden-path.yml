@@ -1,4 +1,4 @@
-name: Same ACP Run to real business checkpoint (non-production)
+name: Same ACP Run to recovered Decision acceptance (non-production)
 
 on:
   pull_request:
@@ -50,20 +50,20 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           repository: avaargsh/agent-runtime
-          ref: c0aa932c35105ed4f308cae7de2ed17f091fcc22
+          ref: 41b2959450f6be665759a77e1470e4b04e97752f
           path: runtime-api
           persist-credentials: false
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           repository: avaargsh/agent-decision
-          ref: 25ee70850893314df07fe80d231f87f7ea41b994
+          ref: bbd611075d3bcffa0ea46627a6dd277f7de22409
           path: decision
           persist-credentials: false
       - name: Verify immutable external source pins
         run: |
           test "$(git -C issuer-fixture rev-parse HEAD)" = '5b0109cbafcf659f2230f7a38fc560b8644332a9'
-          test "$(git -C runtime-api rev-parse HEAD)" = 'c0aa932c35105ed4f308cae7de2ed17f091fcc22'
-          test "$(git -C decision rev-parse HEAD)" = '25ee70850893314df07fe80d231f87f7ea41b994'
+          test "$(git -C runtime-api rev-parse HEAD)" = '41b2959450f6be665759a77e1470e4b04e97752f'
+          test "$(git -C decision rev-parse HEAD)" = 'bbd611075d3bcffa0ea46627a6dd277f7de22409'
           git -C acp rev-parse HEAD
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
         with:
@@ -77,22 +77,34 @@ jobs:
         run: |
           psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE acp_golden'
           psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE runtime_golden'
+          psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE decision_golden'
       - name: Compile actual ACP authority API
         working-directory: acp
         run: go build -trimpath -o "$RUNNER_TEMP/acp-authority-api" ./cmd/acp-authority-api
       - name: Compile actual authenticated Runtime API
         working-directory: runtime-api
         run: go build -trimpath -o "$RUNNER_TEMP/acp-runtime-api" ./cmd/acp-api
+      - name: Compile actual Runtime Decision authority process
+        working-directory: runtime-api
+        run: go build -trimpath -o "$RUNNER_TEMP/runtime-decision-authority" ./cmd/decision-authority-api
       - name: Compile actual Temporal integration driver
         working-directory: runtime-api
         run: go test -race -c -o "$RUNNER_TEMP/runtime-temporal-acceptance" ./internal/store/postgres
       - name: Compile independent Decision publication verifier
         working-directory: decision
         run: go test -race -c -o "$RUNNER_TEMP/decision-publication-verifier" ./internal/decision
-      - name: Execute live OAuth to same Run Temporal recovery
+      - name: Compile independently authenticated actual Decision Core acceptance
+        working-directory: decision
+        run: go test -race -c -o "$RUNNER_TEMP/live-decision-core" ./internal/evidenceauthority
+      - name: Execute live OAuth to same Run Temporal recovery and Decision acceptance
         working-directory: acp
         env:
           ACP_CROSS_SERVICE: '1'
+          ACP_LIVE_DECISION: '1'
+          ACP_LIVE_CONTINUATION: '1'
+          ACP_RUNTIME_DECISION_AUTHORITY_BIN: ${{ runner.temp }}/runtime-decision-authority
+          ACP_DECISION_LIVE_CORE_BIN: ${{ runner.temp }}/live-decision-core
+          ACP_DECISION_DATABASE_URL: postgres://postgres:acp-test-only@127.0.0.1:5432/decision_golden?sslmode=disable
           ACP_AUTHORITY_API_BIN: ${{ runner.temp }}/acp-authority-api
           ACP_DECISION_PUBLICATION_TEST_BIN: ${{ runner.temp }}/decision-publication-verifier
           ACP_DATABASE_URL: postgres://postgres:acp-test-only@127.0.0.1:5432/acp_golden?sslmode=disable
@@ -102,6 +114,7 @@ jobs:
           PGTEST_DSN: postgres://postgres:acp-test-only@127.0.0.1:5432/acp_golden?sslmode=disable
         run: bash ../issuer-fixture/scripts/test-real-oidc-admission.sh golden-path
 
-# One pinned Runtime candidate provides both v11 API and business driver.
+# One pinned Runtime candidate provides v12 API and business driver.
 # The driver uses the actually accepted Run, not a probe or seeded Run.
-# No model/tool egress or production business success is claimed.
+# Actual Decision API/source registries remain live through post-CAS Worker
+# SIGKILL recovery. No Permit, protected effect or production claim.

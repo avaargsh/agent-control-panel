@@ -58,7 +58,7 @@ func goldenReleaseArtifact(t *testing.T, target runintent.Intent) ([]byte, strin
 	return raw, "sha256:" + hex.EncodeToString(sum[:])
 }
 
-func newLiveExecutionAuthorityReader(t *testing.T, pool *pgxpool.Pool, dsn string, repo *runpg.Repository, ref runpg.ExecutionAuthorityRef, admitted runintent.Intent, releaseArtifact []byte) func(int) {
+func newLiveExecutionAuthorityReader(t *testing.T, pool *pgxpool.Pool, dsn, runtimeDSN string, repo *runpg.Repository, ref runpg.ExecutionAuthorityRef, admitted runintent.Intent, releaseArtifact []byte) (func(int), []string) {
 	t.Helper()
 	const peer = "spiffe://example.org/decision"
 	roots, serverCert, clientCert := testSPIFFECertificatesFor(t, "spiffe://example.org/acp", peer)
@@ -305,6 +305,31 @@ func newLiveExecutionAuthorityReader(t *testing.T, pool *pgxpool.Pool, dsn strin
 		t.Fatal("restored exact content did not restore original publication")
 	}
 	t.Logf("actual ACP signed Context/Capability publication verified for Run %s", ref.RunID)
+	var liveEnv []string
+	if os.Getenv("ACP_LIVE_DECISION") == "1" {
+		runtimeOrigin, runtimeCA := startLiveRuntimeDecisionAuthority(t, runtimeDSN, dir, caFile, ref)
+		decisionCertFile, decisionKeyFile := filepath.Join(dir, "decision-client.pem"), filepath.Join(dir, "decision-client.key")
+		writeProcessCertificate(t, decisionCertFile, decisionKeyFile, clientCert)
+		rootFile := filepath.Join(dir, "decision-roots.pem")
+		acpCA, err := os.ReadFile(caFile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(rootFile, append(acpCA, runtimeCA...), 0600); err != nil {
+			t.Fatal(err)
+		}
+		liveEnv = []string{
+			"RUNTIME_EXTERNAL_LIVE_DECISION=1",
+			"DECISION_EXTERNAL_LIVE_CORE_BIN=" + os.Getenv("ACP_DECISION_LIVE_CORE_BIN"),
+			"DECISION_LIVE_AGENT=" + admitted.AgentID,
+			"DECISION_LIVE_ROOTS=" + rootFile,
+			"DECISION_LIVE_CLIENT_CA=" + caFile,
+			"DECISION_LIVE_CLIENT_CERT=" + decisionCertFile, "DECISION_LIVE_CLIENT_KEY=" + decisionKeyFile,
+			"DECISION_LIVE_ACP_PUBLIC_KEY=" + publicFile, "DECISION_LIVE_ACP_ORIGIN=" + origin,
+			"DECISION_LIVE_RUNTIME_ORIGIN=" + runtimeOrigin,
+			"DECISION_LIVE_DATABASE_URL=" + os.Getenv("ACP_DECISION_DATABASE_URL"),
+		}
+	}
 	return func(want int) {
 		t.Helper()
 		body := call(h, http.MethodGet, path, want)
@@ -326,5 +351,5 @@ func newLiveExecutionAuthorityReader(t *testing.T, pool *pgxpool.Pool, dsn strin
 			strings.Contains(body, "execution_input") || strings.Contains(body, "permit") {
 			t.Fatalf("invalid returned authority reference: %s", body)
 		}
-	}
+	}, liveEnv
 }
