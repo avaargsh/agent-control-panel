@@ -65,10 +65,10 @@ func New(pool *pgxpool.Pool) *Repository {
 // Create atomically claims the idempotency key, inserts the RunIntent and
 // appends its creation event. A matching replay returns the original record.
 func (r *Repository) Create(ctx context.Context, intent runintent.Intent, event Event) (runintent.Intent, bool, error) {
-	return r.create(ctx, intent, event, nil, nil)
+	return r.create(ctx, intent, event, nil, nil, nil)
 }
 
-func (r *Repository) create(ctx context.Context, intent runintent.Intent, event Event, pinned *researchlock.Lock, raw []byte) (runintent.Intent, bool, error) {
+func (r *Repository) create(ctx context.Context, intent runintent.Intent, event Event, pinned *researchlock.Lock, raw []byte, claims *CatalogClaims) (runintent.Intent, bool, error) {
 	if r == nil || r.pool == nil {
 		return runintent.Intent{}, false, errors.New("postgres run intent repository is not configured")
 	}
@@ -98,6 +98,16 @@ func (r *Repository) create(ctx context.Context, intent runintent.Intent, event 
 	// server-side Intent; this is not an authentication mechanism by itself.
 	if _, err := tx.Exec(ctx, "SELECT set_config('app.tenant_id', $1, true)", intent.TenantID); err != nil {
 		return runintent.Intent{}, false, fmt.Errorf("bind capability lock tenant: %w", err)
+	}
+
+	if claims != nil {
+		binding, err := resolveCatalogAuthorization(ctx, tx, intent, *claims, true)
+		if err != nil {
+			return runintent.Intent{}, false, err
+		}
+		if binding.PrincipalID != intent.PrincipalID || binding.Snapshot != intent.PrincipalSnapshot {
+			return runintent.Intent{}, false, ErrCatalogDenied
+		}
 	}
 
 	query := "INSERT INTO run_intents (" +
