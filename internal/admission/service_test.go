@@ -240,7 +240,7 @@ func TestAdmitPostgresReplayAndPolicyConflict(t *testing.T) {
 	for _, stmt := range []string{
 		"INSERT INTO admission_tenants VALUES ('tenant-a',true)",
 		"INSERT INTO admission_projects VALUES ('tenant-a','project-a',true,'catalog-policy-1')",
-		"INSERT INTO admission_principals VALUES ('tenant-a','"+testIssuer+"','alice','catalog-principal','catalog-subject',true)",
+		"INSERT INTO admission_principals VALUES ('tenant-a','" + testIssuer + "','alice','catalog-principal','catalog-subject',true)",
 		"INSERT INTO admission_memberships VALUES ('tenant-a','project-a','catalog-principal','approved-client','RUNNER',true)",
 		"INSERT INTO admission_releases VALUES ('tenant-a','project-a','agent-a','release-a','sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',true)",
 		"INSERT INTO admission_sessions VALUES ('tenant-a','project-a','session-a','agent-a','release-a','catalog-principal',true)",
