@@ -79,4 +79,27 @@ func TestGuardRunAuthorityRequiresOriginalAdmissionAndLiveCatalog(t *testing.T) 
 		t.Fatal(err)
 	}
 	check(nil)
+	// The ACP schema currently does not globally enforce uniqueness of
+	// runtime_run_id across distinct accepted Intents. Treat ambiguity as
+	// unavailable: arbitrary QueryRow selection is a confused-deputy risk.
+	second := testIntent(982)
+	second.RequestDigest, err = runintent.ExecutionInputDigest(second, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondBinding, err := repo.ResolveCatalogAuthorization(ctx, second, claims)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second.PrincipalSnapshot = secondBinding.Snapshot
+	if _, created, err := repo.CreateWithCatalog(ctx, second, testEvent(second, 1, 98201, eventCreated), raw, claims); err != nil || !created {
+		t.Fatalf("second admission: %v %v", created, err)
+	}
+	if _, err := pool.Exec(ctx, "UPDATE run_intents SET status='ACCEPTED',runtime_run_id=$2,workflow_id=$3,version=version+1 WHERE id=$1::uuid",
+		second.ID, runID, "agent-run/v1/"+runID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := repo.GetGuardRunAuthority(ctx, intent.TenantID, runID); !errors.Is(err, ErrCatalogUnavailable) {
+		t.Fatalf("two accepted Intents selected an arbitrary capability authority: %v", err)
+	}
 }
