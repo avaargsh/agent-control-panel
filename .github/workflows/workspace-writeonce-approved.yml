@@ -11,6 +11,10 @@ on:
         type: string
         required: true
         description: "Enter approved-disposable-provider after independently reviewing the dedicated S3 test bucket, IAM, retention and policy"
+      expected_sha:
+        type: string
+        required: true
+        description: "Exact 40-character lowercase SHA of the reviewed main commit; must match dispatch GITHUB_SHA"
 
 permissions:
   contents: read
@@ -19,12 +23,34 @@ env:
   GOTOOLCHAIN: local
 
 jobs:
+  # This job runs without any provider credentials. Wrong-ref dispatches
+  # must FAIL the workflow, rather than produce a misleading green SKIPPED gate.
+  validate-acceptance-ref:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail closed on non-main or unreviewed code
+        shell: bash
+        env:
+          APPROVED_SHA: ${{ inputs.expected_sha }}
+          OPERATOR_AUTHORIZATION: ${{ inputs.authorization }}
+        run: |
+          set -euo pipefail
+          test "$OPERATOR_AUTHORIZATION" = approved-disposable-provider
+          test "$GITHUB_REF" = "refs/heads/main"
+          [[ "$APPROVED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$GITHUB_SHA" = "$APPROVED_SHA"
+          echo "Reviewed main ref and exact dispatch commit verified before any S3 credentials can be used."
   approved-s3-writeonce:
+    needs: validate-acceptance-ref
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: acp-writeonce-acceptance
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6 pinned
+        with:
+          ref: ${{ inputs.expected_sha }}
+          persist-credentials: false
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6 pinned
         with:
           go-version: '1.27.4'
@@ -33,6 +59,7 @@ jobs:
         shell: bash
         env:
           OPERATOR_AUTHORIZATION: ${{ inputs.authorization }}
+          APPROVED_SHA: ${{ inputs.expected_sha }}
           WORM_BUCKET: ${{ secrets.ACP_WORM_TEST_BUCKET }}
           WORM_ENDPOINT: ${{ secrets.ACP_WORM_TEST_ENDPOINT }}
           WORM_REGION: ${{ secrets.ACP_WORM_TEST_REGION }}
@@ -40,17 +67,26 @@ jobs:
           WRITER_SECRET: ${{ secrets.ACP_WORM_TEST_WRITER_SECRET_KEY }}
           READER_KEY: ${{ secrets.ACP_WORM_TEST_READER_ACCESS_KEY }}
           READER_SECRET: ${{ secrets.ACP_WORM_TEST_READER_SECRET_KEY }}
+          COPY_KEY: ${{ secrets.ACP_WORM_TEST_COPY_ACCESS_KEY }}
+          COPY_SECRET: ${{ secrets.ACP_WORM_TEST_COPY_SECRET_KEY }}
         run: |
           set -euo pipefail
           test "$OPERATOR_AUTHORIZATION" = approved-disposable-provider
+          test "$GITHUB_REF" = "refs/heads/main"
+          [[ "$APPROVED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$GITHUB_SHA" = "$APPROVED_SHA"
+          test "$(git rev-parse HEAD)" = "$APPROVED_SHA"
           test -n "$WORM_ENDPOINT" && test -n "$WORM_REGION" && test -n "$WORM_BUCKET"
           test -n "$WRITER_KEY" && test -n "$WRITER_SECRET" && test -n "$READER_KEY" && test -n "$READER_SECRET"
+          test -n "$COPY_KEY" && test -n "$COPY_SECRET"
           [[ "$WORM_ENDPOINT" == https://* ]]
           [[ "$WORM_BUCKET" == acp-writeonce-probe-* ]]
           test "$WRITER_KEY" != "$READER_KEY"
+          test "$WRITER_KEY" != "$COPY_KEY"
+          test "$READER_KEY" != "$COPY_KEY"
           test "$(go env GOVERSION)" = go1.27.4
           echo "Approved HTTPS scratch endpoint/region present; distinct credentials supplied; provider security claims still depend on real test."
-      - name: Assert raw unconditional PUT denied for fresh and existing digest keys
+      - name: Assert raw PUT and independently authorized CopyObject bypasses denied
         shell: bash
         env:
           S3BLOB_WORM_GATE_APPROVAL: ${{ inputs.authorization }}
@@ -61,8 +97,11 @@ jobs:
           S3BLOB_WORM_WRITER_SECRET_KEY: ${{ secrets.ACP_WORM_TEST_WRITER_SECRET_KEY }}
           S3BLOB_WORM_READER_ACCESS_KEY: ${{ secrets.ACP_WORM_TEST_READER_ACCESS_KEY }}
           S3BLOB_WORM_READER_SECRET_KEY: ${{ secrets.ACP_WORM_TEST_READER_SECRET_KEY }}
+          S3BLOB_WORM_COPY_ACCESS_KEY: ${{ secrets.ACP_WORM_TEST_COPY_ACCESS_KEY }}
+          S3BLOB_WORM_COPY_SECRET_KEY: ${{ secrets.ACP_WORM_TEST_COPY_SECRET_KEY }}
         run: |
           set -euo pipefail
           go test -race -count=1 -v -run '^TestApprovedS3WriteOnceSecurityGate$' ./internal/workspace/s3blob | tee "$RUNNER_TEMP/approved-s3-writeonce.log"
           grep --fixed-strings -- '--- PASS: TestApprovedS3WriteOnceSecurityGate (' "$RUNNER_TEMP/approved-s3-writeonce.log"
           grep --fixed-strings -- 'APPROVED S3 WORM CONTRACT PASS: unconditional fresh-key and same-key PUT both 403;' "$RUNNER_TEMP/approved-s3-writeonce.log"
+          grep --fixed-strings -- 'APPROVED COPY WORM CONTRACT PASS: copy-capable principal passed actual source COPY/GET and protected conditional PUT positive controls' "$RUNNER_TEMP/approved-s3-writeonce.log"
