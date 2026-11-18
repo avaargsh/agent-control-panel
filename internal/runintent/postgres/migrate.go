@@ -40,6 +40,9 @@ const uploadIntentMigrationName = "0008_workspace_upload_intents.sql"
 const gcClaimMigrationVersion int64 = 9
 const gcClaimMigrationName = "0009_workspace_gc_claims.sql"
 
+const executionInputMigrationVersion int64 = 10
+const executionInputMigrationName = "0010_run_intent_execution_input.sql"
+
 var (
 	ErrSchemaDrift       = errors.New("RunIntent schema migration checksum or relation drift")
 	ErrUnversionedSchema = errors.New("RunIntent schema exists without migration history")
@@ -224,12 +227,17 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 		return fmt.Errorf("read embedded Workspace GC-claim migration: %w", err)
 	}
 	gcClaimChecksum := fmt.Sprintf("%x", sha256.Sum256(gcClaimSource))
+	executionInputSource, err := migrations.FS.ReadFile(executionInputMigrationName)
+	if err != nil {
+		return fmt.Errorf("read embedded execution input migration: %w", err)
+	}
+	executionInputChecksum := fmt.Sprintf("%x", sha256.Sum256(executionInputSource))
 
 	rows, err := tx.Query(ctx, "SELECT version, name, checksum FROM schema_migrations")
 	if err != nil {
 		return fmt.Errorf("read schema migration history: %w", err)
 	}
-	var appliedVersion, conflictApplied, dispositionApplied, principalSnapshotApplied, capabilityLockApplied, workspaceApplied, blobStageApplied, uploadIntentApplied, gcClaimApplied bool
+	var appliedVersion, conflictApplied, dispositionApplied, principalSnapshotApplied, capabilityLockApplied, workspaceApplied, blobStageApplied, uploadIntentApplied, gcClaimApplied, executionInputApplied bool
 	for rows.Next() {
 		var version int64
 		var name, appliedChecksum string
@@ -292,6 +300,12 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 				return ErrSchemaDrift
 			}
 			gcClaimApplied = true
+		case executionInputMigrationVersion:
+			if name != executionInputMigrationName || appliedChecksum != executionInputChecksum || executionInputApplied {
+				rows.Close()
+				return ErrSchemaDrift
+			}
+			executionInputApplied = true
 		default:
 			rows.Close()
 			return ErrSchemaDrift
@@ -309,7 +323,8 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 		workspaceApplied && !capabilityLockApplied ||
 		blobStageApplied && !workspaceApplied ||
 		uploadIntentApplied && !blobStageApplied ||
-		gcClaimApplied && !uploadIntentApplied {
+		gcClaimApplied && !uploadIntentApplied ||
+		executionInputApplied && !gcClaimApplied {
 		return ErrSchemaDrift
 	}
 
@@ -339,6 +354,9 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 			return err
 		}
 		if err := ensureGCClaimMigration(ctx, tx, gcClaimApplied, gcClaimSource, gcClaimChecksum); err != nil {
+			return err
+		}
+		if err := ensureExecutionInputMigration(ctx, tx, executionInputApplied, executionInputSource, executionInputChecksum); err != nil {
 			return err
 		}
 		if err := tx.Commit(ctx); err != nil {
@@ -415,6 +433,9 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 		return err
 	}
 	if err := ensureGCClaimMigration(ctx, tx, false, gcClaimSource, gcClaimChecksum); err != nil {
+		return err
+	}
+	if err := ensureExecutionInputMigration(ctx, tx, false, executionInputSource, executionInputChecksum); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {

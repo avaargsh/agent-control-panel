@@ -1,6 +1,7 @@
 package admission
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -193,5 +194,47 @@ func TestAdmitPostgresReplayAndPolicyConflict(t *testing.T) {
 	}
 	if intents != 1 || events != 1 {
 		t.Fatalf("wanted exactly one intent and event; got %d,%d", intents, events)
+	}
+
+	// Exercise the real TLS introspector, exact policy and PostgreSQL input
+	// transaction together. No fabricated policy response or fake store.
+	snapshot, _, inputReq := policyFixture()
+	inputReq.IdempotencyKey = "exact-policy-input"
+	policy, err := NewExactPolicy(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokenBody := strings.TrimSuffix(validIntrospection(), "}") +
+		`,"client_id":"approved-client","scope":"acp:run-intent:create"}`
+	auth := introspectionFixture(t, tokenBody)
+	repo := runpg.New(pool)
+	inputSvc := New(repo, NewBearerResolver(auth, policy, "opaque-test-token"))
+	raw := []byte(`{ "task": "inspect workload" }`)
+	admitted, created, err := inputSvc.AdmitWithInput(ctx, inputReq, raw)
+	if err != nil || !created || admitted.PrincipalID != "principal-alice" {
+		t.Fatalf("TLS/policy/PG admission failed: %v", err)
+	}
+	persisted, err := repo.GetExecutionInput(ctx, admitted.TenantID, admitted.ID)
+	if err != nil || !bytes.Equal(persisted, raw) {
+		t.Fatalf("authorized bytes not persisted: %v", err)
+	}
+	repeated, created, err := inputSvc.AdmitWithInput(ctx, inputReq, raw)
+	if err != nil || created || repeated.ID != admitted.ID {
+		t.Fatalf("authorized input replay failed: %v", err)
+	}
+	snapshot.Grants = nil
+	revoked, err := NewExactPolicy(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	revokedSvc := New(repo, NewBearerResolver(auth, revoked, "opaque-test-token"))
+	if _, _, err := revokedSvc.AdmitWithInput(ctx, inputReq, raw); !errors.Is(err, ErrPolicyDenied) {
+		t.Fatalf("revoked identity replay accepted: %v", err)
+	}
+	if err := pool.QueryRow(ctx, "SELECT (SELECT count(*) FROM run_intents), (SELECT count(*) FROM outbox_events)").Scan(&intents, &events); err != nil {
+		t.Fatal(err)
+	}
+	if intents != 2 || events != 2 {
+		t.Fatalf("unexpected writes after scoped admission and denied replay: %d,%d", intents, events)
 	}
 }

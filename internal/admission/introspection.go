@@ -29,6 +29,8 @@ const maxIntrospectionBytes = 64 << 10
 type Identity struct {
 	Issuer    string
 	Subject   string
+	ClientID  string
+	Scope     string
 	ExpiresAt time.Time
 }
 
@@ -164,7 +166,25 @@ func (a *Introspector) Authenticate(ctx context.Context, token string) (Identity
 			return Identity{}, ErrUnauthenticated
 		}
 	}
-	return Identity{Issuer: issuer, Subject: subject, ExpiresAt: time.Unix(expiry, 0).UTC()}, nil
+	// Direct bearer admission cannot interpret token-exchange actors or
+	// proof-of-possession credentials. Reject rather than flattening them.
+	for _, name := range []string{"act", "may_act", "cnf"} {
+		if _, present := claims[name]; present {
+			return Identity{}, ErrUnauthenticated
+		}
+	}
+	var clientID, scope string
+	if raw, present := claims["client_id"]; present {
+		if json.Unmarshal(raw, &clientID) != nil || !validIdentityValue(clientID) {
+			return Identity{}, ErrUnauthenticated
+		}
+	}
+	if raw, present := claims["scope"]; present {
+		if json.Unmarshal(raw, &scope) != nil || !validOAuthScope(scope) {
+			return Identity{}, ErrUnauthenticated
+		}
+	}
+	return Identity{Issuer: issuer, Subject: subject, ClientID: clientID, Scope: scope, ExpiresAt: time.Unix(expiry, 0).UTC()}, nil
 }
 
 func containsAudience(raw json.RawMessage, want string) bool {
