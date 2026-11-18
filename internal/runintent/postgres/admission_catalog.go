@@ -77,6 +77,16 @@ func resolveCatalogAuthorization(ctx context.Context, q catalogQuerier, intent r
 	if err != nil {
 		return CatalogAuthorization{}, ErrCatalogUnavailable
 	}
+	if lock {
+		// A token may expire while waiting on an authority row lock.
+		var stillActive bool
+		if err := q.QueryRow(ctx, "SELECT clock_timestamp() < $1::timestamptz", claims.ExpiresAt).Scan(&stillActive); err != nil {
+			return CatalogAuthorization{}, ErrCatalogUnavailable
+		}
+		if !stillActive {
+			return CatalogAuthorization{}, ErrCatalogDenied
+		}
+	}
 	binding.Snapshot.ActorID = binding.Snapshot.SubjectID
 	candidate := intent
 	candidate.PrincipalID = binding.PrincipalID
