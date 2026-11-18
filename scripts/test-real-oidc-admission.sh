@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+mode="${1:-oidc}"
+case "$mode" in
+  oidc|golden-path) ;;
+  *) echo "expected oidc or golden-path"; exit 1 ;;
+esac
+
 # Disposable issuer and credentials only. Never point this script at an
 # existing issuer, cluster, production realm or externally exposed port.
 : "${PGTEST_DSN:?disposable PostgreSQL DSN required}"
@@ -126,4 +132,14 @@ if (( ready != 1 )); then
   exit 1
 fi
 
-go test -race -count=1 -v -run '^TestRealOIDCServiceAccountCatalogAdmission$' ./internal/admission
+if [[ "$mode" == golden-path ]]; then
+  : "${ACP_CROSS_SERVICE:?golden path requires two independent databases}"
+  : "${ACP_RUNTIME_API_BIN:?golden path requires the pinned Runtime API binary}"
+  : "${ACP_RUNTIME_TEMPORAL_TEST_BIN:?golden path requires the pinned Temporal test binary}"
+  export ACP_GOLDEN_PATH=1
+  go test -race -count=1 -v -run '^TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart
+ ./internal/runtimeinspect
+else
+  go test -race -count=1 -v -run '^TestRealOIDCServiceAccountCatalogAdmission
+ ./internal/admission
+fi
