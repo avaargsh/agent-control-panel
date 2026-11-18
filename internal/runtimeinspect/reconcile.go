@@ -20,11 +20,39 @@ var ErrNotReconcilable = errors.New("RunIntent is not UNKNOWN and cannot be reco
 
 type reconcileStore interface {
 	Get(context.Context, string, string) (runintent.Intent, error)
+	GetExecutionInput(context.Context, string, string) ([]byte, error)
 	CompareAndSwap(context.Context, string, string, uint64, runintent.Intent, runpg.Event) (runintent.Intent, error)
 }
 
 type reconcileInspector interface {
 	Inspect(context.Context, InspectRequest) (Inspection, error)
+}
+
+type boundInspector interface {
+	InspectBound(context.Context, runintent.Intent, []byte) (Inspection, error)
+}
+
+// Inspect only via the principal/input-bound protocol for a newly admitted
+// intent. Storage failures or missing v2 support may not downgrade to GET v1.
+// The explicit legacy NULL is the only compatibility case.
+func inspectClaim(ctx context.Context, store reconcileStore, inspector reconcileInspector, claimed runintent.Intent) (Inspection, error) {
+	input, err := store.GetExecutionInput(ctx, claimed.TenantID, claimed.ID)
+	if errors.Is(err, runpg.ErrExecutionInputUnavailable) {
+		return inspector.Inspect(ctx, InspectRequest{
+			TenantID: claimed.TenantID, RunIntentID: claimed.ID, RequestDigest: claimed.RequestDigest,
+		})
+	}
+	if err != nil {
+		return Inspection{}, err
+	}
+	if err := runintent.VerifyExecutionInput(claimed, input); err != nil {
+		return Inspection{}, err
+	}
+	bound, ok := inspector.(boundInspector)
+	if !ok {
+		return Inspection{}, ErrInvalidConfig
+	}
+	return bound.InspectBound(ctx, claimed, input)
 }
 
 // ReconcileOnce is an explicit, bounded unit of recovery against the
@@ -93,9 +121,7 @@ func ReconcileOnce(ctx context.Context, store reconcileStore, inspector reconcil
 		return current, err
 	}
 
-	inspected, inspectErr := inspector.Inspect(ctx, InspectRequest{
-		TenantID: current.TenantID, RunIntentID: current.ID, RequestDigest: current.RequestDigest,
-	})
+	inspected, inspectErr := inspectClaim(ctx, store, inspector, claimed)
 	result := runintent.ReconciliationResult{
 		TenantID: current.TenantID, RunIntentID: current.ID, RequestDigest: current.RequestDigest,
 		Kind: runintent.RuntimeIndeterminate,
