@@ -21,7 +21,15 @@ func minioRoleStore(t *testing.T, role string) *Store {
 	if access == "" || secret == "" {
 		t.Fatalf("missing real MinIO %s role, never substitute admin credentials", role)
 	}
+	// Each disposable IAM probe must use a fresh connection. A legacy
+	// provider may close an idle connection after a denied request; reusing
+	// it for a later positive PUT makes the result indeterminate. Do not
+	// retry the write or relax provider status/byte assertions.
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DisableKeepAlives = true
+	t.Cleanup(transport.CloseIdleConnections)
 	store, err := New(Config{
+		HTTPClient: &http.Client{Transport: transport},
 		Endpoint: os.Getenv("S3BLOB_MINIO_TEST_ENDPOINT"),
 		Bucket:   "research-artifacts", Region: "us-east-1",
 		AccessKey: access, SecretKey: secret, AllowHTTPForTests: true,
