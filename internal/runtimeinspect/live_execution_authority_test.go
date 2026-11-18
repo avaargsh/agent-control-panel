@@ -1,8 +1,11 @@
 package runtimeinspect
 
 import (
+	"bytes"
 	"context"
+	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
@@ -21,6 +24,7 @@ import (
 	"time"
 
 	"github.com/avaargsh/agent-control-panel/internal/authorityhttp"
+	"github.com/avaargsh/agent-control-panel/internal/runintent"
 	runpg "github.com/avaargsh/agent-control-panel/internal/runintent/postgres"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -28,7 +32,33 @@ import (
 
 // This is a real TLS listener using the same actual OAuth-admitted and
 // reconciled ACP Run, never a fake repository or caller tenant assertion.
-func newLiveExecutionAuthorityReader(t *testing.T, pool *pgxpool.Pool, dsn string, repo *runpg.Repository, ref runpg.ExecutionAuthorityRef) func(int) {
+func goldenReleaseArtifact(t *testing.T, target runintent.Intent) ([]byte, string) {
+	t.Helper()
+	// These are isolated operator-provisioned read-only contracts. No
+	// executor or evidence producer is claimed by this publication test.
+	now := time.Now().UTC().Truncate(time.Second)
+	config := authorityhttp.ReleaseConfig{
+		SchemaVersion: "acp.release-publication.v1", TenantID: target.TenantID, ProjectID: target.ProjectID,
+		AgentID: target.AgentID, AgentReleaseID: target.ReleaseID, PolicyRevision: target.PrincipalSnapshot.PolicyRevision,
+		CatalogVersion: "1.0.0", IssuedAt: now.Add(-time.Minute), ExpiresAt: now.Add(time.Hour),
+		Services: []string{"payments"}, Capabilities: []authorityhttp.CapabilityContract{},
+	}
+	for _, id := range []string{"sre.changes.read", "sre.logs.read", "sre.metrics.read"} {
+		config.Capabilities = append(config.Capabilities, authorityhttp.CapabilityContract{
+			ID: id, Version: "1.0.0", InputSchema: json.RawMessage(`{"type":"object","required":["service"]}`),
+			OutputSchema: json.RawMessage(`{"type":"object"}`),
+			EffectClass: "read_only", Idempotency: "safe", TenantScoped: true,
+		})
+	}
+	raw, err := json.Marshal(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(raw)
+	return raw, "sha256:" + hex.EncodeToString(sum[:])
+}
+
+func newLiveExecutionAuthorityReader(t *testing.T, pool *pgxpool.Pool, dsn string, repo *runpg.Repository, ref runpg.ExecutionAuthorityRef, releaseArtifact []byte) func(int) {
 	t.Helper()
 	const peer = "spiffe://example.org/decision"
 	roots, serverCert, clientCert := testSPIFFECertificatesFor(t, "spiffe://example.org/acp", peer)
@@ -87,6 +117,25 @@ func newLiveExecutionAuthorityReader(t *testing.T, pool *pgxpool.Pool, dsn strin
 	}
 	_ = readConn.Close(ctx)
 	dir := t.TempDir()
+	releaseDir := filepath.Join(dir, "releases")
+	if err := os.Mkdir(releaseDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(releaseArtifact)
+	configDigest := hex.EncodeToString(sum[:])
+	artifactPath := filepath.Join(releaseDir, configDigest+".json")
+	if err := os.WriteFile(artifactPath, releaseArtifact, 0600); err != nil {
+		t.Fatal(err)
+	}
+	signingPublic, signingKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedFile := filepath.Join(dir, "publication.seed")
+	if err := os.WriteFile(seedFile, signingKey.Seed(), 0600); err != nil {
+		t.Fatal(err)
+	}
+	clear(signingKey)
 	certFile, keyFile, caFile := filepath.Join(dir, "acp-authority.pem"), filepath.Join(dir, "acp-authority.key"), filepath.Join(dir, "ca.pem")
 	writeProcessCertificate(t, certFile, keyFile, serverCert)
 	if err := os.WriteFile(caFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: serverCert.Certificate[1]}), 0600); err != nil {
@@ -104,7 +153,8 @@ func newLiveExecutionAuthorityReader(t *testing.T, pool *pgxpool.Pool, dsn strin
 		"ACP_AUTHORITY_DATABASE_URL="+readDSN, "ACP_AUTHORITY_TLS_CERT="+certFile,
 		"ACP_AUTHORITY_TLS_KEY="+keyFile, "ACP_AUTHORITY_CLIENT_CA="+caFile,
 		"ACP_AUTHORITY_PEER_SPIFFE_ID="+peer, "ACP_AUTHORITY_TENANT="+ref.TenantID,
-		"ACP_AUTHORITY_LISTEN_ADDR="+addr)
+		"ACP_AUTHORITY_LISTEN_ADDR="+addr, "ACP_AUTHORITY_RELEASE_DIRECTORY="+releaseDir,
+		"ACP_AUTHORITY_PUBLICATION_KEY="+seedFile)
 	if err := proc.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -138,8 +188,8 @@ func newLiveExecutionAuthorityReader(t *testing.T, pool *pgxpool.Pool, dsn strin
 			t.Fatal(err)
 		}
 		defer res.Body.Close()
-		raw, err := io.ReadAll(io.LimitReader(res.Body, 8193))
-		if err != nil || res.StatusCode != want || res.Header.Get("Cache-Control") != "no-store" {
+		raw, err := io.ReadAll(io.LimitReader(res.Body, 512*1024+1))
+		if err != nil || len(raw) > 512*1024 || res.StatusCode != want || res.Header.Get("Cache-Control") != "no-store" {
 			t.Fatalf("live network authority expected %d, got %d: %v", want, res.StatusCode, err)
 		}
 		return string(raw)
@@ -184,11 +234,55 @@ func newLiveExecutionAuthorityReader(t *testing.T, pool *pgxpool.Pool, dsn strin
 	if bad.StatusCode != http.StatusUnauthorized {
 		t.Fatal("real TLS wrong peer spoofed authority")
 	}
+	pubPath := strings.Replace(path, authorityhttp.PathPrefix, authorityhttp.PublicationPathPrefix, 1)
+	verifyPublication := func(body string) {
+		t.Helper()
+		var signed authorityhttp.SignedPublication
+		if err := json.Unmarshal([]byte(body), &signed); err != nil || !ed25519.Verify(signingPublic, signed.Payload, signed.Signature) {
+			t.Fatal("actual ACP service did not return authentic signed publication")
+		}
+		var p authorityhttp.Publication
+		if err := json.Unmarshal(signed.Payload, &p); err != nil ||
+			p.Authority.RunID != ref.RunID || p.Authority.RunIntentID != ref.RunIntentID ||
+			p.Authority.RequestDigest != ref.RequestDigest || p.Authority.ConfigDigest != "sha256:"+configDigest ||
+			p.Context.Authority != p.Authority || p.Context.Service != "payments" || p.Context.Objective != "sre_incident_triage" ||
+			!bytes.Equal(p.CapabilityContent, releaseArtifact) || p.CapabilitySnapshot.SHA256 != configDigest ||
+			len(p.Capabilities) != 3 {
+			t.Fatal("signed publication differs from actual admitted release or persisted Run")
+		}
+		contextHash := sha256.Sum256(p.ContextContent)
+		if p.ContextSnapshot.SHA256 != hex.EncodeToString(contextHash[:]) {
+			t.Fatal("context content digest mismatch")
+		}
+	}
+	first := call(h, http.MethodGet, pubPath, http.StatusOK)
+	verifyPublication(first)
+	if second := call(h, http.MethodGet, pubPath, http.StatusOK); first != second {
+		t.Fatal("signed publication not stable for exact same Run")
+	}
+	// Corrupt or remove trusted bytes: cannot sign a replacement under the
+	// original admission config digest, even if the catalog is still active.
+	if err := os.WriteFile(artifactPath, append(bytes.Clone(releaseArtifact), ' '), 0600); err != nil {
+		t.Fatal(err)
+	}
+	call(h, http.MethodGet, pubPath, http.StatusServiceUnavailable)
+	if err := os.WriteFile(artifactPath, releaseArtifact, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if got := call(h, http.MethodGet, pubPath, http.StatusOK); got != first {
+		t.Fatal("restored exact content did not restore original publication")
+	}
+	t.Logf("actual ACP signed Context/Capability publication verified for Run %s", ref.RunID)
 	return func(want int) {
 		t.Helper()
 		body := call(h, http.MethodGet, path, want)
+		pubBody := call(h, http.MethodGet, pubPath, want)
 		if want != http.StatusOK {
 			return
+		}
+		verifyPublication(pubBody)
+		if pubBody != first {
+			t.Fatal("publication changed after catalog restoration")
 		}
 		var wire map[string]any
 		if json.Unmarshal([]byte(body), &wire) != nil || wire["schema_version"] != "acp.run-authority.v1" ||
