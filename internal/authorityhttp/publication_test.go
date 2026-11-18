@@ -25,9 +25,9 @@ func TestPublishExactReleaseContentAndRejectTamper(t *testing.T) {
 		Services: []string{"payments"},
 		Capabilities: []CapabilityContract{{
 			ID: "sre.metrics.read", Version: "1.0.0",
-			InputSchema: json.RawMessage(`{"type":"object","required":["service"]}`),
+			InputSchema:  json.RawMessage(`{"type":"object","required":["service"]}`),
 			OutputSchema: json.RawMessage(`{"type":"object","required":["series"]}`),
-			EffectClass: "read_only", Idempotency: "safe", TenantScoped: true,
+			EffectClass:  "read_only", Idempotency: "safe", TenantScoped: true,
 		}},
 	}
 	raw, err := json.Marshal(config)
@@ -37,13 +37,13 @@ func TestPublishExactReleaseContentAndRejectTamper(t *testing.T) {
 	sum := sha256.Sum256(raw)
 	digest := hex.EncodeToString(sum[:])
 	ref := runpg.ExecutionAuthorityRef{TenantID: "tenant-1", RunIntentID: "11111111-1111-4111-8111-111111111111",
-		RunID: "22222222-2222-4222-8222-222222222222", RequestDigest: "sha256:"+digest}
+		RunID: "22222222-2222-4222-8222-222222222222", RequestDigest: "sha256:" + digest}
 	authority := Snapshot{
 		SchemaVersion: "acp.run-authority.v1", TenantID: ref.TenantID, RunIntentID: ref.RunIntentID,
 		RunID: ref.RunID, RequestDigest: ref.RequestDigest, ProjectID: config.ProjectID,
 		AgentID: config.AgentID, AgentReleaseID: config.AgentReleaseID, SessionID: "session-1",
 		PrincipalID: "principal-1", SubjectID: "subject-1", ActorID: "subject-1",
-		PolicyRevision: config.PolicyRevision, ConfigDigest: "sha256:"+digest,
+		PolicyRevision: config.PolicyRevision, ConfigDigest: "sha256:" + digest,
 	}
 	dir := t.TempDir()
 	file := filepath.Join(dir, digest+".json")
