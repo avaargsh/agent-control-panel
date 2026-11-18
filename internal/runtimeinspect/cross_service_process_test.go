@@ -449,7 +449,7 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 		if err != nil || authority.Ref != ref || authority.Snapshot != intent.PrincipalSnapshot {
 			t.Fatalf("live OAuth accepted Run lost catalog authority: %+v %v", authority, err)
 		}
-		readAuthority := newLiveExecutionAuthorityReader(t, pool, acpDSN, runpg.New(pool), ref, intent, releaseArtifact)
+		readAuthority, liveEnv := newLiveExecutionAuthorityReader(t, pool, acpDSN, runtimeDSN, runpg.New(pool), ref, intent, releaseArtifact)
 		readAuthority(http.StatusOK)
 		if _, err := pool.Exec(ctx, "INSERT INTO admission_memberships VALUES ($1,$2,$3,'other-ci-client','RUNNER',true)", intent.TenantID, intent.ProjectID, intent.PrincipalID); err != nil {
 			t.Fatal(err)
@@ -482,6 +482,7 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 			"RUNTIME_EXTERNAL_ACTOR="+intent.PrincipalSnapshot.ActorID,
 			"RUNTIME_EXTERNAL_POLICY="+intent.PrincipalSnapshot.PolicyRevision,
 		)
+		temporal.Env = append(temporal.Env, liveEnv...)
 		out, runErr := temporal.CombinedOutput()
 		if runErr != nil || !bytes.Contains(out, []byte("--- PASS: TestExternalACPAdmissionTemporalRecovery")) {
 			t.Fatalf("same-Run Temporal execution/recovery failed: %v %s", runErr, out)
