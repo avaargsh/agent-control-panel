@@ -237,4 +237,39 @@ func TestAdmitPostgresReplayAndPolicyConflict(t *testing.T) {
 	if intents != 2 || events != 2 {
 		t.Fatalf("unexpected writes after scoped admission and denied replay: %d,%d", intents, events)
 	}
+	for _, stmt := range []string{
+		"INSERT INTO admission_tenants VALUES ('tenant-a',true)",
+		"INSERT INTO admission_projects VALUES ('tenant-a','project-a',true,'catalog-policy-1')",
+		"INSERT INTO admission_principals VALUES ('tenant-a','" + testIssuer + "','alice','catalog-principal','catalog-subject',true)",
+		"INSERT INTO admission_memberships VALUES ('tenant-a','project-a','catalog-principal','approved-client','RUNNER',true)",
+		"INSERT INTO admission_releases VALUES ('tenant-a','project-a','agent-a','release-a','sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',true)",
+		"INSERT INTO admission_sessions VALUES ('tenant-a','project-a','session-a','agent-a','release-a','catalog-principal',true)",
+	} {
+		if _, err := pool.Exec(ctx, stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	catalog, err := NewCatalogPolicy(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalogSvc := New(repo, NewBearerResolver(auth, catalog, "opaque-test-token"))
+	inputReq.IdempotencyKey = "catalog-policy-input"
+	catalogRun, created, err := catalogSvc.AdmitWithInput(ctx, inputReq, raw)
+	if err != nil || !created || catalogRun.PrincipalID != "catalog-principal" ||
+		catalogRun.PrincipalSnapshot.PolicyRevision != "catalog-policy-1" {
+		t.Fatalf("catalog-backed admission failed: %v", err)
+	}
+	if _, err := pool.Exec(ctx, "UPDATE admission_memberships SET role='VIEWER' WHERE tenant_id='tenant-a'"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := catalogSvc.AdmitWithInput(ctx, inputReq, raw); !errors.Is(err, ErrPolicyDenied) {
+		t.Fatalf("role downgrade did not revoke replay: %v", err)
+	}
+	if err := pool.QueryRow(ctx, "SELECT (SELECT count(*) FROM run_intents), (SELECT count(*) FROM outbox_events)").Scan(&intents, &events); err != nil {
+		t.Fatal(err)
+	}
+	if intents != 3 || events != 3 {
+		t.Fatalf("catalog denial wrote unexpected state: %d,%d", intents, events)
+	}
 }

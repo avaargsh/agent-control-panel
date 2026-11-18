@@ -47,6 +47,7 @@ type Grant struct {
 	RequestDigest string
 	PrincipalID   string
 	Snapshot      runintent.PrincipalSnapshot
+	catalogClaims *runpg.CatalogClaims // internal proof for transactional catalog recheck
 }
 
 // Resolver authenticates the caller using trusted context, checks access to
@@ -171,6 +172,20 @@ func (s *Service) admit(ctx context.Context, req Request, input []byte) (runinte
 		SchemaVersion: 1, TenantID: candidate.TenantID, AggregateType: "run_intent",
 		AggregateID: candidate.ID, AggregateVersion: candidate.Version,
 		OccurredAt: time.Now().UTC(), CorrelationID: candidate.ID, Payload: payload,
+	}
+	if grant.catalogClaims != nil {
+		store, ok := s.store.(catalogInputStore)
+		if !ok || input == nil {
+			return runintent.Intent{}, false, ErrInvalidConfig
+		}
+		persisted, created, err := store.CreateWithCatalog(ctx, candidate, event, input, *grant.catalogClaims)
+		if errors.Is(err, runpg.ErrCatalogDenied) {
+			return runintent.Intent{}, false, ErrPolicyDenied
+		}
+		if errors.Is(err, runpg.ErrCatalogUnavailable) {
+			return runintent.Intent{}, false, ErrPolicyUnavailable
+		}
+		return persisted, created, err
 	}
 	if input != nil {
 		return s.store.(inputStore).CreateWithInput(ctx, candidate, event, input)

@@ -23,7 +23,7 @@ func (r *Repository) CreateWithInput(ctx context.Context, intent runintent.Inten
 	if err := runintent.VerifyExecutionInput(intent, input); err != nil {
 		return runintent.Intent{}, false, err
 	}
-	return r.create(ctx, intent, event, nil, input)
+	return r.create(ctx, intent, event, nil, input, nil)
 }
 
 func compareExecutionInputReplay(ctx context.Context, tx pgx.Tx, intent runintent.Intent, proposed []byte) error {

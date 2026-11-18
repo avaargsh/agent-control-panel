@@ -20,7 +20,7 @@ var ErrInvalidCapabilityLock = errors.New("invalid RunIntent capability lock")
 func (r *Repository) CreatePinned(
 	ctx context.Context, intent runintent.Intent, event Event, lock researchlock.Lock,
 ) (runintent.Intent, bool, error) {
-	return r.create(ctx, intent, event, &lock, nil)
+	return r.create(ctx, intent, event, &lock, nil, nil)
 }
 
 func validIntentCapabilityLock(intent runintent.Intent, lock researchlock.Lock) bool {
