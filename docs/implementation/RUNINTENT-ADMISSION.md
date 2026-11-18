@@ -2,39 +2,79 @@
 
 Tracks [ACP #10](https://github.com/avaargsh/agent-control-panel/issues/10) and [Runtime #20](https://github.com/avaargsh/agent-runtime/issues/20).
 
-## Implemented internal contract
+## Current implementation
 
-`internal/admission.Service.Admit(ctx, request)` accepts only resource selectors (Tenant/Project/Agent/Release/Session), an idempotency key and a proposed request digest. It has no caller-controlled principal, policy, configuration snapshot or Runtime identity fields. The host must inject a trusted Resolver and PostgreSQL repository. No default resolver or HTTP endpoint is provided.
+ACP owns tenant/project/release/session/RunIntent identity and admission
+policy. Runtime alone issues canonical Run/Workflow/Attempt/Turn identities.
+No admission result is a protected action Permit.
 
-1. Validate request shape before consulting the resolver.
-2. Resolve the authenticated principal, effective subject/actor, policy revision, canonical request digest and immutable configuration from trusted sources. Resolver errors deny admission. An assertion with a different target or digest is rejected.
-3. Validate the nonzero principal snapshot and immutable identity. Generate only ACP-owned UUIDs (RunIntent and Outbox event), not Run/Workflow IDs.
-4. Use the existing Repository.Create transaction to commit the PENDING RunIntent, snapshot and creation event together.
-5. Re-resolve authorization on every replay. A denied replay writes nothing; a changed immutable snapshot with the same tenant/principal/idempotency key is an idempotency conflict. The repository returns the original identity on an exact replay.
+- The historical digest-only `Service.Admit` remains development
+  compatibility, not a new-run production entrypoint.
+- `AdmitWithInput` validates bounded JSON and computes the exact byte-bound
+  digest before authorization. The authenticated Resolver may not supply a
+  different target or digest. PrincipalSnapshot is server-derived.
+- `Introspector` authenticates direct bearer credentials via HTTPS RFC 7662:
+  exact issuer, audience, expiration, bearer type, verified client and scope.
+  Unsupported delegated or proof-of-possession credentials fail closed.
+- `CatalogPolicy` resolves the external issuer/subject and OAuth client
+  against the current ACP-owned tenant, project, principal, RUNNER role,
+  enabled AgentRelease and session ownership. No caller-supplied role or
+  policy decision becomes authority. `CreateWithCatalog` repeats the lookup
+  under PostgreSQL row locks and checks expiration after acquiring them.
+- Input, snapshot, RunIntent and minimal Outbox event commit atomically.
+  Every exact replay reauthenticates and reauthorizes; a revoked membership
+  or changed binding cannot append another event.
 
-The Outbox payload contains only the RunIntent ID, not raw prompts, credentials, or claims. The digest must be independently computed/verified by the trusted Resolver; merely echoing client input is not a valid implementation. A successful admission is neither Runtime acceptance nor protected-action authorization.
+The adapter sends no human bearer token to Runtime. No public mutating API,
+production dispatch, Guard Permit or provider release is enabled here.
 
-## Tests and evidence
+## Live identity-provider acceptance
 
-The regression suite covers positive admission/event correlation, malformed selector rejection before resolution, each target mismatch, digest mismatch, missing/invalid principal snapshot, and denial without persistence. The real PostgreSQL test covers exact replay, policy revocation on replay, changed policy revision conflict and one durable intent/Outbox event.
+[ACP #62](https://github.com/avaargsh/agent-control-panel/pull/62) provisions
+a disposable, loopback-only HTTPS Keycloak **26.8.2** issuer for
+`client_credentials` and RFC 7662 with separate test runner/resource-server
+clients. A fresh CA and random client secrets are generated inside the job;
+they are never production credentials or embedded in the source. The
+successfully observed image digest is pinned in the script.
 
-Do not infer any passing test status from this document. Inspect the exact PR head's CI results, including the PGTEST_DSN-enabled suite.
+From a clean candidate checkout on a machine with Docker, OpenSSL, Python,
+Go matching go.mod, curl and an **isolated** PostgreSQL database:
 
-## Remaining release gates
+```sh
+PGTEST_DSN='postgres://postgres:<test-password>@127.0.0.1:5432/acp_oidc?sslmode=disable' \
+  bash scripts/test-real-oidc-admission.sh
+```
 
-- Implement and independently review the actual authenticated principal/policy resolver with issuer/audience, credential lifetime, actor delegation, tenant/project, release and immutable request/config authority.
-- Persist and retrieve the immutable execution input/reference according to the owner-ratified ACP/Runtime contract; this slice stores only the digest, not input bytes.
-- Ratify the service-owned wire schema and implement the authenticated StartRun adapter plus joint PostgreSQL/Temporal lost-ACK and restart tests.
-- No public mutating API, production dispatch, G01/G05 promotion, Guard Permit issuance, or provider release is enabled by this change.
+The script creates and removes its own temporary issuer/CA, checks HTTPS
+OIDC discovery, and runs the exact live test with integration explicitly
+enabled. Do not run against a production database. The test mints real
+service-account access tokens, validates issuer/audience/client/scope,
+rejects invalid tokens, commits the exact input and one Outbox row, denies
+missing scope and role revocation on replay, and waits for actual access
+token expiration. No test skips on missing enabled environment
+configuration.
 
+Historical live evidence:
+[`dd8b3a66df0a6bc11f772059b697b69c2dad7a02` / #44249476537](https://github.com/avaargsh/agent-control-panel/actions/runs/44249476537):
+the actual test executed and passed in 32.09s. The separate Go format
+job failed and was corrected; subsequent exact-head verification is
+required, not inherited. See current PR checks before claiming acceptance.
+
+This proves real disposable OAuth service-account authentication and
+catalog admission only. Interactive end-user OIDC code/PKCE, live
+production IdP, signing/rotation and dynamic revocation, immutable
+Release provisioning, database role isolation, public HTTP admission,
+dispatch-time reauthorization and owner-ratified cross-service contracts
+remain release gates. No protected effects or independent verifier are
+authorized by this test.
 
 ## v12 catalog origin and current continuation authority (ACP #64)
 
-The preceding description records the initial development slice. The staged
-Golden Path now implements immutable execution input, actual issuer
-introspection/catalog admission, authenticated Runtime StartRun and
-UNKNOWN reconciliation; see the exact evidence in the P0 roadmap. v12
-adds the following current authority boundary without changing ownership:
+The preceding admission and real issuer sections describe the staged
+Golden Path: immutable execution input, actual issuer introspection/catalog
+admission, authenticated Runtime StartRun and UNKNOWN reconciliation.
+See exact evidence in the P0 roadmap. v12 adds the following current
+authority boundary without changing ownership:
 
 - Commit the verified historical OAuth issuer, external subject and exact
   client ID in the same transaction as RunIntent, input and Outbox. Never
