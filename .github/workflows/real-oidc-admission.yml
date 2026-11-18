@@ -1,0 +1,53 @@
+name: Live OIDC service-account admission (non-production)
+
+on:
+  pull_request:
+    paths:
+      - 'internal/admission/**'
+      - 'internal/runintent/**'
+      - 'migrations/**'
+      - 'scripts/test-real-oidc-admission.sh'
+      - '.github/workflows/real-oidc-admission.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GOTOOLCHAIN: local
+
+jobs:
+  live-issuer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: acp_oidc
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: acp-test-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d acp_oidc"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6 pinned
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6 pinned
+        with:
+          go-version: '1.27.4'
+          cache: false
+      - name: Verify patched Go toolchain
+        run: test "$(go env GOVERSION)" = "go1.27.4"
+      - name: Real issuer TLS + OAuth token issuance + catalog + PostgreSQL input admission
+        env:
+          PGTEST_DSN: postgres://postgres:acp-test-only@127.0.0.1:5432/acp_oidc?sslmode=disable
+        run: bash scripts/test-real-oidc-admission.sh
+
+# Only service-account client credentials; no interactive human OIDC,
+# deployed IAM, credential broker, production IdP or external egress proof.
