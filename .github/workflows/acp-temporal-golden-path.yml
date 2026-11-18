@@ -62,7 +62,7 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           repository: avaargsh/EngageGuard
-          ref: fff68a7648bf83b272e448dc355feb6548f5e261
+          ref: 5daece13c366d2d83e98f51e1716b18900d969b6
           path: guard
           persist-credentials: false
       - name: Verify immutable external source pins
@@ -70,7 +70,7 @@ jobs:
           test "$(git -C issuer-fixture rev-parse HEAD)" = '5b0109cbafcf659f2230f7a38fc560b8644332a9'
           test "$(git -C runtime-api rev-parse HEAD)" = '8e0c25a77f9e17e944e34f836bf83bdbac85ed56'
           test "$(git -C decision rev-parse HEAD)" = '975a052995e1f779413dfe2a7fadba7abafafabc'
-          test "$(git -C guard rev-parse HEAD)" = 'fff68a7648bf83b272e448dc355feb6548f5e261'
+          test "$(git -C guard rev-parse HEAD)" = '5daece13c366d2d83e98f51e1716b18900d969b6'
           git -C acp rev-parse HEAD
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
         with:
