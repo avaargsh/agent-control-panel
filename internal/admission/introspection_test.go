@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -140,5 +141,34 @@ func TestBearerResolverAuthenticatesBeforePolicyAndUsesVerifiedSubject(t *testin
 	grant, err := resolver.Resolve(context.Background(), req)
 	if err != nil || grant.PrincipalID != "internal-alice" || policyCalls != 1 {
 		t.Fatalf("authenticated grant: %+v / %v / %d", grant, err, policyCalls)
+	}
+}
+
+func TestIntrospectionDirectClientScopeAndDelegation(t *testing.T) {
+	base := strings.TrimSuffix(validIntrospection(), "}")
+	for _, tc := range []struct {
+		name   string
+		claims string
+		ok     bool
+	}{
+		{"direct", `,"client_id":"approved-client","scope":"openid acp:run-intent:create"}`, true},
+		{"actor", `,"act":{"sub":"delegate"}}`, false},
+		{"may act", `,"may_act":{"sub":"delegate"}}`, false},
+		{"proof of possession", `,"cnf":{"jkt":"key"}}`, false},
+		{"malformed client", `,"client_id":12}`, false},
+		{"malformed scope", `,"scope":"read\tacp:run-intent:create"}`, false},
+		{"duplicate scope", `,"scope":"read","scope":"acp:run-intent:create"}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := introspectionFixture(t, base+tc.claims)
+			id, err := a.Authenticate(context.Background(), "opaque-test-token")
+			if tc.ok {
+				if err != nil || id.ClientID != "approved-client" || !hasCreateScope(id.Scope) {
+					t.Fatalf("verified scope/client missing: %v", err)
+				}
+			} else if !errors.Is(err, ErrUnauthenticated) || id != (Identity{}) {
+				t.Fatalf("unsupported claims accepted: %v", err)
+			}
+		})
 	}
 }
