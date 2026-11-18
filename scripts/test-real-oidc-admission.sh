@@ -87,13 +87,14 @@ PY
 # The container runs as a different UID. These are disposable job-only
 # files; the CA key is never mounted into the issuer container.
 chmod 644 "$root/realm/acp-ci-realm.json" "$root/tls/server.crt" "$root/tls/server.key"
-image="quay.io/keycloak/keycloak:26.8.2"
+# Keycloak 26.8.2, observed in live issuer acceptance #44249476537.
+image="quay.io/keycloak/keycloak@sha256:c68e286cacd87b942ac1939a0a1481461109d6acd3a57dc496969a319a76bbf0"
 docker pull "$image"
 digest="$(docker image inspect --format '{{index .RepoDigests 0}}' "$image")"
-case "$digest" in
-  quay.io/keycloak/keycloak@sha256:*) ;;
-  *) echo 'issuer image digest unavailable'; exit 1 ;;
-esac
+if [[ "$digest" != "$image" ]]; then
+  echo "unexpected issuer image digest"
+  exit 1
+fi
 echo "Disposable issuer image: $digest"
 docker run --rm -d --name "$name" \
   -p 127.0.0.1:8443:8443 \
