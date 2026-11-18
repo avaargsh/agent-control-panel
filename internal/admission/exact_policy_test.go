@@ -100,6 +100,11 @@ func TestExactPolicyDeniesUnknownIdentityScopeAndResource(t *testing.T) {
 
 func TestExactPolicyRejectsAmbiguousSnapshotAndExpires(t *testing.T) {
 	snapshot, id, req := policyFixture()
+	longLived := snapshot
+	longLived.ExpiresAt = time.Now().Add(2 * MaxPolicySnapshotLifetime)
+	if _, err := NewExactPolicy(longLived); !errors.Is(err, ErrPolicyConfig) {
+		t.Fatalf("unbounded policy lifetime accepted: %v", err)
+	}
 	duplicate := snapshot
 	duplicate.Grants = append(append([]PolicyEntry(nil), snapshot.Grants...), snapshot.Grants[0])
 	if _, err := NewExactPolicy(duplicate); !errors.Is(err, ErrPolicyConfig) {
