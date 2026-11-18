@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/avaargsh/agent-control-panel/internal/runintent"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -41,6 +42,51 @@ func TestCatalogAdmissionEnforcesRolesAndResourceAttributesAtCommit(t *testing.T
 		t.Fatalf("resolve authorized role: %+v %v", binding, err)
 	}
 	intent.PrincipalSnapshot = binding.Snapshot
+	for _, stmt := range []string{
+		"INSERT INTO admission_principals VALUES ('tenant-integration','https://identity.example.test','bob','principal-bob','subject-bob',true)",
+		"INSERT INTO admission_memberships VALUES ('tenant-integration','project-1','principal-bob','client-1','RUNNER',true)",
+	} {
+		if _, err := pool.Exec(ctx, stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	otherOwner := claims
+	otherOwner.Subject = "bob"
+	if _, err := repo.ResolveCatalogAuthorization(ctx, intent, otherOwner); !errors.Is(err, ErrCatalogDenied) {
+		t.Fatalf("RUNNER without session ownership was authorized: %v", err)
+	}
+	expired := claims
+	expired.ExpiresAt = time.Now().Add(-time.Second)
+	if _, err := repo.ResolveCatalogAuthorization(ctx, intent, expired); !errors.Is(err, ErrCatalogDenied) {
+		t.Fatalf("expired identity authorized: %v", err)
+	}
+
+	// A concurrent revoker cannot commit while the admission transaction
+	// holds the authoritative rows. We test the very locking query used by
+	// CreateWithCatalog, without relying on scheduler sleeps.
+	func() {
+		tx, err := pool.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer tx.Rollback(ctx)
+		if _, err := resolveCatalogAuthorization(ctx, tx, intent, claims, true); err != nil {
+			t.Fatal(err)
+		}
+		revoker, err := pool.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer revoker.Rollback(ctx)
+		if _, err := revoker.Exec(ctx, "SET LOCAL lock_timeout='150ms'"); err != nil {
+			t.Fatal(err)
+		}
+		_, err = revoker.Exec(ctx, "UPDATE admission_memberships SET role='VIEWER' WHERE principal_id='principal-integration'")
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) || pgErr.Code != "55P03" {
+			t.Fatalf("catalog revocation was not serialized with admission: %v", err)
+		}
+	}()
 	for _, tc := range []struct {
 		name    string
 		deny    string
