@@ -317,6 +317,7 @@ func TestCompareAndSwapRequiresNewFenceForNewLease(t *testing.T) {
 func dropPrincipalSnapshotMigrationForTest(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 	ctx := context.Background()
+	dropAdmissionCatalogMigrationForTest(t, pool)
 	// Remove v10 before constructing a pre-v4 migration history.
 	for _, statement := range []string{
 		"DROP TRIGGER run_intent_execution_input_immutable ON run_intents",
