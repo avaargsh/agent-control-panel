@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -13,7 +12,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -97,7 +95,12 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 			Payload: json.RawMessage("{\"run_intent_id\":\"" + intent.ID + "\"}"),
 		}
 	}
-	created, inserted, err := repo.Create(ctx, intent, event(1, 1, "agent.run-intent.created"))
+	input := []byte(`{ "message": "replay", "number": 9007199254740993 }`)
+	intent.RequestDigest, err = runintent.ExecutionInputDigest(intent, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, inserted, err := repo.CreateWithInput(ctx, intent, event(1, 1, "agent.run-intent.created"), input)
 	if err != nil || !inserted || created.ID != intent.ID {
 		t.Fatalf("ACP Create: inserted=%v %+v %v", inserted, created, err)
 	}
@@ -107,6 +110,8 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 	dir := t.TempDir()
 	certFile, keyFile, caFile := filepath.Join(dir, "runtime.pem"), filepath.Join(dir, "runtime.key"), filepath.Join(dir, "ca.pem")
 	writeProcessCertificate(t, certFile, keyFile, serverCert)
+	acpCertFile, acpKeyFile := filepath.Join(dir, "acp.pem"), filepath.Join(dir, "acp.key")
+	writeProcessCertificate(t, acpCertFile, acpKeyFile, acpCert)
 	if err := os.WriteFile(caFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: serverCert.Certificate[1]}), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -177,61 +182,31 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 	proc := start()
 	_ = wait(AbsentUncertain)
 
-	payload, err := json.Marshal(map[string]any{
-		"tenant_id": intent.TenantID, "run_intent_id": intent.ID,
-		"request_digest": intent.RequestDigest, "agent_id": intent.AgentID,
-		"agent_release_id": intent.ReleaseID, "session_id": intent.SessionID,
-		"input": map[string]string{"message": "replay"},
-		"principal_context": map[string]string{
-			"version":         intent.PrincipalSnapshot.Version,
-			"project_id":      intent.PrincipalSnapshot.ProjectID,
-			"subject_id":      intent.PrincipalSnapshot.SubjectID,
-			"actor_id":        intent.PrincipalSnapshot.ActorID,
-			"policy_revision": intent.PrincipalSnapshot.PolicyRevision,
-			"config_digest":   intent.PrincipalSnapshot.ConfigDigest,
-		},
-	})
+	payload, err := buildAcceptanceBody(intent, input)
 	if err != nil {
 		t.Fatal(err)
 	}
 	send := func(data []byte) (*http.Response, error) {
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, origin+"/internal/v2/run-intents:accept", bytes.NewReader(data))
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, origin+developmentAcceptPath, bytes.NewReader(data))
 		if err != nil {
 			return nil, err
 		}
 		req.Header.Set("Content-Type", "application/json")
 		return httpClient.Do(req)
 	}
-	// Drop the caller-facing ACK only after a real authenticated Runtime
-	// API request commits. The ACP dispatcher receives EOF, not a receipt.
-	upstream := make(chan error, 1)
-	drop := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		res, err := send(payload)
-		if err == nil {
-			_, err = io.Copy(io.Discard, res.Body)
-			_ = res.Body.Close()
-			if err == nil && res.StatusCode != http.StatusCreated {
-				err = fmt.Errorf("first acceptance HTTP %d", res.StatusCode)
-			}
-		}
-		upstream <- err
-		conn, _, hErr := w.(http.Hijacker).Hijack()
-		if hErr == nil {
-			_ = conn.Close()
-		}
-	}))
-	defer drop.Close()
-	// The dispatcher is now a separately killable OS process; it uses the
-	// real ACP PostgreSQL state and a test-only transport proxy. The proxy
-	// drops the ACK only after authenticating and committing at Runtime.
+	// A separately killable ACP process uses the actual DevelopmentAcceptor,
+	// PostgreSQL input repository and verified mutual TLS. Its test-only
+	// transport discards the response after the real Runtime commits.
 	dispatch := exec.Command(os.Args[0], "-test.run=^TestDispatchLostACKChild$")
 	dispatch.Env = append(os.Environ(),
 		"ACP_DISPATCH_CHILD=1",
 		"ACP_DATABASE_URL="+acpDSN,
 		"ACP_DISPATCH_TENANT="+intent.TenantID,
 		"ACP_DISPATCH_INTENT="+intent.ID,
-		"ACP_DISPATCH_ENDPOINT="+drop.URL,
-		"ACP_DISPATCH_PAYLOAD="+base64.StdEncoding.EncodeToString(payload),
+		"ACP_DISPATCH_ENDPOINT="+origin,
+		"ACP_DISPATCH_CERT="+acpCertFile,
+		"ACP_DISPATCH_KEY="+acpKeyFile,
+		"ACP_DISPATCH_CA="+caFile,
 	)
 	if output, dispatchErr := dispatch.CombinedOutput(); dispatchErr != nil {
 		t.Fatalf("separate ACP dispatch process failed: %v: %s", dispatchErr, output)
@@ -239,9 +214,6 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 	unknown, err := repo.Get(ctx, intent.TenantID, intent.ID)
 	if err != nil || unknown.Status != runintent.Unknown || unknown.Version != 3 {
 		t.Fatalf("separate dispatch process did not persist UNKNOWN: %+v %v", unknown, err)
-	}
-	if err := <-upstream; err != nil {
-		t.Fatalf("Runtime did not commit before ACK loss: %v", err)
 	}
 	assertACPOutbox(intent.TenantID, intent.ID,
 		"1:agent.run-intent.created",
@@ -256,11 +228,15 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 	assertOne := func() string {
 		var id string
 		var runs, starts int
+		var sameInput bool
 		if err := runtimePool.QueryRow(ctx, "SELECT run_id::text FROM runs WHERE run_intent_id=$1::uuid", intent.ID).Scan(&id); err != nil {
 			t.Fatal(err)
 		}
 		if err := runtimePool.QueryRow(ctx, "SELECT count(*) FROM runs WHERE run_intent_id=$1::uuid", intent.ID).Scan(&runs); err != nil {
 			t.Fatal(err)
+		}
+		if err := runtimePool.QueryRow(ctx, "SELECT input=$2::jsonb FROM runs WHERE run_intent_id=$1::uuid", intent.ID, string(input)).Scan(&sameInput); err != nil || !sameInput {
+			t.Fatalf("Runtime normalized input differs from ACP persisted input: %v", err)
 		}
 		if err := runtimePool.QueryRow(ctx, "SELECT count(*) FROM runtime_outbox WHERE aggregate_id=$1::uuid AND event_type='RUN_START_REQUESTED'", id).Scan(&starts); err != nil {
 			t.Fatal(err)
@@ -493,36 +469,33 @@ func TestCrashReconcilerAfterClaimChild(t *testing.T) {
 	t.Fatalf("reconciler exited before injected SIGKILL: %v", err)
 }
 
-var errInjectedACKDelivered = errors.New("injected lost ACK unexpectedly delivered an HTTP response")
-
-type lostACKDispatchAdapter struct {
-	endpoint string
-	payload  []byte
+// lostACKTransport is fault injection only. It sends exactly one real mTLS
+// request and checks the create ACK before deliberately losing it. Runtime
+// database assertions in the parent independently prove durable acceptance.
+type lostACKTransport struct {
+	upstream http.RoundTripper
 	calls    int
+	dropped  bool
 }
 
-func (a *lostACKDispatchAdapter) Accept(ctx context.Context, claimed runintent.Intent) (runintent.DispatchOutcome, error) {
-	a.calls++
-	if claimed.Status != runintent.Dispatching {
-		return runintent.DispatchOutcome{}, errors.New("dispatcher called Runtime without a committed lease")
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.endpoint, bytes.NewReader(a.payload))
+func (t *lostACKTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	t.calls++
+	res, err := t.upstream.RoundTrip(req)
 	if err != nil {
-		return runintent.DispatchOutcome{}, err
+		return nil, err
 	}
-	req.Header.Set("Content-Type", "application/json")
-	res, err := http.DefaultClient.Do(req)
-	if res != nil {
-		_ = res.Body.Close()
+	defer res.Body.Close()
+	if _, err := io.Copy(io.Discard, res.Body); err != nil {
+		return nil, err
 	}
-	if err == nil {
-		return runintent.DispatchOutcome{}, errInjectedACKDelivered
+	if res.StatusCode != http.StatusCreated {
+		return nil, fmt.Errorf("first Runtime acceptance HTTP %d", res.StatusCode)
 	}
-	return runintent.DispatchOutcome{}, err
+	t.dropped = true
+	return nil, io.ErrUnexpectedEOF
 }
 
-// Test-only subprocess: no production service entry point or principal issuer.
-// It verifies a real ACP process persists UNKNOWN after a lost HTTP ACK.
+// Test-only subprocess uses the candidate adapter, not a hand-built payload.
 func TestDispatchLostACKChild(t *testing.T) {
 	if os.Getenv("ACP_DISPATCH_CHILD") != "1" {
 		t.Skip("only the two-process ACK-loss test starts this helper")
@@ -531,14 +504,27 @@ func TestDispatchLostACKChild(t *testing.T) {
 	tenantID := os.Getenv("ACP_DISPATCH_TENANT")
 	intentID := os.Getenv("ACP_DISPATCH_INTENT")
 	endpoint := os.Getenv("ACP_DISPATCH_ENDPOINT")
-	encoded := os.Getenv("ACP_DISPATCH_PAYLOAD")
-	if dsn == "" || tenantID == "" || intentID == "" || endpoint == "" || encoded == "" {
-		t.Fatal("dispatch subprocess requires PostgreSQL, scope and test transport")
+	if dsn == "" || tenantID == "" || intentID == "" || endpoint == "" {
+		t.Fatal("dispatch subprocess requires PostgreSQL, scope and Runtime endpoint")
 	}
-	payload, err := base64.StdEncoding.DecodeString(encoded)
+	cert, err := tls.LoadX509KeyPair(os.Getenv("ACP_DISPATCH_CERT"), os.Getenv("ACP_DISPATCH_KEY"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	ca, err := os.ReadFile(os.Getenv("ACP_DISPATCH_CA"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(ca) {
+		t.Fatal("invalid test trust root")
+	}
+	client, err := NewClient(endpoint, "spiffe://example.org/runtime", roots, cert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	drop := &lostACKTransport{upstream: client.client.Transport}
+	client.client.Transport = drop
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	pool, err := pgxpool.New(ctx, dsn)
@@ -546,12 +532,14 @@ func TestDispatchLostACKChild(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer pool.Close()
-	adapter := &lostACKDispatchAdapter{endpoint: endpoint, payload: payload}
-	got, dispatchErr := DispatchOnce(ctx, runpg.New(pool), adapter, tenantID, intentID, "worker-1", 3*time.Minute)
-	if errors.Is(dispatchErr, errInjectedACKDelivered) {
-		t.Fatal("the test proxy delivered an ACK instead of losing it")
+	repo := runpg.New(pool)
+	adapter, err := NewDevelopmentAcceptor(client, repo)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if dispatchErr == nil || got.Status != runintent.Unknown || got.Version != 3 || adapter.calls != 1 {
-		t.Fatalf("subprocess must persist one ambiguous dispatch: %+v %v calls=%d", got, dispatchErr, adapter.calls)
+	got, dispatchErr := DispatchOnce(ctx, repo, adapter, tenantID, intentID, "worker-1", 3*time.Minute)
+	if !drop.dropped || !errors.Is(dispatchErr, ErrUnavailable) || got.Status != runintent.Unknown ||
+		got.Version != 3 || drop.calls != 1 {
+		t.Fatalf("subprocess must persist one committed-but-unacknowledged acceptance: %+v %v calls=%d dropped=%v", got, dispatchErr, drop.calls, drop.dropped)
 	}
 }
