@@ -58,7 +58,7 @@ func goldenReleaseArtifact(t *testing.T, target runintent.Intent) ([]byte, strin
 	return raw, "sha256:" + hex.EncodeToString(sum[:])
 }
 
-func newLiveExecutionAuthorityReader(t *testing.T, pool *pgxpool.Pool, dsn string, repo *runpg.Repository, ref runpg.ExecutionAuthorityRef, releaseArtifact []byte) func(int) {
+func newLiveExecutionAuthorityReader(t *testing.T, pool *pgxpool.Pool, dsn string, repo *runpg.Repository, ref runpg.ExecutionAuthorityRef, admitted runintent.Intent, releaseArtifact []byte) func(int) {
 	t.Helper()
 	const peer = "spiffe://example.org/decision"
 	roots, serverCert, clientCert := testSPIFFECertificatesFor(t, "spiffe://example.org/acp", peer)
@@ -257,6 +257,38 @@ func newLiveExecutionAuthorityReader(t *testing.T, pool *pgxpool.Pool, dsn strin
 	}
 	first := call(h, http.MethodGet, pubPath, http.StatusOK)
 	verifyPublication(first)
+	// Separate Decision verifier executable, compiled from pinned actual
+	// Decision repository. Expected binding is the authentic admitted intent
+	// and recovered Runtime receipt, never parsed from signed publication.
+	decisionBin := os.Getenv("ACP_DECISION_PUBLICATION_TEST_BIN")
+	if decisionBin == "" {
+		t.Fatal("Golden Path requires independent Decision verifier binary")
+	}
+	expected, err := json.Marshal(map[string]string{
+		"tenant_id": admitted.TenantID, "run_intent_id": admitted.ID, "run_id": ref.RunID,
+		"request_digest": admitted.RequestDigest, "project_id": admitted.ProjectID, "agent_id": admitted.AgentID,
+		"agent_release_id": admitted.ReleaseID, "session_id": admitted.SessionID,
+		"subject_id": admitted.PrincipalSnapshot.SubjectID, "actor_id": admitted.PrincipalSnapshot.ActorID,
+		"policy_revision": admitted.PrincipalSnapshot.PolicyRevision, "config_digest": admitted.PrincipalSnapshot.ConfigDigest,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wireFile, publicFile, bindingFile := filepath.Join(dir, "signed.json"), filepath.Join(dir, "acp-public.key"), filepath.Join(dir, "expected.json")
+	for path, raw := range map[string][]byte{wireFile: []byte(first), publicFile: signingPublic, bindingFile: expected} {
+		if err := os.WriteFile(path, raw, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	verify := exec.Command(decisionBin, "-test.v", "-test.run=^TestExternalACPSignedPublication$", "-test.timeout=30s")
+	verify.Env = append(goldenPathChildEnvironment(),
+		"DECISION_EXTERNAL_ACP_PUBLICATION=1", "DECISION_PUBLICATION_FILE="+wireFile,
+		"DECISION_ACP_PINNED_KEY_FILE="+publicFile, "DECISION_EXPECTED_BINDING_FILE="+bindingFile)
+	output, err := verify.CombinedOutput()
+	if err != nil || !bytes.Contains(output, []byte("--- PASS: TestExternalACPSignedPublication ")) {
+		t.Fatalf("independent Decision verifier failed: %v %s", err, output)
+	}
+	t.Logf("independent Decision evidence:\n%s", output)
 	if second := call(h, http.MethodGet, pubPath, http.StatusOK); first != second {
 		t.Fatal("signed publication not stable for exact same Run")
 	}
