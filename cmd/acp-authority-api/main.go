@@ -35,7 +35,7 @@ func readConfig(getenv func(string) string) (config, error) {
 		peer: getenv("ACP_AUTHORITY_PEER_SPIFFE_ID"), tenant: getenv("ACP_AUTHORITY_TENANT"),
 		address:          getenv("ACP_AUTHORITY_LISTEN_ADDR"),
 		releaseDirectory: getenv("ACP_AUTHORITY_RELEASE_DIRECTORY"), publicationKey: getenv("ACP_AUTHORITY_PUBLICATION_KEY"),
-		guardPeer: getenv("ACP_AUTHORITY_GUARD_PEER_SPIFFE_ID"),
+		guardPeer:    getenv("ACP_AUTHORITY_GUARD_PEER_SPIFFE_ID"),
 		guardAddress: getenv("ACP_AUTHORITY_GUARD_LISTEN_ADDR"),
 	}
 	if c.dsn == "" || c.cert == "" || c.key == "" || c.ca == "" || c.peer == "" || c.tenant == "" {
