@@ -4,6 +4,7 @@
 package admission
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/json"
@@ -59,6 +60,10 @@ type Store interface {
 	Create(context.Context, runintent.Intent, runpg.Event) (runintent.Intent, bool, error)
 }
 
+type inputStore interface {
+	CreateWithInput(context.Context, runintent.Intent, runpg.Event, []byte) (runintent.Intent, bool, error)
+}
+
 type Service struct {
 	store    Store
 	resolver Resolver
@@ -73,6 +78,43 @@ func New(store Store, resolver Resolver) *Service {
 // Outbox or returns the original matching intent. This does not persist
 // raw task input, start a Run, or grant protected execution.
 func (s *Service) Admit(ctx context.Context, req Request) (runintent.Intent, bool, error) {
+	return s.admit(ctx, req, nil)
+}
+
+// AdmitWithInput computes the digest over the exact request bytes before
+// policy resolution. An optional supplied digest must match. The policy
+// authority must authorize this bound request; raw bytes stay out of events.
+// Never fall back to legacy storage when the input-capable store is missing.
+func (s *Service) AdmitWithInput(ctx context.Context, req Request, raw []byte) (runintent.Intent, bool, error) {
+	if s == nil || s.resolver == nil {
+		return runintent.Intent{}, false, ErrInvalidConfig
+	}
+	if _, ok := s.store.(inputStore); !ok {
+		return runintent.Intent{}, false, ErrInvalidConfig
+	}
+	if err := ctx.Err(); err != nil {
+		return runintent.Intent{}, false, err
+	}
+	if len(raw) > runintent.MaxExecutionInputBytes {
+		return runintent.Intent{}, false, runintent.ErrInvalidExecutionInput
+	}
+	input := bytes.Clone(raw)
+	digest, err := runintent.ExecutionInputDigest(runintent.Intent{
+		TenantID: req.Target.TenantID, ProjectID: req.Target.ProjectID,
+		AgentID: req.Target.AgentID, ReleaseID: req.Target.ReleaseID,
+		SessionID: req.Target.SessionID, IdempotencyKey: req.IdempotencyKey,
+	}, input)
+	if err != nil {
+		return runintent.Intent{}, false, err
+	}
+	if req.RequestDigest != "" && req.RequestDigest != digest {
+		return runintent.Intent{}, false, runintent.ErrExecutionInputMismatch
+	}
+	req.RequestDigest = digest
+	return s.admit(ctx, req, input)
+}
+
+func (s *Service) admit(ctx context.Context, req Request, input []byte) (runintent.Intent, bool, error) {
 	if s == nil || s.store == nil || s.resolver == nil {
 		return runintent.Intent{}, false, ErrInvalidConfig
 	}
@@ -126,6 +168,9 @@ func (s *Service) Admit(ctx context.Context, req Request) (runintent.Intent, boo
 		SchemaVersion: 1, TenantID: candidate.TenantID, AggregateType: "run_intent",
 		AggregateID: candidate.ID, AggregateVersion: candidate.Version,
 		OccurredAt: time.Now().UTC(), CorrelationID: candidate.ID, Payload: payload,
+	}
+	if input != nil {
+		return s.store.(inputStore).CreateWithInput(ctx, candidate, event, input)
 	}
 	return s.store.Create(ctx, candidate, event)
 }
