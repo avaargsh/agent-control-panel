@@ -50,20 +50,20 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           repository: avaargsh/agent-runtime
-          ref: d754d80d3ea025a657a98aabcce9a6e895556a02
+          ref: 9656464ff63736f0f624a2da95f1cd51b523ec61
           path: runtime-api
           persist-credentials: false
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           repository: avaargsh/agent-decision
-          ref: 6e9aba3acdd1b490e7e5385cd4a19892e8ad9d9f
+          ref: c5c10a7669bf55b30f07816b2fc320bcf7dd75ab
           path: decision
           persist-credentials: false
       - name: Verify immutable external source pins
         run: |
           test "$(git -C issuer-fixture rev-parse HEAD)" = '5b0109cbafcf659f2230f7a38fc560b8644332a9'
-          test "$(git -C runtime-api rev-parse HEAD)" = 'd754d80d3ea025a657a98aabcce9a6e895556a02'
-          test "$(git -C decision rev-parse HEAD)" = '6e9aba3acdd1b490e7e5385cd4a19892e8ad9d9f'
+          test "$(git -C runtime-api rev-parse HEAD)" = '9656464ff63736f0f624a2da95f1cd51b523ec61'
+          test "$(git -C decision rev-parse HEAD)" = 'c5c10a7669bf55b30f07816b2fc320bcf7dd75ab'
           git -C acp rev-parse HEAD
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
         with:
@@ -101,6 +101,7 @@ jobs:
         env:
           ACP_CROSS_SERVICE: '1'
           ACP_LIVE_DECISION: '1'
+          ACP_LIVE_CONTINUATION: '1'
           ACP_RUNTIME_DECISION_AUTHORITY_BIN: ${{ runner.temp }}/runtime-decision-authority
           ACP_DECISION_LIVE_CORE_BIN: ${{ runner.temp }}/live-decision-core
           ACP_DECISION_DATABASE_URL: postgres://postgres:acp-test-only@127.0.0.1:5432/decision_golden?sslmode=disable

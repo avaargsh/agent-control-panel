@@ -492,6 +492,10 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 				!bytes.Contains(out, []byte("actual same-Run DecisionRecord "))) {
 			t.Fatal("missing actual independently verified DecisionRecord PASS evidence")
 		}
+		if os.Getenv("ACP_LIVE_CONTINUATION") == "1" &&
+			!bytes.Contains(out, []byte("actual Runtime continuation SIGKILL recovered Run ")) {
+			t.Fatal("missing real Worker loss/Decision CAS continuation evidence")
+		}
 		t.Logf("same-Run Temporal evidence:\n%s", out)
 		if id := assertOne(); id != runID {
 			t.Fatal("Temporal recovered a different Runtime Run")
