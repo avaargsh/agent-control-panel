@@ -19,6 +19,11 @@ import (
 
 func testSPIFFECertificates(t *testing.T) (*x509.CertPool, tls.Certificate, tls.Certificate) {
 	t.Helper()
+	return testSPIFFECertificatesFor(t, "spiffe://example.org/runtime", "spiffe://example.org/acp")
+}
+
+func testSPIFFECertificatesFor(t *testing.T, serverID, clientID string) (*x509.CertPool, tls.Certificate, tls.Certificate) {
+	t.Helper()
 	caPublic, caPrivate, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -72,7 +77,7 @@ func testSPIFFECertificates(t *testing.T) (*x509.CertPool, tls.Certificate, tls.
 		}
 		return tls.Certificate{Certificate: [][]byte{der, caDER}, PrivateKey: private}
 	}
-	return roots, issue(2, "spiffe://example.org/runtime", true), issue(3, "spiffe://example.org/acp", false)
+	return roots, issue(2, serverID, true), issue(3, clientID, false)
 }
 
 func TestInspectPerformsVerifiedMutualTLSAndNeverForwardsUserBearer(t *testing.T) {

@@ -149,6 +149,10 @@ func dropAdmissionCatalogMigrationForTest(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 	ctx := context.Background()
 	for _, stmt := range []string{
+		"DROP TRIGGER run_intent_admission_origin_immutable ON run_intents",
+		"DROP FUNCTION reject_run_intent_admission_origin_mutation()",
+		"ALTER TABLE run_intents DROP COLUMN admission_issuer,DROP COLUMN admission_external_subject,DROP COLUMN admission_client_id",
+		"DELETE FROM schema_migrations WHERE version=12",
 		"DROP TABLE admission_sessions",
 		"DROP TABLE admission_memberships",
 		"DROP TABLE admission_releases",

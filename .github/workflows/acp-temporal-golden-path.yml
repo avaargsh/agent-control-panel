@@ -5,6 +5,8 @@ on:
     paths:
       - 'internal/runtimeinspect/**'
       - 'internal/admission/**'
+      - 'internal/authorityhttp/**'
+      - 'cmd/acp-authority-api/**'
       - 'internal/runintent/**'
       - 'migrations/**'
       - '.github/workflows/acp-temporal-golden-path.yml'
@@ -75,6 +77,9 @@ jobs:
         run: |
           psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE acp_golden'
           psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE runtime_golden'
+      - name: Compile actual ACP authority API
+        working-directory: acp
+        run: go build -trimpath -o "$RUNNER_TEMP/acp-authority-api" ./cmd/acp-authority-api
       - name: Compile actual authenticated Runtime API
         working-directory: runtime-api
         run: go build -trimpath -o "$RUNNER_TEMP/acp-runtime-api" ./cmd/acp-api
@@ -85,6 +90,7 @@ jobs:
         working-directory: acp
         env:
           ACP_CROSS_SERVICE: '1'
+          ACP_AUTHORITY_API_BIN: ${{ runner.temp }}/acp-authority-api
           ACP_DATABASE_URL: postgres://postgres:acp-test-only@127.0.0.1:5432/acp_golden?sslmode=disable
           ACP_RUNTIME_DATABASE_URL: postgres://postgres:acp-test-only@127.0.0.1:5432/runtime_golden?sslmode=disable
           ACP_RUNTIME_API_BIN: ${{ runner.temp }}/acp-runtime-api
