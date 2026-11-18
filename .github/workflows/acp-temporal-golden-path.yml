@@ -50,20 +50,20 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           repository: avaargsh/agent-runtime
-          ref: 739ebe93de2b44bd4131ce20fe4344369d40b89f
+          ref: 09f83fb4f3262eff6d5225a374269966cf5eccde
           path: runtime-api
           persist-credentials: false
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           repository: avaargsh/agent-decision
-          ref: 0856135c34e38867e234de94aad5d10230c64992
+          ref: cd0c554c7726dba3b3dc376d0cc146e104983cf5
           path: decision
           persist-credentials: false
       - name: Verify immutable external source pins
         run: |
           test "$(git -C issuer-fixture rev-parse HEAD)" = '5b0109cbafcf659f2230f7a38fc560b8644332a9'
-          test "$(git -C runtime-api rev-parse HEAD)" = '739ebe93de2b44bd4131ce20fe4344369d40b89f'
-          test "$(git -C decision rev-parse HEAD)" = '0856135c34e38867e234de94aad5d10230c64992'
+          test "$(git -C runtime-api rev-parse HEAD)" = '09f83fb4f3262eff6d5225a374269966cf5eccde'
+          test "$(git -C decision rev-parse HEAD)" = 'cd0c554c7726dba3b3dc376d0cc146e104983cf5'
           git -C acp rev-parse HEAD
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
         with:
