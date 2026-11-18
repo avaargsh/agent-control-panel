@@ -402,9 +402,9 @@ func newLiveExecutionAuthorityReader(t *testing.T, pool *pgxpool.Pool, dsn, runt
 				"GUARD_ACP_RUN="+ref.RunID, "GUARD_ACP_AGENT="+admitted.AgentID,
 				"GUARD_ACP_RELEASE="+admitted.ReleaseID, "GUARD_ACP_SESSION="+admitted.SessionID)
 			output, err := run.CombinedOutput()
-			marker := "real EngageGuard ACPCapabilityClient verified same-Run "+ref.RunID
+			marker := "real EngageGuard ACPCapabilityClient verified same-Run " + ref.RunID
 			if expect == "revoked" {
-				marker = "real EngageGuard ACPCapabilityClient denied revoked same-Run "+ref.RunID
+				marker = "real EngageGuard ACPCapabilityClient denied revoked same-Run " + ref.RunID
 			}
 			if err != nil || !bytes.Contains(output, []byte("--- PASS: TestExternalLiveACPCapabilityClient ")) ||
 				!bytes.Contains(output, []byte(marker)) {
