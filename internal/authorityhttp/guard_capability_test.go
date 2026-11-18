@@ -29,8 +29,8 @@ func TestGuardCapabilityListenerRejectsMissingAuthorityOrForwardedIdentity(t *te
 func TestGuardCapabilityRequestRejectsCallerAuthorityFields(t *testing.T) {
 	q := GuardCapabilityRequest{
 		SchemaVersion: GuardCapabilitySchema,
-		RunID: "11111111-1111-4111-8111-111111111111",
-		AgentID: "agent-1", AgentReleaseID: "release-1",
+		RunID:         "11111111-1111-4111-8111-111111111111",
+		AgentID:       "agent-1", AgentReleaseID: "release-1",
 		SessionID: "session-1", CapabilityID: "sre.metrics.read",
 		CapabilityVersion: "1.0.0", ResourceRef: "payments",
 	}

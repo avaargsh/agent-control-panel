@@ -92,25 +92,25 @@ func TestPublishExactReleaseContentAndRejectTamper(t *testing.T) {
 		verified.PolicyRevision != authority.PolicyRevision {
 		t.Fatalf("fresh authority did not bind exact read-only capability: %+v %v", verified, err)
 	}
-	for _, tc := range []struct{
-		name string
+	for _, tc := range []struct {
+		name   string
 		change func(*Publication, *GuardCapabilityRequest)
 	}{
-		{"different Run", func(_ *Publication, q *GuardCapabilityRequest){q.RunID="33333333-3333-4333-8333-333333333333"}},
-		{"different Release", func(_ *Publication, q *GuardCapabilityRequest){q.AgentReleaseID="release-attacker"}},
-		{"different Session", func(_ *Publication, q *GuardCapabilityRequest){q.SessionID="session-attacker"}},
-		{"different capability", func(_ *Publication, q *GuardCapabilityRequest){q.CapabilityID="workspace.write"}},
-		{"wrong version", func(_ *Publication, q *GuardCapabilityRequest){q.CapabilityVersion="2.0.0"}},
-		{"other resource", func(_ *Publication, q *GuardCapabilityRequest){q.ResourceRef="other"}},
-		{"effectful capability", func(a *Publication, _ *GuardCapabilityRequest){a.Capabilities[0].EffectClass="write"}},
-		{"unsafe idempotency", func(a *Publication, _ *GuardCapabilityRequest){a.Capabilities[0].Idempotency="unsafe"}},
+		{"different Run", func(_ *Publication, q *GuardCapabilityRequest) { q.RunID = "33333333-3333-4333-8333-333333333333" }},
+		{"different Release", func(_ *Publication, q *GuardCapabilityRequest) { q.AgentReleaseID = "release-attacker" }},
+		{"different Session", func(_ *Publication, q *GuardCapabilityRequest) { q.SessionID = "session-attacker" }},
+		{"different capability", func(_ *Publication, q *GuardCapabilityRequest) { q.CapabilityID = "workspace.write" }},
+		{"wrong version", func(_ *Publication, q *GuardCapabilityRequest) { q.CapabilityVersion = "2.0.0" }},
+		{"other resource", func(_ *Publication, q *GuardCapabilityRequest) { q.ResourceRef = "other" }},
+		{"effectful capability", func(a *Publication, _ *GuardCapabilityRequest) { a.Capabilities[0].EffectClass = "write" }},
+		{"unsafe idempotency", func(a *Publication, _ *GuardCapabilityRequest) { a.Capabilities[0].Idempotency = "unsafe" }},
 	} {
-		t.Run("Guard rejects "+tc.name, func(t *testing.T){
-			a:=record
-			a.Capabilities=append([]CapabilityRef{}, record.Capabilities...)
-			q:=selectStep
-			tc.change(&a,&q)
-			if _,err:=MatchGuardCapability(a,q);err==nil {
+		t.Run("Guard rejects "+tc.name, func(t *testing.T) {
+			a := record
+			a.Capabilities = append([]CapabilityRef{}, record.Capabilities...)
+			q := selectStep
+			tc.change(&a, &q)
+			if _, err := MatchGuardCapability(a, q); err == nil {
 				t.Fatal("untrusted capability selector granted by ACP")
 			}
 		})
