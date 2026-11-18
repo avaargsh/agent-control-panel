@@ -34,7 +34,15 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 	if acpDSN == "" || runtimeDSN == "" || binary == "" {
 		t.Fatal("two independent databases and pinned Runtime executable are required")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	golden := os.Getenv("ACP_GOLDEN_PATH") == "1"
+	timeout := 90 * time.Second
+	if golden {
+		timeout = 8 * time.Minute
+		if os.Getenv("ACP_RUNTIME_TEMPORAL_TEST_BIN") == "" {
+			t.Fatal("Golden Path requires the pinned Temporal test binary")
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	pool, err := pgxpool.New(ctx, acpDSN)
 	if err != nil {
@@ -100,9 +108,13 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	created, inserted, err := repo.CreateWithInput(ctx, intent, event(1, 1, "agent.run-intent.created"), input)
-	if err != nil || !inserted || created.ID != intent.ID {
-		t.Fatalf("ACP Create: inserted=%v %+v %v", inserted, created, err)
+	if golden {
+		intent = admitGoldenPathWithLiveIssuer(t, ctx, pool, repo, intent, input)
+	} else {
+		created, inserted, err := repo.CreateWithInput(ctx, intent, event(1, 1, "agent.run-intent.created"), input)
+		if err != nil || !inserted || created.ID != intent.ID {
+			t.Fatalf("ACP Create: inserted=%v %+v %v", inserted, created, err)
+		}
 	}
 	assertACPOutbox(intent.TenantID, intent.ID, "1:agent.run-intent.created")
 
@@ -146,7 +158,7 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 			t.Fatal(err)
 		}
 		cmd.Stdout, cmd.Stderr = log, log
-		cmd.Env = append(os.Environ(),
+		cmd.Env = append(goldenPathChildEnvironment(),
 			"RUNTIME_DATABASE_URL="+runtimeDSN,
 			"RUNTIME_TLS_CERT="+certFile,
 			"RUNTIME_TLS_KEY="+keyFile,
@@ -198,7 +210,7 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 	// PostgreSQL input repository and verified mutual TLS. Its test-only
 	// transport discards the response after the real Runtime commits.
 	dispatch := exec.Command(os.Args[0], "-test.run=^TestDispatchLostACKChild$")
-	dispatch.Env = append(os.Environ(),
+	dispatch.Env = append(goldenPathChildEnvironment(),
 		"ACP_DISPATCH_CHILD=1",
 		"ACP_DATABASE_URL="+acpDSN,
 		"ACP_DISPATCH_TENANT="+intent.TenantID,
@@ -276,7 +288,7 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 	// ReconcileOnce, then blocks at Inspect. SIGKILL must leave the lease
 	// durable so the restarted worker can fence it after database expiry.
 	crash := exec.Command(os.Args[0], "-test.run=^TestCrashReconcilerAfterClaimChild$")
-	crash.Env = append(os.Environ(),
+	crash.Env = append(goldenPathChildEnvironment(),
 		"ACP_RECOVERY_CRASH_CHILD=1",
 		"ACP_DATABASE_URL="+acpDSN,
 		"ACP_RECOVERY_TENANT="+intent.TenantID,
@@ -417,6 +429,33 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 	stored, err := repo.Get(ctx, intent.TenantID, intent.ID)
 	if err != nil || stored.Status != runintent.Accepted || stored.RunID != runID {
 		t.Fatalf("ACP persisted receipt: %+v %v", stored, err)
+	}
+
+	// Exercise the same ACP Run in the actual pinned Runtime Temporal
+	// dispatcher. Do this BEFORE the conflicting-binding negative control
+	// seeds a second Run. The external driver refuses to create or seed Runs.
+	if golden {
+		temporal := exec.CommandContext(ctx, os.Getenv("ACP_RUNTIME_TEMPORAL_TEST_BIN"),
+			"-test.v", "-test.run=^TestExternalACPAdmissionTemporalRecovery$", "-test.timeout=6m")
+		temporal.Env = append(goldenPathChildEnvironment(),
+			"RUNTIME_EXTERNAL_ACP_TEST=1",
+			"RUNTIME_EXTERNAL_DATABASE_URL="+runtimeDSN,
+			"RUNTIME_EXTERNAL_TENANT="+intent.TenantID,
+			"RUNTIME_EXTERNAL_INTENT="+intent.ID,
+			"RUNTIME_EXTERNAL_DIGEST="+intent.RequestDigest,
+			"RUNTIME_EXTERNAL_RUN="+runID,
+			"RUNTIME_EXTERNAL_SUBJECT="+intent.PrincipalSnapshot.SubjectID,
+			"RUNTIME_EXTERNAL_ACTOR="+intent.PrincipalSnapshot.ActorID,
+			"RUNTIME_EXTERNAL_POLICY="+intent.PrincipalSnapshot.PolicyRevision,
+		)
+		out, runErr := temporal.CombinedOutput()
+		if runErr != nil || !bytes.Contains(out, []byte("--- PASS: TestExternalACPAdmissionTemporalRecovery")) {
+			t.Fatalf("same-Run Temporal execution/recovery failed: %v %s", runErr, out)
+		}
+		t.Logf("same-Run Temporal evidence:\n%s", out)
+		if id := assertOne(); id != runID {
+			t.Fatal("Temporal recovered a different Runtime Run")
+		}
 	}
 
 	// Positive control for the confused-binding gap: a separately committed
@@ -622,4 +661,17 @@ func TestDispatchLostACKChild(t *testing.T) {
 		got.Version != 3 || drop.calls != 1 {
 		t.Fatalf("subprocess must persist one committed-but-unacknowledged acceptance: %+v %v calls=%d dropped=%v", got, dispatchErr, drop.calls, drop.dropped)
 	}
+}
+
+// Child Runtime and recovery processes never receive the disposable OAuth
+// client secrets (nor inherited CI credentials). Only explicit runtime
+// configuration is appended by the caller.
+func goldenPathChildEnvironment() []string {
+	var env []string
+	for _, key := range []string{"PATH", "HOME", "TMPDIR", "TMP", "TEMP", "USER", "LANG", "LC_ALL", "SSL_CERT_FILE", "SSL_CERT_DIR"} {
+		if value, present := os.LookupEnv(key); present {
+			env = append(env, key+"="+value)
+		}
+	}
+	return env
 }

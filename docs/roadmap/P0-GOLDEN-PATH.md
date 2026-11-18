@@ -115,3 +115,110 @@ must be recorded as blockers, not replaced with a mock PASS.
 
 All cited runs are from the corresponding historical commit, not proof
 that subsequent integrated candidates or production environments passed.
+
+
+## Same admitted Run to Temporal: actual non-production proof
+
+[ACP #63](https://github.com/avaargsh/agent-control-panel/pull/63)
+uses the live issuer fixture, actual ACP CatalogPolicy and PostgreSQL,
+the real Runtime mTLS API and the existing Runtime Temporal dispatcher.
+The external driver may only consume the one already accepted Run in
+a clean disposable database; it must not seed a separate Run or grant.
+
+Exact historical candidate `0cff5e1696f6211b5e498df19f96ce88274c7ae7`:
+[CI #44250898589](https://github.com/avaargsh/agent-control-panel/actions/runs/44250898589)
+executed `TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart`
+(PASS 15.65s, excluding provisioning/build) and
+`TestExternalACPAdmissionTemporalRecovery` (PASS 11.72s).
+
+- Live Keycloak image by immutable digest; actual service-account token,
+  catalog roles and immutable input; unauthorized role replay denied.
+- Two independent PostgreSQL databases; actual API process and verified
+  TLS 1.3/SPIFFE acceptance, lost HTTP 201 ACK, SIGKILL/restart,
+  full-bound v2 Inspect, stale-fence rejection and one canonical Run.
+- Same Run's existing Runtime Outbox starts real Temporal; lost Temporal
+  ACK, persisted server restart before worker execution, authoritative
+  history verification and exactly one Start, Attempt and Turn.
+- Wrong principal positive-control accepted under a distinct test intent,
+  lost 409 ACK -> MANUAL_REVIEW, no duplicate logical Run.
+- Runtime subprocesses use an explicit environment allowlist; issuer
+  credentials are not forwarded. Test selectors require actual RUN/PASS.
+
+Reproduce in a dedicated CI checkout using
+`.github/workflows/acp-temporal-golden-path.yml`. It pins separate
+issuer fixture `5b0109cbafcf659f2230f7a38fc560b8644332a9`, Runtime API
+`157bad70f3ef35b7cbc8a674ad74b0eb8f2a1e55` (v10 accepted execution
+binding immutability), and Runtime Temporal test driver
+`def4d7c89ff60f17056a8b1ec4f72bc876d44ab9`. It provisions clean databases,
+builds the two exact Runtime binaries, starts local HTTPS Keycloak and
+runs the same ACP test with the external driver enabled. No live
+production resources or credentials are required or permitted.
+
+This is an **admission/identity/Temporal-start recovery milestone**, not
+a successful business Run or independent verifier attestation. The
+existing workflow is an isolated no-egress admission probe; the server
+restarts before the worker processes the task. The actual Agent Loop,
+durable business Checkpoint, Worker SIGKILL mid-business-step, authenticated
+Decision Core contract (G02), model protection, Sandbox + AgentD,
+credential broker, network egress gate and EngageGuard remain unproven.
+Do not wire the development dispatcher to a shared production queue.
+
+
+## Business checkpoint and Guard runtime safety authority — follow-on evidence
+
+The earlier exact ACP #63 same-Run admission/Temporal-start gate completed
+all CI at `1b70fd230a00df3fea30d315a638edafc0145600`
+([live gate](https://github.com/avaargsh/agent-control-panel/actions/runs/44251257819)).
+The following follow-on candidates are independently scoped; do not infer
+that their gates formed one combined business execution.
+
+### Runtime first business checkpoint
+
+[Runtime #39](https://github.com/avaargsh/agent-runtime/pull/39),
+`6d84af1c445098045f65103cefd3979f055fd4d4`:
+[Go/PG17](https://github.com/avaargsh/agent-runtime/actions/runs/44252526248)
+and [real Temporal Worker SIGKILL](https://github.com/avaargsh/agent-runtime/actions/runs/44252526285)
+PASS. Runtime validates the actual accepted business input against the Go
+Decision Core SRE objective/service/signal contract, persists immutable v11
+checkpoint plus canonical Attempt/Turn atomically, with tenant/digest,
+principal/config and active safety gates. A PostgreSQL insert failure rolls
+back the identity allocation; canceled and OPEN-breaker Runs fail closed.
+
+Actual Worker killed after commit and before Activity ACK; replacement
+Worker recovered one checkpoint, same Attempt/Turn, no raw input canary in
+Temporal History, and the Workflow remained RUNNING at WAITING_AUTHORITY
+(13.04s test). The fixture accepted a principal-bound Run directly through
+Runtime Store, not the live ACP OAuth path. This is business preparation,
+not a DecisionRecord or successful business Run. No model/tool egress.
+
+### Runtime -> Guard safety boundary
+
+[Runtime #40](https://github.com/avaargsh/agent-runtime/pull/40) exposes
+`GET /internal/v1/runs/{run_id}/safety` only to a distinct configured
+mTLS workload and one tenant, with server-side principal-bound Run check
+and fresh RUNNING/CLOSED breaker snapshot. No request-tenant assertion,
+cache, Permit or authorization field. PG17 behavior tests passed at
+`8eda8b0545427187b8e5be347d3e1119fad2827e` (separate formatting check
+failed; correction at `4a3fa8ed92df8db28434447e6bc69480fb8e423f`).
+
+[EngageGuard #28](https://github.com/avaargsh/EngageGuard/pull/28) implements
+the existing RunSafetyAuthority client with exact TLS server SPIFFE and
+CA/hostname verification, strict versioned response and no stale fallback.
+Actual pinned Runtime API and Guard client exercised through real mTLS
+([live gate #44252776333](https://github.com/avaargsh/EngageGuard/actions/runs/44252776333),
+`fa0389772c5c20a73af4370b827d9c543d46b7cd`, PASS 0.05s).
+The same Run fd50f532-8064-4075-9b08-0e9891835963 was accepted by the actual
+Runtime v2 endpoint and read/denied across isolated PG fixture state changes.
+No extra Run/Outbox. These state transitions are test fixtures, not proof
+of actual business execution. Guard code formatting corrected separately at
+`a542505f084fc37cd27421c738d41562b2eef88b`; verify exact HEAD checks.
+
+All PRs remain Draft pending independently approved review, branch rules,
+authority ratification and production environment acceptance. Next gates:
+integrate the same live ACP Run into actual checkpoint Workflow; authentic
+Decision Core context/capability/evidence publication and verification,
+durable authorized continuation; then actual sandbox AgentD + command
+journal, credential broker and egress, Guard decision/permit/revocation and
+operation recovery, independent verifier and trace/evidence, real GitHub
+repair workflow and resource cleanup. No protected effects or agent
+long-term production credentials are enabled by these candidates.
