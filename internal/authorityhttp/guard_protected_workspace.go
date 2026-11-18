@@ -102,12 +102,12 @@ func NewGuardProtectedWorkspaceHandler(
 			SchemaVersion: "acp.run-authority.v1", TenantID: tenant,
 			RunIntentID: current.Ref.RunIntentID, RunID: q.RunID,
 			RequestDigest: current.Ref.RequestDigest,
-			ProjectID: current.Snapshot.ProjectID,
-			AgentID: current.AgentID, AgentReleaseID: current.ReleaseID,
+			ProjectID:     current.Snapshot.ProjectID,
+			AgentID:       current.AgentID, AgentReleaseID: current.ReleaseID,
 			SessionID: current.SessionID, PrincipalID: current.PrincipalID,
 			SubjectID: current.Snapshot.SubjectID, ActorID: current.Snapshot.ActorID,
 			PolicyRevision: current.Snapshot.PolicyRevision,
-			ConfigDigest: current.Snapshot.ConfigDigest,
+			ConfigDigest:   current.Snapshot.ConfigDigest,
 		}
 		receipt, err := publisher.ObserveProtectedWorkspace(a, input, q, time.Now().UTC())
 		if errors.Is(err, ErrProtectedWorkspaceDenied) {

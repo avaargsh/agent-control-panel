@@ -15,7 +15,7 @@ const GuardProtectedWorkspaceSchema = "acp.guard-protected-workspace.v1"
 
 var (
 	ErrProtectedWorkspaceDenied = errors.New("ACP protected workspace release denied")
-	protectedWorkspaceDigest = regexp.MustCompile(`^[0-9a-f]{64}$`)
+	protectedWorkspaceDigest    = regexp.MustCompile(`^[0-9a-f]{64}$`)
 )
 
 const protectedWorkspaceMaxLifetime = 15 * time.Minute
@@ -24,32 +24,32 @@ const protectedWorkspaceMaxLifetime = 15 * time.Minute
 // authenticated Guard workload. It cannot carry a user credential, policy,
 // release body, issuer key or approval/Permit.
 type GuardProtectedWorkspaceRequest struct {
-	SchemaVersion string `json:"schema_version"`
-	RunID string `json:"run_id"`
-	AgentID string `json:"agent_id"`
-	AgentReleaseID string `json:"agent_release_id"`
-	SessionID string `json:"session_id"`
-	SubjectID string `json:"subject_id"`
-	CapabilityID string `json:"capability_id"`
+	SchemaVersion     string `json:"schema_version"`
+	RunID             string `json:"run_id"`
+	AgentID           string `json:"agent_id"`
+	AgentReleaseID    string `json:"agent_release_id"`
+	SessionID         string `json:"session_id"`
+	SubjectID         string `json:"subject_id"`
+	CapabilityID      string `json:"capability_id"`
 	CapabilityVersion string `json:"capability_version"`
-	PolicyRevision string `json:"policy_revision"`
-	WorkspaceID string `json:"workspace_id"`
+	PolicyRevision    string `json:"policy_revision"`
+	WorkspaceID       string `json:"workspace_id"`
 	ToolBindingDigest string `json:"tool_binding_digest"`
-	Audience string `json:"audience"`
+	Audience          string `json:"audience"`
 }
 
 // ProtectedWorkspaceContract is exactly one provisioned work tool version,
 // audience and workspace, not an unrestricted wildcard capability.
 type ProtectedWorkspaceContract struct {
-	ID string `json:"id"`
-	Version string `json:"version"`
-	EffectClass string `json:"effect_class"`
-	Idempotency string `json:"idempotency"`
-	TenantScoped bool `json:"tenant_scoped"`
-	ApprovalRequired bool `json:"approval_required"`
+	ID                string `json:"id"`
+	Version           string `json:"version"`
+	EffectClass       string `json:"effect_class"`
+	Idempotency       string `json:"idempotency"`
+	TenantScoped      bool   `json:"tenant_scoped"`
+	ApprovalRequired  bool   `json:"approval_required"`
 	ToolBindingDigest string `json:"tool_binding_digest"`
-	Audience string `json:"audience"`
-	WorkspaceID string `json:"workspace_id"`
+	Audience          string `json:"audience"`
+	WorkspaceID       string `json:"workspace_id"`
 }
 
 // ProtectedWorkspaceRelease is an immutable ACP operator-provisioned
@@ -57,39 +57,39 @@ type ProtectedWorkspaceContract struct {
 // ACP/OIDC-admitted Run's currently active config digest, never one provided
 // by a Guard ActionSubmission.
 type ProtectedWorkspaceRelease struct {
-	SchemaVersion string `json:"schema_version"`
-	TenantID string `json:"tenant_id"`
-	ProjectID string `json:"project_id"`
-	AgentID string `json:"agent_id"`
-	AgentReleaseID string `json:"agent_release_id"`
-	PolicyRevision string `json:"policy_revision"`
-	IssuedAt time.Time `json:"issued_at"`
-	ExpiresAt time.Time `json:"expires_at"`
-	Capability ProtectedWorkspaceContract `json:"capability"`
+	SchemaVersion  string                     `json:"schema_version"`
+	TenantID       string                     `json:"tenant_id"`
+	ProjectID      string                     `json:"project_id"`
+	AgentID        string                     `json:"agent_id"`
+	AgentReleaseID string                     `json:"agent_release_id"`
+	PolicyRevision string                     `json:"policy_revision"`
+	IssuedAt       time.Time                  `json:"issued_at"`
+	ExpiresAt      time.Time                  `json:"expires_at"`
+	Capability     ProtectedWorkspaceContract `json:"capability"`
 }
 
 // GuardProtectedWorkspaceReceipt is a current read-only catalog observation.
 // It is NOT a Permit, is not transferable, and cannot authorize an effect.
 type GuardProtectedWorkspaceReceipt struct {
-	SchemaVersion string `json:"schema_version"`
-	RunID string `json:"run_id"`
-	AgentID string `json:"agent_id"`
-	AgentReleaseID string `json:"agent_release_id"`
-	SessionID string `json:"session_id"`
-	SubjectID string `json:"subject_id"`
-	CapabilityID string `json:"capability_id"`
+	SchemaVersion     string `json:"schema_version"`
+	RunID             string `json:"run_id"`
+	AgentID           string `json:"agent_id"`
+	AgentReleaseID    string `json:"agent_release_id"`
+	SessionID         string `json:"session_id"`
+	SubjectID         string `json:"subject_id"`
+	CapabilityID      string `json:"capability_id"`
 	CapabilityVersion string `json:"capability_version"`
-	ContractSHA256 string `json:"contract_sha256"`
-	ConfigDigest string `json:"config_digest"`
-	PolicyRevision string `json:"policy_revision"`
-	WorkspaceID string `json:"workspace_id"`
+	ContractSHA256    string `json:"contract_sha256"`
+	ConfigDigest      string `json:"config_digest"`
+	PolicyRevision    string `json:"policy_revision"`
+	WorkspaceID       string `json:"workspace_id"`
 	ToolBindingDigest string `json:"tool_binding_digest"`
-	Audience string `json:"audience"`
-	Status string `json:"status"`
+	Audience          string `json:"audience"`
+	Status            string `json:"status"`
 }
 
 type protectedWorkspaceIntent struct {
-	Objective string `json:"objective"`
+	Objective   string `json:"objective"`
 	WorkspaceID string `json:"workspace_id"`
 }
 
@@ -185,7 +185,7 @@ func VerifyProtectedWorkspaceRelease(
 	}
 	return GuardProtectedWorkspaceReceipt{
 		SchemaVersion: GuardProtectedWorkspaceSchema,
-		RunID: a.RunID, AgentID: a.AgentID, AgentReleaseID: a.AgentReleaseID,
+		RunID:         a.RunID, AgentID: a.AgentID, AgentReleaseID: a.AgentReleaseID,
 		SessionID: a.SessionID, SubjectID: a.SubjectID,
 		CapabilityID: c.ID, CapabilityVersion: c.Version,
 		ContractSHA256: sha256Hex(contractBytes), ConfigDigest: a.ConfigDigest,
