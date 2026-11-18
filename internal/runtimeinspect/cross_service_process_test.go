@@ -483,6 +483,9 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 			"RUNTIME_EXTERNAL_POLICY="+intent.PrincipalSnapshot.PolicyRevision,
 		)
 		temporal.Env = append(temporal.Env, liveEnv...)
+		if os.Getenv("ACP_LIVE_CONTINUATION") == "1" {
+			temporal.Env = append(temporal.Env, "RUNTIME_EXTERNAL_LIVE_CONTINUATION=1")
+		}
 		out, runErr := temporal.CombinedOutput()
 		if runErr != nil || !bytes.Contains(out, []byte("--- PASS: TestExternalACPAdmissionTemporalRecovery")) {
 			t.Fatalf("same-Run Temporal execution/recovery failed: %v %s", runErr, out)
@@ -491,6 +494,11 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 			(!bytes.Contains(out, []byte("--- PASS: TestExternalLiveDecisionCore ")) ||
 				!bytes.Contains(out, []byte("actual same-Run DecisionRecord "))) {
 			t.Fatal("missing actual independently verified DecisionRecord PASS evidence")
+		}
+		if os.Getenv("ACP_LIVE_CONTINUATION") == "1" &&
+			(!bytes.Contains(out, []byte("actual Runtime continuation SIGKILL recovered Run "+runID)) ||
+				!bytes.Contains(out, []byte("DECISION_ACCEPTED; live source revocation denied"))) {
+			t.Fatal("missing actual post-acceptance Worker SIGKILL and source revocation evidence")
 		}
 		t.Logf("same-Run Temporal evidence:\n%s", out)
 		if id := assertOne(); id != runID {
