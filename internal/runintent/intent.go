@@ -27,6 +27,7 @@ const (
 	DispatchAccepted  DispatchOutcomeKind = "ACCEPTED"
 	DispatchRejected  DispatchOutcomeKind = "REJECTED"
 	DispatchAmbiguous DispatchOutcomeKind = "AMBIGUOUS"
+	DispatchConflict  DispatchOutcomeKind = "CONFLICT"
 )
 
 type ReconciliationKind string
@@ -281,6 +282,11 @@ func (i Intent) RecordDispatchOutcome(expectedVersion uint64, owner string, toke
 		}
 		i.Status = Rejected
 		i.RejectionCode = outcome.RejectionCode
+	case DispatchConflict:
+		if outcome.RunID != "" || outcome.WorkflowID != "" || outcome.RejectionCode != "" {
+			return i.manualReview("INVALID_RUNTIME_CONFLICT"), nil
+		}
+		return i.manualReview("RUNTIME_INTENT_CONFLICT"), nil
 	case DispatchAmbiguous:
 		if outcome.RunID != "" || outcome.WorkflowID != "" || outcome.RejectionCode != "" {
 			return i.manualReview("INVALID_AMBIGUOUS_RECEIPT"), nil
