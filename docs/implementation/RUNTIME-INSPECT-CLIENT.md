@@ -1,4 +1,51 @@
-# Read-only Runtime Inspect boundary — Draft PR #14, based on Inbox PR #7
+# Runtime Inspect boundary — v1 compatibility and v2 full-binding recovery
+
+## Current candidate: 2026-11-18, ACP #61 / Runtime #37
+
+For a newly admitted RunIntent, ACP persists exact input bytes and a principal
+snapshot before StartRun. The v1 correlation-only GET is insufficient
+recovery proof: an earlier conflicting Runtime acceptance with the same
+tenant/intent/digest may have a different principal, policy or input.
+
+Use the authenticated, read-only `POST /internal/v2/run-intents:inspect`
+with the **same strict v2 acceptance envelope**, built from the committed
+ACP bytes and snapshot. Runtime derives the issuer from the verified peer,
+and compares tenant, RunIntent, digest, Agent, Release, Session, normalized
+JSONB input, snapshot version, Project, Subject, Actor, policy revision and
+config digest in one committed SELECT. An exact match returns existing
+Runtime-issued Run/Workflow IDs and `created:false`. An explicit mismatch
+returns HTTP 409, including legacy Runtime Runs without the required
+snapshot. Foreign tenant and unobserved committed acceptance remain
+`ABSENT_UNCERTAIN`. This route cannot create a Run or issue a Permit.
+
+ACP's ReconcileOnce selects the full-binding inspector for persisted input;
+a missing v2 adapter, unavailable endpoint, corrupt input or invalid answer
+cannot downgrade to GET v1. The explicit legacy NULL input path remains
+development compatibility only. A lost conflict ACK must end in
+MANUAL_REVIEW after authoritative inspection, not ACCEPTED. Absence/timeout
+remains UNKNOWN and never permits StartRun retry.
+
+Transport uses the same TLS 1.3/SPIFFE client and lease deadline;
+no forwarded user credentials, redirects, automatic POST replay or proxy.
+Raw task input is bounded and not emitted in audit or error messages.
+Nothing in this read contract grants model/tool/sandbox egress.
+
+Runtime pinned candidate: [#37](https://github.com/avaargsh/agent-runtime/pull/37),
+`3b7b5579442a629a5b7a35962a5f2c0b2cfd4d42`,
+[PG17/race verification](https://github.com/avaargsh/agent-runtime/actions/runs/44248994491).
+ACP [#61](https://github.com/avaargsh/agent-control-panel/pull/61) contains
+the exact pinned two-process proof; see its latest CI rather than assuming
+that a prior head passed. Production IdP/catalog, least-privilege roles,
+dispatch-time revocation, authorized runtime execution, independent review
+and G01–G05 service-owner gates remain pending. No claim of final absence.
+
+---
+
+## Historical v1 design and initial evidence
+
+The following section is retained as historical context, not as the current
+input-bearing recovery contract.
+
 
 Status: **local code and mTLS simulation verified; no deployed Runtime wiring, StartRun or cross-service production acceptance**.
 
