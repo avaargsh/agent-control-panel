@@ -10,6 +10,7 @@ import (
 )
 
 const RunIntentCreateScope = "acp:run-intent:create"
+const MaxPolicySnapshotLifetime = time.Hour
 
 var (
 	ErrPolicyDenied      = errors.New("RunIntent admission denied by policy")
@@ -66,7 +67,9 @@ type ExactPolicy struct {
 // fails closed. Reload/revocation is not implicit: the host must replace this
 // authority with a fresh verified snapshot before the expiry deadline.
 func NewExactPolicy(snapshot PolicySnapshot) (*ExactPolicy, error) {
-	if !validPolicyID(snapshot.Revision) || !snapshot.ExpiresAt.After(time.Now()) ||
+	now := time.Now()
+	if !validPolicyID(snapshot.Revision) || !snapshot.ExpiresAt.After(now) ||
+		snapshot.ExpiresAt.Sub(now) > MaxPolicySnapshotLifetime ||
 		len(snapshot.Grants) > 10000 {
 		return nil, ErrPolicyConfig
 	}
