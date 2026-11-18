@@ -42,12 +42,12 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6 pinned
         with:
           repository: avaargsh/agent-runtime
-          ref: 3b7b5579442a629a5b7a35962a5f2c0b2cfd4d42
+          ref: 157bad70f3ef35b7cbc8a674ad74b0eb8f2a1e55
           path: runtime-source
           persist-credentials: false
       - name: Verify exact Runtime source checkout
         working-directory: runtime-source
-        run: test "$(git rev-parse HEAD)" = '3b7b5579442a629a5b7a35962a5f2c0b2cfd4d42'
+        run: test "$(git rev-parse HEAD)" = '157bad70f3ef35b7cbc8a674ad74b0eb8f2a1e55'
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6 pinned
         with:
           go-version: '1.27.4'
