@@ -162,3 +162,63 @@ durable business Checkpoint, Worker SIGKILL mid-business-step, authenticated
 Decision Core contract (G02), model protection, Sandbox + AgentD,
 credential broker, network egress gate and EngageGuard remain unproven.
 Do not wire the development dispatcher to a shared production queue.
+
+
+## Business checkpoint and Guard runtime safety authority — follow-on evidence
+
+The earlier exact ACP #63 same-Run admission/Temporal-start gate completed
+all CI at `1b70fd230a00df3fea30d315a638edafc0145600`
+([live gate](https://github.com/avaargsh/agent-control-panel/actions/runs/44251257819)).
+The following follow-on candidates are independently scoped; do not infer
+that their gates formed one combined business execution.
+
+### Runtime first business checkpoint
+
+[Runtime #39](https://github.com/avaargsh/agent-runtime/pull/39),
+`6d84af1c445098045f65103cefd3979f055fd4d4`:
+[Go/PG17](https://github.com/avaargsh/agent-runtime/actions/runs/44252526248)
+and [real Temporal Worker SIGKILL](https://github.com/avaargsh/agent-runtime/actions/runs/44252526285)
+PASS. Runtime validates the actual accepted business input against the Go
+Decision Core SRE objective/service/signal contract, persists immutable v11
+checkpoint plus canonical Attempt/Turn atomically, with tenant/digest,
+principal/config and active safety gates. A PostgreSQL insert failure rolls
+back the identity allocation; canceled and OPEN-breaker Runs fail closed.
+
+Actual Worker killed after commit and before Activity ACK; replacement
+Worker recovered one checkpoint, same Attempt/Turn, no raw input canary in
+Temporal History, and the Workflow remained RUNNING at WAITING_AUTHORITY
+(13.04s test). The fixture accepted a principal-bound Run directly through
+Runtime Store, not the live ACP OAuth path. This is business preparation,
+not a DecisionRecord or successful business Run. No model/tool egress.
+
+### Runtime -> Guard safety boundary
+
+[Runtime #40](https://github.com/avaargsh/agent-runtime/pull/40) exposes
+`GET /internal/v1/runs/{run_id}/safety` only to a distinct configured
+mTLS workload and one tenant, with server-side principal-bound Run check
+and fresh RUNNING/CLOSED breaker snapshot. No request-tenant assertion,
+cache, Permit or authorization field. PG17 behavior tests passed at
+`8eda8b0545427187b8e5be347d3e1119fad2827e` (separate formatting check
+failed; correction at `4a3fa8ed92df8db28434447e6bc69480fb8e423f`).
+
+[EngageGuard #28](https://github.com/avaargsh/EngageGuard/pull/28) implements
+the existing RunSafetyAuthority client with exact TLS server SPIFFE and
+CA/hostname verification, strict versioned response and no stale fallback.
+Actual pinned Runtime API and Guard client exercised through real mTLS
+([live gate #44252776333](https://github.com/avaargsh/EngageGuard/actions/runs/44252776333),
+`fa0389772c5c20a73af4370b827d9c543d46b7cd`, PASS 0.05s).
+The same Run fd50f532-8064-4075-9b08-0e9891835963 was accepted by the actual
+Runtime v2 endpoint and read/denied across isolated PG fixture state changes.
+No extra Run/Outbox. These state transitions are test fixtures, not proof
+of actual business execution. Guard code formatting corrected separately at
+`a542505f084fc37cd27421c738d41562b2eef88b`; verify exact HEAD checks.
+
+All PRs remain Draft pending independently approved review, branch rules,
+authority ratification and production environment acceptance. Next gates:
+integrate the same live ACP Run into actual checkpoint Workflow; authentic
+Decision Core context/capability/evidence publication and verification,
+durable authorized continuation; then actual sandbox AgentD + command
+journal, credential broker and egress, Guard decision/permit/revocation and
+operation recovery, independent verifier and trace/evidence, real GitHub
+repair workflow and resource cleanup. No protected effects or agent
+long-term production credentials are enabled by these candidates.
