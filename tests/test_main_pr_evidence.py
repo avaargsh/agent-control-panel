@@ -85,6 +85,9 @@ class EvidenceTests(unittest.TestCase):
         content = (Path(__file__).resolve().parents[1] / '.github' / 'workflows'
                    / 'workspace-writeonce-approved.yml').read_text(encoding='utf-8')
         self.assertIn('  validate-acceptance-ref:', content)
+        preflight = content.split('  validate-acceptance-ref:', 1)[1].split('  approved-s3-writeonce:', 1)[0]
+        self.assertIn('OPERATOR_AUTHORIZATION: ${{ inputs.authorization }}', preflight)
+        self.assertNotIn('${{ secrets.', preflight)
         self.assertIn('    needs: validate-acceptance-ref', content)
         self.assertIn("    if: github.ref == 'refs/heads/main'", content)
         self.assertIn('test "$GITHUB_REF" = "refs/heads/main"', content)
@@ -116,17 +119,20 @@ class EvidenceTests(unittest.TestCase):
         match = re.search(r'(?m)^        run: \|\n((?:          .*\n)+)', block)
         self.assertIsNotNone(match, 'manual preflight must have a standalone Bash script')
         script = textwrap.dedent(match.group(1))
-        for name, ref, run_sha, approved, allowed in [
-            ('approved-exact-main', 'refs/heads/main', 'a' * 40, 'a' * 40, True),
-            ('feature-branch', 'refs/heads/feature/unsafe', 'a' * 40, 'a' * 40, False),
-            ('tag', 'refs/tags/release', 'a' * 40, 'a' * 40, False),
-            ('different-sha', 'refs/heads/main', 'a' * 40, 'b' * 40, False),
-            ('short-sha', 'refs/heads/main', 'a' * 40, 'a' * 39, False),
-            ('uppercase-sha', 'refs/heads/main', 'a' * 40, 'A' * 40, False),
+        for name, ref, run_sha, approved, authorization, allowed in [
+            ('approved-exact-main', 'refs/heads/main', 'a' * 40, 'a' * 40, 'approved-disposable-provider', True),
+            ('feature-branch', 'refs/heads/feature/unsafe', 'a' * 40, 'a' * 40, 'approved-disposable-provider', False),
+            ('tag', 'refs/tags/release', 'a' * 40, 'a' * 40, 'approved-disposable-provider', False),
+            ('different-sha', 'refs/heads/main', 'a' * 40, 'b' * 40, 'approved-disposable-provider', False),
+            ('short-sha', 'refs/heads/main', 'a' * 40, 'a' * 39, 'approved-disposable-provider', False),
+            ('uppercase-sha', 'refs/heads/main', 'a' * 40, 'A' * 40, 'approved-disposable-provider', False),
+            ('missing-authorization', 'refs/heads/main', 'a' * 40, 'a' * 40, '', False),
+            ('wrong-authorization', 'refs/heads/main', 'a' * 40, 'a' * 40, 'unapproved', False),
         ]:
             with self.subTest(name=name):
                 env = {'PATH': os.environ.get('PATH', '/usr/bin'), 'GITHUB_REF': ref,
-                       'GITHUB_SHA': run_sha, 'APPROVED_SHA': approved}
+                       'GITHUB_SHA': run_sha, 'APPROVED_SHA': approved,
+                       'OPERATOR_AUTHORIZATION': authorization}
                 completed = subprocess.run(['bash', '-c', script], env=env,
                                            capture_output=True, text=True, check=False)
                 self.assertEqual(completed.returncode == 0, allowed,
