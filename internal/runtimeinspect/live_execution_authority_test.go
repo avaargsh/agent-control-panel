@@ -47,7 +47,7 @@ func goldenReleaseArtifact(t *testing.T, target runintent.Intent) ([]byte, strin
 		config.Capabilities = append(config.Capabilities, authorityhttp.CapabilityContract{
 			ID: id, Version: "1.0.0", InputSchema: json.RawMessage(`{"type":"object","required":["service"]}`),
 			OutputSchema: json.RawMessage(`{"type":"object"}`),
-			EffectClass: "read_only", Idempotency: "safe", TenantScoped: true,
+			EffectClass:  "read_only", Idempotency: "safe", TenantScoped: true,
 		})
 	}
 	raw, err := json.Marshal(config)
