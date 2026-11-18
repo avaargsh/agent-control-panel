@@ -308,9 +308,9 @@ func (p *Publisher) Publish(a Snapshot, input []byte, now time.Time) (SignedPubl
 	}
 	result := Publication{
 		SchemaVersion: publicationSchema, Authority: a, Context: context,
-		ContextSnapshot: snapshot("ctx", "acp-context-v1", contextBytes),
+		ContextSnapshot:    snapshot("ctx", "acp-context-v1", contextBytes),
 		CapabilitySnapshot: snapshot("cap", c.CatalogVersion, raw),
-		Capabilities: refs, ContextContent: contextBytes, CapabilityContent: raw,
+		Capabilities:       refs, ContextContent: contextBytes, CapabilityContent: raw,
 	}
 	payload, err := json.Marshal(result)
 	if err != nil {
