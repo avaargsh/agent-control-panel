@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -56,15 +57,16 @@ func TestIntrospectionRequiresActiveBoundUnexpiredPrincipal(t *testing.T) {
 	}{
 		{"valid", validIntrospection(), true},
 		{"inactive", `{"active":false}`, false},
-		{"wrong issuer", fmt.Sprintf(`{"active":true,"iss":"https://foreign.test","aud":%q,"sub":"alice","exp":%d}`, testAudience, future), false},
-		{"wrong audience", fmt.Sprintf(`{"active":true,"iss":%q,"aud":"other","sub":"alice","exp":%d}`, testIssuer, future), false},
-		{"expired", fmt.Sprintf(`{"active":true,"iss":%q,"aud":%q,"sub":"alice","exp":%d}`, testIssuer, testAudience, past), false},
-		{"missing expiry", fmt.Sprintf(`{"active":true,"iss":%q,"aud":%q,"sub":"alice"}`, testIssuer, testAudience), false},
-		{"future nbf", fmt.Sprintf(`{"active":true,"iss":%q,"aud":%q,"sub":"alice","exp":%d,"nbf":%d}`, testIssuer, testAudience, future, future), false},
-		{"duplicate active", fmt.Sprintf(`{"active":false,"active":true,"iss":%q,"aud":%q,"sub":"alice","exp":%d}`, testIssuer, testAudience, future), false},
-		{"missing subject", fmt.Sprintf(`{"active":true,"iss":%q,"aud":%q,"exp":%d}`, testIssuer, testAudience, future), false},
-		{"string audience", fmt.Sprintf(`{"active":true,"iss":%q,"aud":%q,"sub":"alice","exp":%d}`, testIssuer, testAudience, future), true},
+		{"wrong issuer", fmt.Sprintf(`{"active":true,"iss":"https://foreign.test","aud":%q,"sub":"alice","exp":%d,"token_type":"Bearer"}`, testAudience, future), false},
+		{"wrong audience", fmt.Sprintf(`{"active":true,"iss":%q,"aud":"other","sub":"alice","exp":%d,"token_type":"Bearer"}`, testIssuer, future), false},
+		{"expired", fmt.Sprintf(`{"active":true,"iss":%q,"aud":%q,"sub":"alice","exp":%d,"token_type":"Bearer"}`, testIssuer, testAudience, past), false},
+		{"missing expiry", fmt.Sprintf(`{"active":true,"iss":%q,"aud":%q,"sub":"alice","token_type":"Bearer"}`, testIssuer, testAudience), false},
+		{"future nbf", fmt.Sprintf(`{"active":true,"iss":%q,"aud":%q,"sub":"alice","exp":%d,"nbf":%d,"token_type":"Bearer"}`, testIssuer, testAudience, future, future), false},
+		{"duplicate active", fmt.Sprintf(`{"active":false,"active":true,"iss":%q,"aud":%q,"sub":"alice","exp":%d,"token_type":"Bearer"}`, testIssuer, testAudience, future), false},
+		{"missing subject", fmt.Sprintf(`{"active":true,"iss":%q,"aud":%q,"exp":%d,"token_type":"Bearer"}`, testIssuer, testAudience, future), false},
+		{"string audience", fmt.Sprintf(`{"active":true,"iss":%q,"aud":%q,"sub":"alice","exp":%d,"token_type":"Bearer"}`, testIssuer, testAudience, future), true},
 		{"refresh token", fmt.Sprintf(`{"active":true,"iss":%q,"aud":%q,"sub":"alice","exp":%d,"token_type":"refresh_token"}`, testIssuer, testAudience, future), false},
+		{"missing token type", fmt.Sprintf(`{"active":true,"iss":%q,"aud":%q,"sub":"alice","exp":%d}`, testIssuer, testAudience, future), false},
 		{"trailing content", validIntrospection() + " {}", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -82,9 +84,9 @@ func TestIntrospectionRequiresActiveBoundUnexpiredPrincipal(t *testing.T) {
 }
 
 func TestIntrospectionDoesNotFollowRedirect(t *testing.T) {
-	called := false
+	var called atomic.Bool
 	target := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		called = true
+		called.Store(true)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer target.Close()
@@ -99,8 +101,8 @@ func TestIntrospectionDoesNotFollowRedirect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := auth.Authenticate(context.Background(), "opaque-test-token"); !errors.Is(err, ErrIdentityUnavailable) || called {
-		t.Fatalf("redirect followed or not rejected: called=%v err=%v", called, err)
+	if _, err := auth.Authenticate(context.Background(), "opaque-test-token"); !errors.Is(err, ErrIdentityUnavailable) || called.Load() {
+		t.Fatalf("redirect followed or not rejected: called=%v err=%v", called.Load(), err)
 	}
 }
 
