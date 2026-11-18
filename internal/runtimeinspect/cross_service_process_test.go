@@ -418,6 +418,77 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 	if err != nil || stored.Status != runintent.Accepted || stored.RunID != runID {
 		t.Fatalf("ACP persisted receipt: %+v %v", stored, err)
 	}
+
+	// Positive control for the confused-binding gap: a separately committed
+	// Runtime Run has the same correlation digest but a different principal.
+	// Lose the authoritative 409 response to an actual ACP dispatch. A
+	// weaker v1 read would falsely accept the existing Run.
+	conflicted := intent
+	conflicted.ID = "00000000-0000-4000-8000-000000000991"
+	conflicted.IdempotencyKey = "conflicting-principal"
+	conflicted.RequestDigest, err = runintent.ExecutionInputDigest(conflicted, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conflictEvent := event(1, 10, "agent.run-intent.created")
+	conflictEvent.AggregateID = conflicted.ID
+	conflictEvent.Payload = json.RawMessage(`{"run_intent_id":"` + conflicted.ID + `"}`)
+	if _, inserted, err := repo.CreateWithInput(ctx, conflicted, conflictEvent, input); err != nil || !inserted {
+		t.Fatalf("conflicted ACP create: %v", err)
+	}
+	wrongBinding := conflicted
+	wrongBinding.PrincipalSnapshot.SubjectID = "different-subject"
+	wrongPayload, err := buildAcceptanceBody(wrongBinding, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed, err := send(wrongPayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = seed.Body.Close()
+	if seed.StatusCode != http.StatusCreated {
+		t.Fatalf("conflicting Runtime positive control was not created: %d", seed.StatusCode)
+	}
+	weak, err := inspector.Inspect(ctx, InspectRequest{
+		TenantID: conflicted.TenantID, RunIntentID: conflicted.ID, RequestDigest: conflicted.RequestDigest,
+	})
+	if err != nil || weak.Status != Found {
+		t.Fatalf("v1 positive control did not expose the weak correlation result: %v", err)
+	}
+	conflictClient, err := NewClient(origin, "spiffe://example.org/runtime", roots, acpCert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	droppedConflict := &lostACKTransport{upstream: conflictClient.client.Transport, wantStatus: http.StatusConflict}
+	conflictClient.client.Transport = droppedConflict
+	conflictAdapter, err := NewDevelopmentAcceptor(conflictClient, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ambiguous, err := DispatchOnce(ctx, repo, conflictAdapter, conflicted.TenantID, conflicted.ID, "conflict-dispatcher", time.Minute)
+	if !errors.Is(err, ErrUnavailable) || ambiguous.Status != runintent.Unknown ||
+		!droppedConflict.dropped || droppedConflict.calls != 1 {
+		t.Fatalf("lost conflict ACK did not create UNKNOWN: %+v %v", ambiguous, err)
+	}
+	quarantined, err := ReconcileOnce(ctx, repo, inspector, conflicted.TenantID, conflicted.ID, "conflict-reconciler", time.Minute)
+	if !errors.Is(err, ErrRemoteConflict) || quarantined.Status != runintent.ManualReview ||
+		quarantined.RunID != "" || quarantined.ManualReviewCode != "RUNTIME_STATE_CONFLICT" {
+		t.Fatalf("conflicting principal was not quarantined: %+v %v", quarantined, err)
+	}
+	assertACPOutbox(conflicted.TenantID, conflicted.ID,
+		"1:agent.run-intent.created",
+		"2:agent.run-intent.dispatching",
+		"3:agent.run-intent.unknown",
+		"4:agent.run-intent.reconciling",
+		"5:agent.run-intent.manual-review")
+	var conflictingRuns, conflictingStarts int
+	if err := runtimePool.QueryRow(ctx, `
+		SELECT count(*), (SELECT count(*) FROM runtime_outbox WHERE aggregate_id=$2::uuid AND event_type='RUN_START_REQUESTED')
+		FROM runs WHERE run_intent_id=$1::uuid
+	`, conflicted.ID, weak.RunID).Scan(&conflictingRuns, &conflictingStarts); err != nil || conflictingRuns != 1 || conflictingStarts != 1 {
+		t.Fatalf("conflict recovery duplicated state: %d/%d %v", conflictingRuns, conflictingStarts, err)
+	}
 }
 
 func writeProcessCertificate(t *testing.T, certFile, keyFile string, identity tls.Certificate) {
@@ -439,6 +510,10 @@ func writeProcessCertificate(t *testing.T, certFile, keyFile string, identity tl
 }
 
 type blockedReconciliationInspector struct{}
+
+func (b blockedReconciliationInspector) InspectBound(ctx context.Context, _ runintent.Intent, _ []byte) (Inspection, error) {
+	return b.Inspect(ctx, InspectRequest{})
+}
 
 func (blockedReconciliationInspector) Inspect(ctx context.Context, _ InspectRequest) (Inspection, error) {
 	<-ctx.Done()
@@ -473,9 +548,10 @@ func TestCrashReconcilerAfterClaimChild(t *testing.T) {
 // request and checks the create ACK before deliberately losing it. Runtime
 // database assertions in the parent independently prove durable acceptance.
 type lostACKTransport struct {
-	upstream http.RoundTripper
-	calls    int
-	dropped  bool
+	upstream   http.RoundTripper
+	calls      int
+	dropped    bool
+	wantStatus int
 }
 
 func (t *lostACKTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -488,8 +564,12 @@ func (t *lostACKTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 	if _, err := io.Copy(io.Discard, res.Body); err != nil {
 		return nil, err
 	}
-	if res.StatusCode != http.StatusCreated {
-		return nil, fmt.Errorf("first Runtime acceptance HTTP %d", res.StatusCode)
+	want := t.wantStatus
+	if want == 0 {
+		want = http.StatusCreated
+	}
+	if res.StatusCode != want {
+		return nil, fmt.Errorf("Runtime returned HTTP %d, expected %d", res.StatusCode, want)
 	}
 	t.dropped = true
 	return nil, io.ErrUnexpectedEOF
