@@ -115,3 +115,50 @@ must be recorded as blockers, not replaced with a mock PASS.
 
 All cited runs are from the corresponding historical commit, not proof
 that subsequent integrated candidates or production environments passed.
+
+
+## Same admitted Run to Temporal: actual non-production proof
+
+[ACP #63](https://github.com/avaargsh/agent-control-panel/pull/63)
+uses the live issuer fixture, actual ACP CatalogPolicy and PostgreSQL,
+the real Runtime mTLS API and the existing Runtime Temporal dispatcher.
+The external driver may only consume the one already accepted Run in
+a clean disposable database; it must not seed a separate Run or grant.
+
+Exact historical candidate `0cff5e1696f6211b5e498df19f96ce88274c7ae7`:
+[CI #44250898589](https://github.com/avaargsh/agent-control-panel/actions/runs/44250898589)
+executed `TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart`
+(PASS 15.65s, excluding provisioning/build) and
+`TestExternalACPAdmissionTemporalRecovery` (PASS 11.72s).
+
+- Live Keycloak image by immutable digest; actual service-account token,
+  catalog roles and immutable input; unauthorized role replay denied.
+- Two independent PostgreSQL databases; actual API process and verified
+  TLS 1.3/SPIFFE acceptance, lost HTTP 201 ACK, SIGKILL/restart,
+  full-bound v2 Inspect, stale-fence rejection and one canonical Run.
+- Same Run's existing Runtime Outbox starts real Temporal; lost Temporal
+  ACK, persisted server restart before worker execution, authoritative
+  history verification and exactly one Start, Attempt and Turn.
+- Wrong principal positive-control accepted under a distinct test intent,
+  lost 409 ACK -> MANUAL_REVIEW, no duplicate logical Run.
+- Runtime subprocesses use an explicit environment allowlist; issuer
+  credentials are not forwarded. Test selectors require actual RUN/PASS.
+
+Reproduce in a dedicated CI checkout using
+`.github/workflows/acp-temporal-golden-path.yml`. It pins separate
+issuer fixture `5b0109cbafcf659f2230f7a38fc560b8644332a9`, Runtime API
+`157bad70f3ef35b7cbc8a674ad74b0eb8f2a1e55` (v10 accepted execution
+binding immutability), and Runtime Temporal test driver
+`def4d7c89ff60f17056a8b1ec4f72bc876d44ab9`. It provisions clean databases,
+builds the two exact Runtime binaries, starts local HTTPS Keycloak and
+runs the same ACP test with the external driver enabled. No live
+production resources or credentials are required or permitted.
+
+This is an **admission/identity/Temporal-start recovery milestone**, not
+a successful business Run or independent verifier attestation. The
+existing workflow is an isolated no-egress admission probe; the server
+restarts before the worker processes the task. The actual Agent Loop,
+durable business Checkpoint, Worker SIGKILL mid-business-step, authenticated
+Decision Core contract (G02), model protection, Sandbox + AgentD,
+credential broker, network egress gate and EngageGuard remain unproven.
+Do not wire the development dispatcher to a shared production queue.
