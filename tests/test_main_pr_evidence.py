@@ -79,6 +79,73 @@ class EvidenceTests(unittest.TestCase):
     def test_unverified_rulesets_can_be_explicitly_unknown(self):
         self.assertEqual(validate(event(body())), [])
 
+    def test_s3_manual_acceptance_requires_main_ref_before_environment_secrets(self):
+        from pathlib import Path
+
+        content = (Path(__file__).resolve().parents[1] / '.github' / 'workflows'
+                   / 'workspace-writeonce-approved.yml').read_text(encoding='utf-8')
+        self.assertIn('  validate-acceptance-ref:', content)
+        preflight = content.split('  validate-acceptance-ref:', 1)[1].split('  approved-s3-writeonce:', 1)[0]
+        self.assertIn('OPERATOR_AUTHORIZATION: ${{ inputs.authorization }}', preflight)
+        self.assertNotIn('${{ secrets.', preflight)
+        self.assertIn('    needs: validate-acceptance-ref', content)
+        self.assertIn("    if: github.ref == 'refs/heads/main'", content)
+        self.assertIn('test "$GITHUB_REF" = "refs/heads/main"', content)
+
+    def test_s3_manual_acceptance_requires_exact_dispatch_commit(self):
+        from pathlib import Path
+
+        content = (Path(__file__).resolve().parents[1] / '.github' / 'workflows'
+                   / 'workspace-writeonce-approved.yml').read_text(encoding='utf-8')
+        self.assertIn('      expected_sha:', content)
+        self.assertIn('          APPROVED_SHA: ${{ inputs.expected_sha }}', content)
+        self.assertIn('[[ "$APPROVED_SHA" =~ ^[0-9a-f]{40}$ ]]', content)
+        self.assertIn('test "$GITHUB_SHA" = "$APPROVED_SHA"', content)
+        self.assertIn('          ref: ${{ inputs.expected_sha }}', content)
+        self.assertIn('test "$(git rev-parse HEAD)" = "$APPROVED_SHA"', content)
+
+    def test_s3_preflight_shell_rejects_wrong_ref_or_sha_before_secrets(self):
+        import os
+        import re
+        import subprocess
+        import textwrap
+        from pathlib import Path
+
+        content = (Path(__file__).resolve().parents[1] / '.github' / 'workflows'
+                   / 'workspace-writeonce-approved.yml').read_text(encoding='utf-8')
+        marker = '      - name: Fail closed on non-main or unreviewed code'
+        self.assertIn(marker, content)
+        block = content.split(marker, 1)[1].split('  approved-s3-writeonce:', 1)[0]
+        match = re.search(r'(?m)^        run: \|\n((?:          .*\n)+)', block)
+        self.assertIsNotNone(match, 'manual preflight must have a standalone Bash script')
+        script = textwrap.dedent(match.group(1))
+        for name, ref, run_sha, approved, authorization, allowed in [
+            ('approved-exact-main', 'refs/heads/main', 'a' * 40, 'a' * 40, 'approved-disposable-provider', True),
+            ('feature-branch', 'refs/heads/feature/unsafe', 'a' * 40, 'a' * 40, 'approved-disposable-provider', False),
+            ('tag', 'refs/tags/release', 'a' * 40, 'a' * 40, 'approved-disposable-provider', False),
+            ('different-sha', 'refs/heads/main', 'a' * 40, 'b' * 40, 'approved-disposable-provider', False),
+            ('short-sha', 'refs/heads/main', 'a' * 40, 'a' * 39, 'approved-disposable-provider', False),
+            ('uppercase-sha', 'refs/heads/main', 'a' * 40, 'A' * 40, 'approved-disposable-provider', False),
+            ('missing-authorization', 'refs/heads/main', 'a' * 40, 'a' * 40, '', False),
+            ('wrong-authorization', 'refs/heads/main', 'a' * 40, 'a' * 40, 'unapproved', False),
+        ]:
+            with self.subTest(name=name):
+                env = {'PATH': os.environ.get('PATH', '/usr/bin'), 'GITHUB_REF': ref,
+                       'GITHUB_SHA': run_sha, 'APPROVED_SHA': approved,
+                       'OPERATOR_AUTHORIZATION': authorization}
+                completed = subprocess.run(['bash', '-c', script], env=env,
+                                           capture_output=True, text=True, check=False)
+                self.assertEqual(completed.returncode == 0, allowed,
+                                 f'{name}: exit={completed.returncode}; stderr={completed.stderr}')
+
+    def test_s3_manual_acceptance_checkout_does_not_persist_token(self):
+        from pathlib import Path
+
+        content = (Path(__file__).resolve().parents[1] / '.github' / 'workflows'
+                   / 'workspace-writeonce-approved.yml').read_text(encoding='utf-8')
+        self.assertIn('          persist-credentials: false', content)
+
+
 
 if __name__ == '__main__':
     unittest.main()
