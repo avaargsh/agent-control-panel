@@ -1,0 +1,97 @@
+name: Same ACP Run to Temporal recovery (non-production)
+
+on:
+  pull_request:
+    paths:
+      - 'internal/runtimeinspect/**'
+      - 'internal/admission/**'
+      - 'internal/runintent/**'
+      - 'migrations/**'
+      - '.github/workflows/acp-temporal-golden-path.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GOTOOLCHAIN: local
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: acp-test-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          path: acp
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: avaargsh/agent-control-panel
+          ref: cda6be5421b31325a340e90b541b602d638ce938
+          path: issuer-fixture
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: avaargsh/agent-runtime
+          ref: 9942984d39b3da38a973542c233702a3d7f43e82
+          path: runtime-api
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: avaargsh/agent-runtime
+          ref: def4d7c89ff60f17056a8b1ec4f72bc876d44ab9
+          path: runtime-temporal
+          persist-credentials: false
+      - name: Verify immutable external source pins
+        run: |
+          test "$(git -C issuer-fixture rev-parse HEAD)" = 'cda6be5421b31325a340e90b541b602d638ce938'
+          test "$(git -C runtime-api rev-parse HEAD)" = '9942984d39b3da38a973542c233702a3d7f43e82'
+          test "$(git -C runtime-temporal rev-parse HEAD)" = 'def4d7c89ff60f17056a8b1ec4f72bc876d44ab9'
+          git -C acp rev-parse HEAD
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version: '1.27.4'
+          cache: false
+      - name: Verify patched toolchain
+        run: test "$(go env GOVERSION)" = "go1.27.4"
+      - name: Create separate authoritative databases
+        env:
+          PGPASSWORD: acp-test-only
+        run: |
+          psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE acp_golden'
+          psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE runtime_golden'
+      - name: Compile actual authenticated Runtime API
+        working-directory: runtime-api
+        run: go build -trimpath -o "$RUNNER_TEMP/acp-runtime-api" ./cmd/acp-api
+      - name: Compile actual Temporal integration driver
+        working-directory: runtime-temporal
+        run: go test -race -c -o "$RUNNER_TEMP/runtime-temporal-acceptance" ./internal/store/postgres
+      - name: Execute live OAuth to same Run Temporal recovery
+        working-directory: acp
+        env:
+          ACP_CROSS_SERVICE: '1'
+          ACP_DATABASE_URL: postgres://postgres:acp-test-only@127.0.0.1:5432/acp_golden?sslmode=disable
+          ACP_RUNTIME_DATABASE_URL: postgres://postgres:acp-test-only@127.0.0.1:5432/runtime_golden?sslmode=disable
+          ACP_RUNTIME_API_BIN: ${{ runner.temp }}/acp-runtime-api
+          ACP_RUNTIME_TEMPORAL_TEST_BIN: ${{ runner.temp }}/runtime-temporal-acceptance
+          PGTEST_DSN: postgres://postgres:acp-test-only@127.0.0.1:5432/acp_golden?sslmode=disable
+        run: bash ../issuer-fixture/scripts/test-real-oidc-admission.sh golden-path
+
+# Two pinned Runtime candidates share the same DB; the V10 additive fence
+# is applied only by the actual API. The external driver never migrates,
+# seeds a Run, invokes model/tool egress or claims production business success.
