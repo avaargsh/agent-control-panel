@@ -2,47 +2,111 @@ package runtimeinspect
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/tls"
+	"encoding/hex"
+	"encoding/pem"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/avaargsh/agent-control-panel/internal/authorityhttp"
 	runpg "github.com/avaargsh/agent-control-panel/internal/runintent/postgres"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // This is a real TLS listener using the same actual OAuth-admitted and
 // reconciled ACP Run, never a fake repository or caller tenant assertion.
-func newLiveExecutionAuthorityReader(t *testing.T, repo *runpg.Repository, ref runpg.ExecutionAuthorityRef) func(int) {
+func newLiveExecutionAuthorityReader(t *testing.T, pool *pgxpool.Pool, dsn string, repo *runpg.Repository, ref runpg.ExecutionAuthorityRef) func(int) {
 	t.Helper()
 	const peer = "spiffe://example.org/decision"
 	roots, serverCert, clientCert := testSPIFFECertificatesFor(t, "spiffe://example.org/acp", peer)
-	handler, err := authorityhttp.NewHandler(repo, peer, ref.TenantID)
+	binary := os.Getenv("ACP_AUTHORITY_API_BIN")
+	if binary == "" {
+		t.Fatal("live Golden Path requires the compiled ACP authority service")
+	}
+	ctx := context.Background()
+	// Dedicated disposable LOGIN: no DDL or writes. Provision the role only
+	// inside the isolated Golden Path fixture; the API process never migrates.
+	var random [16]byte
+	if _, err := rand.Read(random[:]); err != nil {
+		t.Fatal(err)
+	}
+	password := hex.EncodeToString(random[:])
+	role := "acp_authority_" + password[:16]
+	quoted := pgx.Identifier{role}.Sanitize()
+	for _, stmt := range []string{
+		"CREATE ROLE " + quoted + " LOGIN PASSWORD '" + password + "'",
+		"GRANT USAGE ON SCHEMA public TO " + quoted,
+		"GRANT SELECT ON run_intents,admission_tenants,admission_projects,admission_principals,admission_memberships,admission_releases,admission_sessions TO " + quoted,
+	} {
+		if _, err := pool.Exec(ctx, stmt); err != nil {
+			t.Fatal("could not provision isolated authority reader role")
+		}
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, "DROP OWNED BY "+quoted)
+		_, _ = pool.Exec(ctx, "DROP ROLE "+quoted)
+	})
+	dbURL, err := url.Parse(dsn)
+	if err != nil || dbURL.Host == "" {
+		t.Fatal("Golden Path requires isolated PostgreSQL URL")
+	}
+	dbURL.User = url.UserPassword(role, password)
+	readDSN := dbURL.String()
+	readConn, err := pgx.Connect(ctx, readDSN)
+	if err != nil {
+		t.Fatal("isolated read role login failed")
+	}
+	if _, err := readConn.Exec(ctx, "UPDATE run_intents SET updated_at=clock_timestamp() WHERE false"); err == nil {
+		readConn.Close(ctx)
+		t.Fatal("authority reader obtained write privilege")
+	}
+	_ = readConn.Close(ctx)
+	dir := t.TempDir()
+	certFile, keyFile, caFile := filepath.Join(dir, "acp-authority.pem"), filepath.Join(dir, "acp-authority.key"), filepath.Join(dir, "ca.pem")
+	writeProcessCertificate(t, certFile, keyFile, serverCert)
+	if err := os.WriteFile(caFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: serverCert.Certificate[1]}), 0600); err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := httptest.NewUnstartedServer(handler)
-	srv.TLS = &tls.Config{
-		MinVersion: tls.VersionTLS13, ClientAuth: tls.RequireAndVerifyClientCert,
-		ClientCAs: roots, Certificates: []tls.Certificate{serverCert},
+	addr := listener.Addr().String()
+	_ = listener.Close()
+	origin := "https://" + addr
+	proc := exec.Command(binary)
+	proc.Env = append(goldenPathChildEnvironment(),
+		"ACP_AUTHORITY_DATABASE_URL="+readDSN, "ACP_AUTHORITY_TLS_CERT="+certFile,
+		"ACP_AUTHORITY_TLS_KEY="+keyFile, "ACP_AUTHORITY_CLIENT_CA="+caFile,
+		"ACP_AUTHORITY_PEER_SPIFFE_ID="+peer, "ACP_AUTHORITY_TENANT="+ref.TenantID,
+		"ACP_AUTHORITY_LISTEN_ADDR="+addr)
+	if err := proc.Start(); err != nil {
+		t.Fatal(err)
 	}
-	srv.StartTLS()
-	t.Cleanup(srv.Close)
+	t.Cleanup(func() { _ = proc.Process.Kill(); _ = proc.Wait() })
 	transport := &http.Transport{TLSClientConfig: &tls.Config{
 		MinVersion: tls.VersionTLS13, RootCAs: roots, Certificates: []tls.Certificate{clientCert},
 	}}
 	t.Cleanup(transport.CloseIdleConnections)
-	h := &http.Client{Transport: transport}
+	h := &http.Client{Transport: transport, Timeout: 5 * time.Second}
 	path := "/internal/v1/run-authority/" + ref.RunIntentID + "?" + url.Values{
 		"run_id": {ref.RunID}, "request_digest": {ref.RequestDigest},
 	}.Encode()
 	call := func(client *http.Client, method, target string, want int) string {
 		t.Helper()
-		req, err := http.NewRequestWithContext(context.Background(), method, srv.URL+target, nil)
+		req, err := http.NewRequestWithContext(context.Background(), method, origin+target, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -59,6 +123,21 @@ func newLiveExecutionAuthorityReader(t *testing.T, repo *runpg.Repository, ref r
 		}
 		return string(raw)
 	}
+	ready := false
+	for deadline := time.Now().Add(15 * time.Second); time.Now().Before(deadline); {
+		response, err := h.Get(origin + path)
+		if err == nil {
+			_ = response.Body.Close()
+			if response.StatusCode == http.StatusOK {
+				ready = true
+				break
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if !ready {
+		t.Fatal("actual ACP read-only authority service did not become ready")
+	}
 	call(h, http.MethodGet, path+"&tenant_id=foreign", http.StatusBadRequest)
 	call(h, http.MethodPost, path, http.StatusMethodNotAllowed)
 	call(h, http.MethodGet, strings.Replace(path, ref.RunID, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", 1), http.StatusForbidden)
@@ -67,7 +146,8 @@ func newLiveExecutionAuthorityReader(t *testing.T, repo *runpg.Repository, ref r
 		t.Fatal(err)
 	}
 	badServer := httptest.NewUnstartedServer(badHandler)
-	badServer.TLS = srv.TLS.Clone()
+	badServer.TLS = &tls.Config{MinVersion: tls.VersionTLS13, ClientAuth: tls.RequireAndVerifyClientCert,
+		ClientCAs: roots, Certificates: []tls.Certificate{serverCert}}
 	badServer.StartTLS()
 	defer badServer.Close()
 	badReq, err := http.NewRequest(http.MethodGet, badServer.URL+path, nil)
