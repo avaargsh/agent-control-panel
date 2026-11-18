@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/avaargsh/agent-control-panel/internal/runintent"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestCatalogAdmissionEnforcesRolesAndResourceAttributesAtCommit(t *testing.T) {
@@ -41,8 +42,8 @@ func TestCatalogAdmissionEnforcesRolesAndResourceAttributesAtCommit(t *testing.T
 	}
 	intent.PrincipalSnapshot = binding.Snapshot
 	for _, tc := range []struct {
-		name string
-		deny string
+		name    string
+		deny    string
 		restore string
 	}{
 		{"viewer role", "UPDATE admission_memberships SET role='VIEWER'", "UPDATE admission_memberships SET role='RUNNER'"},
@@ -95,5 +96,34 @@ func TestCatalogAdmissionEnforcesRolesAndResourceAttributesAtCommit(t *testing.T
 	}
 	if countOutbox(t, pool, intent.ID) != 1 {
 		t.Fatal("policy denial changed Outbox")
+	}
+}
+
+func dropAdmissionCatalogMigrationForTest(t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+	ctx := context.Background()
+	for _, stmt := range []string{
+		"DROP TABLE admission_sessions",
+		"DROP TABLE admission_memberships",
+		"DROP TABLE admission_releases",
+		"DROP TABLE admission_principals",
+		"DROP TABLE admission_projects",
+		"DROP TABLE admission_tenants",
+		"DELETE FROM schema_migrations WHERE version=11",
+	} {
+		if _, err := pool.Exec(ctx, stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestAdmissionCatalogMigrationRejectsWeakenedRoleConstraint(t *testing.T) {
+	_, pool := testRepository(t)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, "ALTER TABLE admission_memberships DROP CONSTRAINT admission_memberships_role_check"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Migrate(ctx, pool); !errors.Is(err, ErrSchemaDrift) {
+		t.Fatalf("weakened role constraint accepted: %v", err)
 	}
 }
