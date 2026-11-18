@@ -56,14 +56,14 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           repository: avaargsh/agent-decision
-          ref: 66a248919855caf52c1f2514b40f2dac9426ec60
+          ref: 1c7563de8b1eab46c18d352ec556b9442d34e582
           path: decision
           persist-credentials: false
       - name: Verify immutable external source pins
         run: |
           test "$(git -C issuer-fixture rev-parse HEAD)" = '5b0109cbafcf659f2230f7a38fc560b8644332a9'
           test "$(git -C runtime-api rev-parse HEAD)" = '41b2959450f6be665759a77e1470e4b04e97752f'
-          test "$(git -C decision rev-parse HEAD)" = '66a248919855caf52c1f2514b40f2dac9426ec60'
+          test "$(git -C decision rev-parse HEAD)" = '1c7563de8b1eab46c18d352ec556b9442d34e582'
           git -C acp rev-parse HEAD
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
         with:
