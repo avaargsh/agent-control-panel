@@ -129,25 +129,32 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 	writeProcessCertificate(t, certFile, keyFile, serverCert)
 	acpCertFile, acpKeyFile := filepath.Join(dir, "acp.pem"), filepath.Join(dir, "acp.key")
 	writeProcessCertificate(t, acpCertFile, acpKeyFile, acpCert)
-	// A distinct actual Guard certificate authorizes Runtime's safety
-	// endpoint. It has no ACP, Decision, SQL or effectful credentials.
+	// Guard's Runtime Safety server has a dedicated strict SPIFFE service
+	// identity, not ACP Inspect's legacy spiffe://example.org/runtime
+	// identity. Keep the latter unchanged for all preexisting clients.
 	composed := golden && os.Getenv("ACP_LIVE_GUARD_COMPOSED") == "1"
 	guardSafetyCertFile, guardSafetyKeyFile, guardSafetyRootFile := "", "", ""
-	clientCAs := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: serverCert.Certificate[1]})
+	safetyServerCertFile, safetyServerKeyFile, guardSafetyCAFile := "", "", ""
 	if composed {
-		_, _, guardSafety := testSPIFFECertificatesFor(t, "spiffe://example.org/unused",
+		_, safetyServer, safetyClient := testSPIFFECertificatesFor(t,
+			"spiffe://example.org/ns/runtime/sa/agent-runtime",
 			"spiffe://example.org/ns/guard/sa/engageguard")
 		guardSafetyCertFile = filepath.Join(dir, "runtime-guard.pem")
 		guardSafetyKeyFile = filepath.Join(dir, "runtime-guard.key")
 		guardSafetyRootFile = filepath.Join(dir, "runtime-guard-roots.pem")
-		writeProcessCertificate(t, guardSafetyCertFile, guardSafetyKeyFile, guardSafety)
-		clientCAs = append(clientCAs, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: guardSafety.Certificate[1]})...)
-		if err := os.WriteFile(guardSafetyRootFile,
-			pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: serverCert.Certificate[1]}), 0600); err != nil {
-			t.Fatal(err)
+		safetyServerCertFile = filepath.Join(dir, "runtime-safety-server.pem")
+		safetyServerKeyFile = filepath.Join(dir, "runtime-safety-server.key")
+		guardSafetyCAFile = filepath.Join(dir, "runtime-safety-trust.pem")
+		writeProcessCertificate(t, guardSafetyCertFile, guardSafetyKeyFile, safetyClient)
+		writeProcessCertificate(t, safetyServerCertFile, safetyServerKeyFile, safetyServer)
+		rootsPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: safetyServer.Certificate[1]})
+		for _, path := range []string{guardSafetyRootFile, guardSafetyCAFile} {
+			if err := os.WriteFile(path, rootsPEM, 0600); err != nil {
+				t.Fatal(err)
+			}
 		}
 	}
-	if err := os.WriteFile(caFile, clientCAs, 0600); err != nil {
+	if err := os.WriteFile(caFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: serverCert.Certificate[1]}), 0600); err != nil {
 		t.Fatal(err)
 	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -189,10 +196,6 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 			"RUNTIME_ACP_SPIFFE_ID=spiffe://example.org/acp",
 			"RUNTIME_ACP_LISTEN_ADDR="+addr,
 		)
-		if composed {
-			cmd.Env = append(cmd.Env, "RUNTIME_SAFETY_SPIFFE_ID=spiffe://example.org/ns/guard/sa/engageguard",
-				"RUNTIME_SAFETY_TENANT="+intent.TenantID)
-		}
 		if err := cmd.Start(); err != nil {
 			_ = log.Close()
 			t.Fatal(err)
@@ -220,6 +223,55 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 	}
 	proc := start()
 	_ = wait(AbsentUncertain)
+	safetyOrigin := ""
+	if composed {
+		// Actual Runtime acp-api implementation, backed by the SAME
+		// PostgreSQL Run/Breaker, hosted behind a distinct strict SPIFFE
+		// server identity and separate mTLS client CA. Unlike a fake
+		// handler, it re-reads current durable breaker state on every GET.
+		safetyListener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		safetyAddress := safetyListener.Addr().String()
+		_ = safetyListener.Close()
+		safetyOrigin = "https://" + safetyAddress
+		safety := exec.Command(binary)
+		safety.Env = append(goldenPathChildEnvironment(),
+			"RUNTIME_DATABASE_URL="+runtimeDSN,
+			"RUNTIME_TLS_CERT="+safetyServerCertFile,
+			"RUNTIME_TLS_KEY="+safetyServerKeyFile,
+			"RUNTIME_CLIENT_CA="+guardSafetyCAFile,
+			"RUNTIME_ACP_SPIFFE_ID=spiffe://example.org/acp",
+			"RUNTIME_ACP_LISTEN_ADDR="+safetyAddress,
+			"RUNTIME_SAFETY_SPIFFE_ID=spiffe://example.org/ns/guard/sa/engageguard",
+			"RUNTIME_SAFETY_TENANT="+intent.TenantID)
+		safetyLog, err := os.OpenFile(filepath.Join(dir, "runtime-safety.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+		if err != nil {
+			t.Fatal(err)
+		}
+		safety.Stdout, safety.Stderr = safetyLog, safetyLog
+		if err := safety.Start(); err != nil {
+			_ = safetyLog.Close()
+			t.Fatal(err)
+		}
+		_ = safetyLog.Close()
+		t.Cleanup(func() { _ = safety.Process.Kill(); _ = safety.Wait() })
+		ready := false
+		for deadline := time.Now().Add(15 * time.Second); time.Now().Before(deadline); {
+			conn, dialErr := net.DialTimeout("tcp", safetyAddress, time.Second)
+			if dialErr == nil {
+				_ = conn.Close()
+				ready = true
+				break
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		if !ready {
+			logs, _ := os.ReadFile(filepath.Join(dir, "runtime-safety.log"))
+			t.Fatalf("real independent strict-SPIFFE Runtime Safety API unavailable: %s", logs)
+		}
+	}
 
 	payload, err := buildAcceptanceBody(intent, input)
 	if err != nil {
@@ -474,8 +526,8 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 		readAuthority, liveEnv := newLiveExecutionAuthorityReader(t, pool, acpDSN, runtimeDSN, runpg.New(pool), ref, intent, releaseArtifact)
 		if composed {
 			liveEnv = append(liveEnv,
-				"DECISION_LIVE_GUARD_COMPOSED_RUNTIME_ORIGIN="+origin,
-				"DECISION_LIVE_GUARD_COMPOSED_RUNTIME_PEER=spiffe://example.org/runtime",
+				"DECISION_LIVE_GUARD_COMPOSED_RUNTIME_ORIGIN="+safetyOrigin,
+				"DECISION_LIVE_GUARD_COMPOSED_RUNTIME_PEER=spiffe://example.org/ns/runtime/sa/agent-runtime",
 				"DECISION_LIVE_GUARD_COMPOSED_RUNTIME_ROOTS="+guardSafetyRootFile,
 				"DECISION_LIVE_GUARD_COMPOSED_RUNTIME_CERT="+guardSafetyCertFile,
 				"DECISION_LIVE_GUARD_COMPOSED_RUNTIME_KEY="+guardSafetyKeyFile)
