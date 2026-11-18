@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -13,7 +12,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -36,7 +34,15 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 	if acpDSN == "" || runtimeDSN == "" || binary == "" {
 		t.Fatal("two independent databases and pinned Runtime executable are required")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	golden := os.Getenv("ACP_GOLDEN_PATH") == "1"
+	timeout := 90 * time.Second
+	if golden {
+		timeout = 8 * time.Minute
+		if os.Getenv("ACP_RUNTIME_TEMPORAL_TEST_BIN") == "" {
+			t.Fatal("Golden Path requires the pinned Temporal test binary")
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	pool, err := pgxpool.New(ctx, acpDSN)
 	if err != nil {
@@ -97,9 +103,23 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 			Payload: json.RawMessage("{\"run_intent_id\":\"" + intent.ID + "\"}"),
 		}
 	}
-	created, inserted, err := repo.Create(ctx, intent, event(1, 1, "agent.run-intent.created"))
-	if err != nil || !inserted || created.ID != intent.ID {
-		t.Fatalf("ACP Create: inserted=%v %+v %v", inserted, created, err)
+	input := []byte(`{ "message": "replay", "number": 9007199254740993 }`)
+	var releaseArtifact []byte
+	if golden {
+		input = []byte(`{"objective":"sre_incident_triage","service":"payments","signal":"latency"}`)
+		releaseArtifact, intent.PrincipalSnapshot.ConfigDigest = goldenReleaseArtifact(t, intent)
+	}
+	intent.RequestDigest, err = runintent.ExecutionInputDigest(intent, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if golden {
+		intent = admitGoldenPathWithLiveIssuer(t, ctx, pool, repo, intent, input)
+	} else {
+		created, inserted, err := repo.CreateWithInput(ctx, intent, event(1, 1, "agent.run-intent.created"), input)
+		if err != nil || !inserted || created.ID != intent.ID {
+			t.Fatalf("ACP Create: inserted=%v %+v %v", inserted, created, err)
+		}
 	}
 	assertACPOutbox(intent.TenantID, intent.ID, "1:agent.run-intent.created")
 
@@ -107,6 +127,8 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 	dir := t.TempDir()
 	certFile, keyFile, caFile := filepath.Join(dir, "runtime.pem"), filepath.Join(dir, "runtime.key"), filepath.Join(dir, "ca.pem")
 	writeProcessCertificate(t, certFile, keyFile, serverCert)
+	acpCertFile, acpKeyFile := filepath.Join(dir, "acp.pem"), filepath.Join(dir, "acp.key")
+	writeProcessCertificate(t, acpCertFile, acpKeyFile, acpCert)
 	if err := os.WriteFile(caFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: serverCert.Certificate[1]}), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +163,7 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 			t.Fatal(err)
 		}
 		cmd.Stdout, cmd.Stderr = log, log
-		cmd.Env = append(os.Environ(),
+		cmd.Env = append(goldenPathChildEnvironment(),
 			"RUNTIME_DATABASE_URL="+runtimeDSN,
 			"RUNTIME_TLS_CERT="+certFile,
 			"RUNTIME_TLS_KEY="+keyFile,
@@ -177,61 +199,31 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 	proc := start()
 	_ = wait(AbsentUncertain)
 
-	payload, err := json.Marshal(map[string]any{
-		"tenant_id": intent.TenantID, "run_intent_id": intent.ID,
-		"request_digest": intent.RequestDigest, "agent_id": intent.AgentID,
-		"agent_release_id": intent.ReleaseID, "session_id": intent.SessionID,
-		"input": map[string]string{"message": "replay"},
-		"principal_context": map[string]string{
-			"version":         intent.PrincipalSnapshot.Version,
-			"project_id":      intent.PrincipalSnapshot.ProjectID,
-			"subject_id":      intent.PrincipalSnapshot.SubjectID,
-			"actor_id":        intent.PrincipalSnapshot.ActorID,
-			"policy_revision": intent.PrincipalSnapshot.PolicyRevision,
-			"config_digest":   intent.PrincipalSnapshot.ConfigDigest,
-		},
-	})
+	payload, err := buildAcceptanceBody(intent, input)
 	if err != nil {
 		t.Fatal(err)
 	}
 	send := func(data []byte) (*http.Response, error) {
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, origin+"/internal/v2/run-intents:accept", bytes.NewReader(data))
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, origin+developmentAcceptPath, bytes.NewReader(data))
 		if err != nil {
 			return nil, err
 		}
 		req.Header.Set("Content-Type", "application/json")
 		return httpClient.Do(req)
 	}
-	// Drop the caller-facing ACK only after a real authenticated Runtime
-	// API request commits. The ACP dispatcher receives EOF, not a receipt.
-	upstream := make(chan error, 1)
-	drop := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		res, err := send(payload)
-		if err == nil {
-			_, err = io.Copy(io.Discard, res.Body)
-			_ = res.Body.Close()
-			if err == nil && res.StatusCode != http.StatusCreated {
-				err = fmt.Errorf("first acceptance HTTP %d", res.StatusCode)
-			}
-		}
-		upstream <- err
-		conn, _, hErr := w.(http.Hijacker).Hijack()
-		if hErr == nil {
-			_ = conn.Close()
-		}
-	}))
-	defer drop.Close()
-	// The dispatcher is now a separately killable OS process; it uses the
-	// real ACP PostgreSQL state and a test-only transport proxy. The proxy
-	// drops the ACK only after authenticating and committing at Runtime.
+	// A separately killable ACP process uses the actual DevelopmentAcceptor,
+	// PostgreSQL input repository and verified mutual TLS. Its test-only
+	// transport discards the response after the real Runtime commits.
 	dispatch := exec.Command(os.Args[0], "-test.run=^TestDispatchLostACKChild$")
-	dispatch.Env = append(os.Environ(),
+	dispatch.Env = append(goldenPathChildEnvironment(),
 		"ACP_DISPATCH_CHILD=1",
 		"ACP_DATABASE_URL="+acpDSN,
 		"ACP_DISPATCH_TENANT="+intent.TenantID,
 		"ACP_DISPATCH_INTENT="+intent.ID,
-		"ACP_DISPATCH_ENDPOINT="+drop.URL,
-		"ACP_DISPATCH_PAYLOAD="+base64.StdEncoding.EncodeToString(payload),
+		"ACP_DISPATCH_ENDPOINT="+origin,
+		"ACP_DISPATCH_CERT="+acpCertFile,
+		"ACP_DISPATCH_KEY="+acpKeyFile,
+		"ACP_DISPATCH_CA="+caFile,
 	)
 	if output, dispatchErr := dispatch.CombinedOutput(); dispatchErr != nil {
 		t.Fatalf("separate ACP dispatch process failed: %v: %s", dispatchErr, output)
@@ -239,9 +231,6 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 	unknown, err := repo.Get(ctx, intent.TenantID, intent.ID)
 	if err != nil || unknown.Status != runintent.Unknown || unknown.Version != 3 {
 		t.Fatalf("separate dispatch process did not persist UNKNOWN: %+v %v", unknown, err)
-	}
-	if err := <-upstream; err != nil {
-		t.Fatalf("Runtime did not commit before ACK loss: %v", err)
 	}
 	assertACPOutbox(intent.TenantID, intent.ID,
 		"1:agent.run-intent.created",
@@ -256,11 +245,15 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 	assertOne := func() string {
 		var id string
 		var runs, starts int
+		var sameInput bool
 		if err := runtimePool.QueryRow(ctx, "SELECT run_id::text FROM runs WHERE run_intent_id=$1::uuid", intent.ID).Scan(&id); err != nil {
 			t.Fatal(err)
 		}
 		if err := runtimePool.QueryRow(ctx, "SELECT count(*) FROM runs WHERE run_intent_id=$1::uuid", intent.ID).Scan(&runs); err != nil {
 			t.Fatal(err)
+		}
+		if err := runtimePool.QueryRow(ctx, "SELECT input=$2::jsonb FROM runs WHERE run_intent_id=$1::uuid", intent.ID, string(input)).Scan(&sameInput); err != nil || !sameInput {
+			t.Fatalf("Runtime normalized input differs from ACP persisted input: %v", err)
 		}
 		if err := runtimePool.QueryRow(ctx, "SELECT count(*) FROM runtime_outbox WHERE aggregate_id=$1::uuid AND event_type='RUN_START_REQUESTED'", id).Scan(&starts); err != nil {
 			t.Fatal(err)
@@ -300,7 +293,7 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 	// ReconcileOnce, then blocks at Inspect. SIGKILL must leave the lease
 	// durable so the restarted worker can fence it after database expiry.
 	crash := exec.Command(os.Args[0], "-test.run=^TestCrashReconcilerAfterClaimChild$")
-	crash.Env = append(os.Environ(),
+	crash.Env = append(goldenPathChildEnvironment(),
 		"ACP_RECOVERY_CRASH_CHILD=1",
 		"ACP_DATABASE_URL="+acpDSN,
 		"ACP_RECOVERY_TENANT="+intent.TenantID,
@@ -442,6 +435,133 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 	if err != nil || stored.Status != runintent.Accepted || stored.RunID != runID {
 		t.Fatalf("ACP persisted receipt: %+v %v", stored, err)
 	}
+
+	// Exercise the same ACP Run in the actual pinned Runtime Temporal
+	// dispatcher. Do this BEFORE the conflicting-binding negative control
+	// seeds a second Run. The external driver refuses to create or seed Runs.
+	if golden {
+		// The Run recovered by the real mTLS reconciliation must still
+		// possess its original OAuth client membership, not an arbitrary
+		// current role for the same human/workload principal.
+		ref := runpg.ExecutionAuthorityRef{TenantID: intent.TenantID, RunIntentID: intent.ID,
+			RequestDigest: intent.RequestDigest, RunID: runID}
+		authority, err := runpg.New(pool).GetExecutionAuthority(ctx, ref)
+		if err != nil || authority.Ref != ref || authority.Snapshot != intent.PrincipalSnapshot {
+			t.Fatalf("live OAuth accepted Run lost catalog authority: %+v %v", authority, err)
+		}
+		readAuthority := newLiveExecutionAuthorityReader(t, pool, acpDSN, runpg.New(pool), ref, intent, releaseArtifact)
+		readAuthority(http.StatusOK)
+		if _, err := pool.Exec(ctx, "INSERT INTO admission_memberships VALUES ($1,$2,$3,'other-ci-client','RUNNER',true)", intent.TenantID, intent.ProjectID, intent.PrincipalID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx, "UPDATE admission_memberships SET enabled=false WHERE tenant_id=$1 AND client_id='acp-ci-runner'", intent.TenantID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := repo.GetExecutionAuthority(ctx, ref); !errors.Is(err, runpg.ErrCatalogDenied) {
+			t.Fatalf("revoked original OAuth client obtained continuation: %v", err)
+		}
+		readAuthority(http.StatusForbidden)
+		if _, err := pool.Exec(ctx, "UPDATE admission_memberships SET enabled=true WHERE tenant_id=$1 AND client_id='acp-ci-runner'", intent.TenantID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := repo.GetExecutionAuthority(ctx, ref); err != nil {
+			t.Fatalf("restored catalog authority not observed: %v", err)
+		}
+		readAuthority(http.StatusOK)
+		t.Logf("live OAuth origin bound to recovered Run %s; different active client did not bypass revocation", runID)
+		temporal := exec.CommandContext(ctx, os.Getenv("ACP_RUNTIME_TEMPORAL_TEST_BIN"),
+			"-test.v", "-test.run=^TestExternalACPAdmissionTemporalRecovery$", "-test.timeout=6m")
+		temporal.Env = append(goldenPathChildEnvironment(),
+			"RUNTIME_EXTERNAL_ACP_TEST=1",
+			"RUNTIME_EXTERNAL_DATABASE_URL="+runtimeDSN,
+			"RUNTIME_EXTERNAL_TENANT="+intent.TenantID,
+			"RUNTIME_EXTERNAL_INTENT="+intent.ID,
+			"RUNTIME_EXTERNAL_DIGEST="+intent.RequestDigest,
+			"RUNTIME_EXTERNAL_RUN="+runID,
+			"RUNTIME_EXTERNAL_SUBJECT="+intent.PrincipalSnapshot.SubjectID,
+			"RUNTIME_EXTERNAL_ACTOR="+intent.PrincipalSnapshot.ActorID,
+			"RUNTIME_EXTERNAL_POLICY="+intent.PrincipalSnapshot.PolicyRevision,
+		)
+		out, runErr := temporal.CombinedOutput()
+		if runErr != nil || !bytes.Contains(out, []byte("--- PASS: TestExternalACPAdmissionTemporalRecovery")) {
+			t.Fatalf("same-Run Temporal execution/recovery failed: %v %s", runErr, out)
+		}
+		t.Logf("same-Run Temporal evidence:\n%s", out)
+		if id := assertOne(); id != runID {
+			t.Fatal("Temporal recovered a different Runtime Run")
+		}
+	}
+
+	// Positive control for the confused-binding gap: a separately committed
+	// Runtime Run has the same correlation digest but a different principal.
+	// Lose the authoritative 409 response to an actual ACP dispatch. A
+	// weaker v1 read would falsely accept the existing Run.
+	conflicted := intent
+	conflicted.ID = "00000000-0000-4000-8000-000000000991"
+	conflicted.IdempotencyKey = "conflicting-principal"
+	conflicted.RequestDigest, err = runintent.ExecutionInputDigest(conflicted, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conflictEvent := event(1, 10, "agent.run-intent.created")
+	conflictEvent.AggregateID = conflicted.ID
+	conflictEvent.Payload = json.RawMessage(`{"run_intent_id":"` + conflicted.ID + `"}`)
+	if _, inserted, err := repo.CreateWithInput(ctx, conflicted, conflictEvent, input); err != nil || !inserted {
+		t.Fatalf("conflicted ACP create: %v", err)
+	}
+	wrongBinding := conflicted
+	wrongBinding.PrincipalSnapshot.SubjectID = "different-subject"
+	wrongPayload, err := buildAcceptanceBody(wrongBinding, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed, err := send(wrongPayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = seed.Body.Close()
+	if seed.StatusCode != http.StatusCreated {
+		t.Fatalf("conflicting Runtime positive control was not created: %d", seed.StatusCode)
+	}
+	weak, err := inspector.Inspect(ctx, InspectRequest{
+		TenantID: conflicted.TenantID, RunIntentID: conflicted.ID, RequestDigest: conflicted.RequestDigest,
+	})
+	if err != nil || weak.Status != Found {
+		t.Fatalf("v1 positive control did not expose the weak correlation result: %v", err)
+	}
+	conflictClient, err := NewClient(origin, "spiffe://example.org/runtime", roots, acpCert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	droppedConflict := &lostACKTransport{upstream: conflictClient.client.Transport, wantStatus: http.StatusConflict}
+	conflictClient.client.Transport = droppedConflict
+	conflictAdapter, err := NewDevelopmentAcceptor(conflictClient, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ambiguous, err := DispatchOnce(ctx, repo, conflictAdapter, conflicted.TenantID, conflicted.ID, "conflict-dispatcher", time.Minute)
+	if !errors.Is(err, ErrUnavailable) || ambiguous.Status != runintent.Unknown ||
+		!droppedConflict.dropped || droppedConflict.calls != 1 {
+		t.Fatalf("lost conflict ACK did not create UNKNOWN: %+v %v", ambiguous, err)
+	}
+	quarantined, err := ReconcileOnce(ctx, repo, inspector, conflicted.TenantID, conflicted.ID, "conflict-reconciler", time.Minute)
+	if !errors.Is(err, ErrRemoteConflict) || quarantined.Status != runintent.ManualReview ||
+		quarantined.RunID != "" || quarantined.ManualReviewCode != "RUNTIME_STATE_CONFLICT" {
+		t.Fatalf("conflicting principal was not quarantined: %+v %v", quarantined, err)
+	}
+	assertACPOutbox(conflicted.TenantID, conflicted.ID,
+		"1:agent.run-intent.created",
+		"2:agent.run-intent.dispatching",
+		"3:agent.run-intent.unknown",
+		"4:agent.run-intent.reconciling",
+		"5:agent.run-intent.manual-review")
+	var conflictingRuns, conflictingStarts int
+	if err := runtimePool.QueryRow(ctx, `
+		SELECT count(*), (SELECT count(*) FROM runtime_outbox WHERE aggregate_id=$2::uuid AND event_type='RUN_START_REQUESTED')
+		FROM runs WHERE run_intent_id=$1::uuid
+	`, conflicted.ID, weak.RunID).Scan(&conflictingRuns, &conflictingStarts); err != nil || conflictingRuns != 1 || conflictingStarts != 1 {
+		t.Fatalf("conflict recovery duplicated state: %d/%d %v", conflictingRuns, conflictingStarts, err)
+	}
 }
 
 func writeProcessCertificate(t *testing.T, certFile, keyFile string, identity tls.Certificate) {
@@ -463,6 +583,10 @@ func writeProcessCertificate(t *testing.T, certFile, keyFile string, identity tl
 }
 
 type blockedReconciliationInspector struct{}
+
+func (b blockedReconciliationInspector) InspectBound(ctx context.Context, _ runintent.Intent, _ []byte) (Inspection, error) {
+	return b.Inspect(ctx, InspectRequest{})
+}
 
 func (blockedReconciliationInspector) Inspect(ctx context.Context, _ InspectRequest) (Inspection, error) {
 	<-ctx.Done()
@@ -493,36 +617,38 @@ func TestCrashReconcilerAfterClaimChild(t *testing.T) {
 	t.Fatalf("reconciler exited before injected SIGKILL: %v", err)
 }
 
-var errInjectedACKDelivered = errors.New("injected lost ACK unexpectedly delivered an HTTP response")
-
-type lostACKDispatchAdapter struct {
-	endpoint string
-	payload  []byte
-	calls    int
+// lostACKTransport is fault injection only. It sends exactly one real mTLS
+// request and checks the create ACK before deliberately losing it. Runtime
+// database assertions in the parent independently prove durable acceptance.
+type lostACKTransport struct {
+	upstream   http.RoundTripper
+	calls      int
+	dropped    bool
+	wantStatus int
 }
 
-func (a *lostACKDispatchAdapter) Accept(ctx context.Context, claimed runintent.Intent) (runintent.DispatchOutcome, error) {
-	a.calls++
-	if claimed.Status != runintent.Dispatching {
-		return runintent.DispatchOutcome{}, errors.New("dispatcher called Runtime without a committed lease")
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.endpoint, bytes.NewReader(a.payload))
+func (t *lostACKTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	t.calls++
+	res, err := t.upstream.RoundTrip(req)
 	if err != nil {
-		return runintent.DispatchOutcome{}, err
+		return nil, err
 	}
-	req.Header.Set("Content-Type", "application/json")
-	res, err := http.DefaultClient.Do(req)
-	if res != nil {
-		_ = res.Body.Close()
+	defer res.Body.Close()
+	if _, err := io.Copy(io.Discard, res.Body); err != nil {
+		return nil, err
 	}
-	if err == nil {
-		return runintent.DispatchOutcome{}, errInjectedACKDelivered
+	want := t.wantStatus
+	if want == 0 {
+		want = http.StatusCreated
 	}
-	return runintent.DispatchOutcome{}, err
+	if res.StatusCode != want {
+		return nil, fmt.Errorf("Runtime returned HTTP %d, expected %d", res.StatusCode, want)
+	}
+	t.dropped = true
+	return nil, io.ErrUnexpectedEOF
 }
 
-// Test-only subprocess: no production service entry point or principal issuer.
-// It verifies a real ACP process persists UNKNOWN after a lost HTTP ACK.
+// Test-only subprocess uses the candidate adapter, not a hand-built payload.
 func TestDispatchLostACKChild(t *testing.T) {
 	if os.Getenv("ACP_DISPATCH_CHILD") != "1" {
 		t.Skip("only the two-process ACK-loss test starts this helper")
@@ -531,14 +657,27 @@ func TestDispatchLostACKChild(t *testing.T) {
 	tenantID := os.Getenv("ACP_DISPATCH_TENANT")
 	intentID := os.Getenv("ACP_DISPATCH_INTENT")
 	endpoint := os.Getenv("ACP_DISPATCH_ENDPOINT")
-	encoded := os.Getenv("ACP_DISPATCH_PAYLOAD")
-	if dsn == "" || tenantID == "" || intentID == "" || endpoint == "" || encoded == "" {
-		t.Fatal("dispatch subprocess requires PostgreSQL, scope and test transport")
+	if dsn == "" || tenantID == "" || intentID == "" || endpoint == "" {
+		t.Fatal("dispatch subprocess requires PostgreSQL, scope and Runtime endpoint")
 	}
-	payload, err := base64.StdEncoding.DecodeString(encoded)
+	cert, err := tls.LoadX509KeyPair(os.Getenv("ACP_DISPATCH_CERT"), os.Getenv("ACP_DISPATCH_KEY"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	ca, err := os.ReadFile(os.Getenv("ACP_DISPATCH_CA"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(ca) {
+		t.Fatal("invalid test trust root")
+	}
+	client, err := NewClient(endpoint, "spiffe://example.org/runtime", roots, cert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	drop := &lostACKTransport{upstream: client.client.Transport}
+	client.client.Transport = drop
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	pool, err := pgxpool.New(ctx, dsn)
@@ -546,12 +685,27 @@ func TestDispatchLostACKChild(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer pool.Close()
-	adapter := &lostACKDispatchAdapter{endpoint: endpoint, payload: payload}
-	got, dispatchErr := DispatchOnce(ctx, runpg.New(pool), adapter, tenantID, intentID, "worker-1", 3*time.Minute)
-	if errors.Is(dispatchErr, errInjectedACKDelivered) {
-		t.Fatal("the test proxy delivered an ACK instead of losing it")
+	repo := runpg.New(pool)
+	adapter, err := NewDevelopmentAcceptor(client, repo)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if dispatchErr == nil || got.Status != runintent.Unknown || got.Version != 3 || adapter.calls != 1 {
-		t.Fatalf("subprocess must persist one ambiguous dispatch: %+v %v calls=%d", got, dispatchErr, adapter.calls)
+	got, dispatchErr := DispatchOnce(ctx, repo, adapter, tenantID, intentID, "worker-1", 3*time.Minute)
+	if !drop.dropped || !errors.Is(dispatchErr, ErrUnavailable) || got.Status != runintent.Unknown ||
+		got.Version != 3 || drop.calls != 1 {
+		t.Fatalf("subprocess must persist one committed-but-unacknowledged acceptance: %+v %v calls=%d dropped=%v", got, dispatchErr, drop.calls, drop.dropped)
 	}
+}
+
+// Child Runtime and recovery processes never receive the disposable OAuth
+// client secrets (nor inherited CI credentials). Only explicit runtime
+// configuration is appended by the caller.
+func goldenPathChildEnvironment() []string {
+	var env []string
+	for _, key := range []string{"PATH", "HOME", "TMPDIR", "TMP", "TEMP", "USER", "LANG", "LC_ALL", "SSL_CERT_FILE", "SSL_CERT_DIR"} {
+		if value, present := os.LookupEnv(key); present {
+			env = append(env, key+"="+value)
+		}
+	}
+	return env
 }

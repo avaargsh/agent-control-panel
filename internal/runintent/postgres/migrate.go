@@ -40,6 +40,15 @@ const uploadIntentMigrationName = "0008_workspace_upload_intents.sql"
 const gcClaimMigrationVersion int64 = 9
 const gcClaimMigrationName = "0009_workspace_gc_claims.sql"
 
+const executionInputMigrationVersion int64 = 10
+const executionInputMigrationName = "0010_run_intent_execution_input.sql"
+
+const admissionCatalogMigrationVersion int64 = 11
+const admissionCatalogMigrationName = "0011_admission_catalog.sql"
+
+const admissionOriginMigrationVersion int64 = 12
+const admissionOriginMigrationName = "0012_run_intent_admission_origin.sql"
+
 var (
 	ErrSchemaDrift       = errors.New("RunIntent schema migration checksum or relation drift")
 	ErrUnversionedSchema = errors.New("RunIntent schema exists without migration history")
@@ -224,12 +233,27 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 		return fmt.Errorf("read embedded Workspace GC-claim migration: %w", err)
 	}
 	gcClaimChecksum := fmt.Sprintf("%x", sha256.Sum256(gcClaimSource))
+	executionInputSource, err := migrations.FS.ReadFile(executionInputMigrationName)
+	if err != nil {
+		return fmt.Errorf("read embedded execution input migration: %w", err)
+	}
+	executionInputChecksum := fmt.Sprintf("%x", sha256.Sum256(executionInputSource))
+	admissionCatalogSource, err := migrations.FS.ReadFile(admissionCatalogMigrationName)
+	if err != nil {
+		return fmt.Errorf("read embedded admission catalog migration: %w", err)
+	}
+	admissionCatalogChecksum := fmt.Sprintf("%x", sha256.Sum256(admissionCatalogSource))
+	admissionOriginSource, err := migrations.FS.ReadFile(admissionOriginMigrationName)
+	if err != nil {
+		return fmt.Errorf("read embedded admission origin migration: %w", err)
+	}
+	admissionOriginChecksum := fmt.Sprintf("%x", sha256.Sum256(admissionOriginSource))
 
 	rows, err := tx.Query(ctx, "SELECT version, name, checksum FROM schema_migrations")
 	if err != nil {
 		return fmt.Errorf("read schema migration history: %w", err)
 	}
-	var appliedVersion, conflictApplied, dispositionApplied, principalSnapshotApplied, capabilityLockApplied, workspaceApplied, blobStageApplied, uploadIntentApplied, gcClaimApplied bool
+	var appliedVersion, conflictApplied, dispositionApplied, principalSnapshotApplied, capabilityLockApplied, workspaceApplied, blobStageApplied, uploadIntentApplied, gcClaimApplied, executionInputApplied, admissionCatalogApplied, admissionOriginApplied bool
 	for rows.Next() {
 		var version int64
 		var name, appliedChecksum string
@@ -292,6 +316,24 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 				return ErrSchemaDrift
 			}
 			gcClaimApplied = true
+		case executionInputMigrationVersion:
+			if name != executionInputMigrationName || appliedChecksum != executionInputChecksum || executionInputApplied {
+				rows.Close()
+				return ErrSchemaDrift
+			}
+			executionInputApplied = true
+		case admissionCatalogMigrationVersion:
+			if name != admissionCatalogMigrationName || appliedChecksum != admissionCatalogChecksum || admissionCatalogApplied {
+				rows.Close()
+				return ErrSchemaDrift
+			}
+			admissionCatalogApplied = true
+		case admissionOriginMigrationVersion:
+			if name != admissionOriginMigrationName || appliedChecksum != admissionOriginChecksum || admissionOriginApplied {
+				rows.Close()
+				return ErrSchemaDrift
+			}
+			admissionOriginApplied = true
 		default:
 			rows.Close()
 			return ErrSchemaDrift
@@ -309,7 +351,10 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 		workspaceApplied && !capabilityLockApplied ||
 		blobStageApplied && !workspaceApplied ||
 		uploadIntentApplied && !blobStageApplied ||
-		gcClaimApplied && !uploadIntentApplied {
+		gcClaimApplied && !uploadIntentApplied ||
+		executionInputApplied && !gcClaimApplied ||
+		admissionCatalogApplied && !executionInputApplied ||
+		admissionOriginApplied && !admissionCatalogApplied {
 		return ErrSchemaDrift
 	}
 
@@ -341,6 +386,15 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 		if err := ensureGCClaimMigration(ctx, tx, gcClaimApplied, gcClaimSource, gcClaimChecksum); err != nil {
 			return err
 		}
+		if err := ensureExecutionInputMigration(ctx, tx, executionInputApplied, executionInputSource, executionInputChecksum); err != nil {
+			return err
+		}
+		if err := ensureAdmissionCatalogMigration(ctx, tx, admissionCatalogApplied, admissionCatalogSource, admissionCatalogChecksum); err != nil {
+			return err
+		}
+		if err := ensureAdmissionOriginMigration(ctx, tx, admissionOriginApplied, admissionOriginSource, admissionOriginChecksum); err != nil {
+			return err
+		}
 		if err := tx.Commit(ctx); err != nil {
 			return fmt.Errorf("commit schema verification: %w", err)
 		}
@@ -364,6 +418,12 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 		OR to_regclass('workspace_upload_observations') IS NOT NULL
 		OR to_regclass('workspace_gc_claims') IS NOT NULL
 		OR to_regclass('workspace_gc_observations') IS NOT NULL
+		OR to_regclass('admission_tenants') IS NOT NULL
+		OR to_regclass('admission_projects') IS NOT NULL
+		OR to_regclass('admission_principals') IS NOT NULL
+		OR to_regclass('admission_memberships') IS NOT NULL
+		OR to_regclass('admission_releases') IS NOT NULL
+		OR to_regclass('admission_sessions') IS NOT NULL
 	`).Scan(&anySchemaExists); err != nil {
 		return fmt.Errorf("inspect existing RunIntent schema: %w", err)
 	}
@@ -415,6 +475,15 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 		return err
 	}
 	if err := ensureGCClaimMigration(ctx, tx, false, gcClaimSource, gcClaimChecksum); err != nil {
+		return err
+	}
+	if err := ensureExecutionInputMigration(ctx, tx, false, executionInputSource, executionInputChecksum); err != nil {
+		return err
+	}
+	if err := ensureAdmissionCatalogMigration(ctx, tx, false, admissionCatalogSource, admissionCatalogChecksum); err != nil {
+		return err
+	}
+	if err := ensureAdmissionOriginMigration(ctx, tx, false, admissionOriginSource, admissionOriginChecksum); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {

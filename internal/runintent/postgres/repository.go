@@ -65,10 +65,10 @@ func New(pool *pgxpool.Pool) *Repository {
 // Create atomically claims the idempotency key, inserts the RunIntent and
 // appends its creation event. A matching replay returns the original record.
 func (r *Repository) Create(ctx context.Context, intent runintent.Intent, event Event) (runintent.Intent, bool, error) {
-	return r.create(ctx, intent, event, nil)
+	return r.create(ctx, intent, event, nil, nil, nil)
 }
 
-func (r *Repository) create(ctx context.Context, intent runintent.Intent, event Event, pinned *researchlock.Lock) (runintent.Intent, bool, error) {
+func (r *Repository) create(ctx context.Context, intent runintent.Intent, event Event, pinned *researchlock.Lock, raw []byte, claims *CatalogClaims) (runintent.Intent, bool, error) {
 	if r == nil || r.pool == nil {
 		return runintent.Intent{}, false, errors.New("postgres run intent repository is not configured")
 	}
@@ -100,13 +100,28 @@ func (r *Repository) create(ctx context.Context, intent runintent.Intent, event 
 		return runintent.Intent{}, false, fmt.Errorf("bind capability lock tenant: %w", err)
 	}
 
+	if claims != nil {
+		binding, err := resolveCatalogAuthorization(ctx, tx, intent, *claims, true)
+		if err != nil {
+			return runintent.Intent{}, false, err
+		}
+		if binding.PrincipalID != intent.PrincipalID || binding.Snapshot != intent.PrincipalSnapshot {
+			return runintent.Intent{}, false, ErrCatalogDenied
+		}
+	}
+
+	var issuer, externalSubject, clientID any
+	if claims != nil {
+		issuer, externalSubject, clientID = claims.Issuer, claims.Subject, claims.ClientID
+	}
 	query := "INSERT INTO run_intents (" +
 		"id, tenant_id, principal_id, operation, project_id, agent_id, release_id, session_id, " +
 		"idempotency_key, request_digest, principal_snapshot_version, principal_subject_id, principal_actor_id, " +
 		"principal_policy_revision, principal_config_digest, status, version, fence_token, lease_owner, lease_expires_at, " +
-		"runtime_run_id, workflow_id, rejection_code, manual_review_code) " +
+		"runtime_run_id, workflow_id, rejection_code, manual_review_code, execution_input, " +
+		"admission_issuer, admission_external_subject, admission_client_id) " +
 		"VALUES ($1::uuid, $2, $3, '" + operationCreate + "', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, " +
-		"$15, $16, $17, $18, $19, $20, $21, $22, $23) " +
+		"$15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27) " +
 		"ON CONFLICT (tenant_id, principal_id, operation, idempotency_key) DO NOTHING " +
 		"RETURNING " + selectIntentColumns
 
@@ -118,7 +133,8 @@ func (r *Repository) create(ctx context.Context, intent runintent.Intent, event 
 		string(intent.Status), int64(intent.Version), int64(intent.FenceToken),
 		nullableString(intent.LeaseOwner), nullableTime(intent.LeaseExpiresAt),
 		nullableString(intent.RunID), nullableString(intent.WorkflowID),
-		nullableString(intent.RejectionCode), nullableString(intent.ManualReviewCode),
+		nullableString(intent.RejectionCode), nullableString(intent.ManualReviewCode), raw,
+		issuer, externalSubject, clientID,
 	))
 	if errors.Is(err, pgx.ErrNoRows) {
 		existing, lookupErr := scanIntent(tx.QueryRow(ctx,
@@ -133,6 +149,20 @@ func (r *Repository) create(ctx context.Context, intent runintent.Intent, event 
 		}
 		if err := compareCapabilityReplay(ctx, tx, existing, pinned); err != nil {
 			return runintent.Intent{}, false, err
+		}
+		if err := compareExecutionInputReplay(ctx, tx, existing, raw); err != nil {
+			return runintent.Intent{}, false, err
+		}
+		var sameOrigin bool
+		if err := tx.QueryRow(ctx, `SELECT admission_issuer IS NOT DISTINCT FROM $3::text
+			AND admission_external_subject IS NOT DISTINCT FROM $4::text
+			AND admission_client_id IS NOT DISTINCT FROM $5::text
+			FROM run_intents WHERE tenant_id=$1 AND id=$2::uuid`,
+			existing.TenantID, existing.ID, issuer, externalSubject, clientID).Scan(&sameOrigin); err != nil {
+			return runintent.Intent{}, false, ErrCatalogUnavailable
+		}
+		if !sameOrigin {
+			return runintent.Intent{}, false, ErrIdempotencyConflict
 		}
 		return existing, false, nil
 	}

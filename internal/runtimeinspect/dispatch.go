@@ -61,6 +61,7 @@ func DispatchOnce(ctx context.Context, store reconcileStore, acceptor dispatchAc
 	receipt, acceptErr := acceptor.Accept(ctx, claimed)
 	knownKind := receipt.Kind == runintent.DispatchAccepted ||
 		receipt.Kind == runintent.DispatchRejected ||
+		receipt.Kind == runintent.DispatchConflict ||
 		receipt.Kind == runintent.DispatchAmbiguous
 	if acceptErr != nil || !knownKind {
 		// Lost ACK or unknown receipt kind is ambiguous, never a definitive
