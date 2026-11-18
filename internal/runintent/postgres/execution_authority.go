@@ -42,21 +42,30 @@ type ExecutionAuthority struct {
 // OAuth access token expiry is not a durable Run lease; current IdP session
 // revocation requires a separate issuer-owned revocation feed/contract.
 func (r *Repository) GetExecutionAuthority(ctx context.Context, ref ExecutionAuthorityRef) (ExecutionAuthority, error) {
+	authority, _, err := r.GetExecutionAuthorityInput(ctx, ref)
+	return authority, err
+}
+
+// GetExecutionAuthorityInput is restricted to the trusted ACP publication
+// service. The input comes from the same row snapshot as the current
+// authorization and is digest-verified before leaving the repository.
+// Raw input must never be sent to the caller of the authority HTTP API.
+func (r *Repository) GetExecutionAuthorityInput(ctx context.Context, ref ExecutionAuthorityRef) (ExecutionAuthority, []byte, error) {
 	var empty ExecutionAuthority
 	if r == nil || r.pool == nil {
-		return empty, ErrCatalogUnavailable
+		return empty, nil, ErrCatalogUnavailable
 	}
 	if ref.TenantID == "" || len(ref.TenantID) > 255 || strings.TrimSpace(ref.TenantID) != ref.TenantID ||
 		!executionAuthorityID.MatchString(ref.RunIntentID) || !executionAuthorityID.MatchString(ref.RunID) ||
 		len(ref.RequestDigest) != 71 || !strings.HasPrefix(ref.RequestDigest, "sha256:") {
-		return empty, ErrCatalogDenied
+		return empty, nil, ErrCatalogDenied
 	}
 	schema := r.pool.Config().ConnConfig.RuntimeParams["search_path"]
 	if schema == "" {
 		schema = "public"
 	}
 	if !executionAuthoritySchema.MatchString(schema) || strings.HasPrefix(schema, "pg_") || schema == "information_schema" {
-		return empty, ErrCatalogUnavailable
+		return empty, nil, ErrCatalogUnavailable
 	}
 	table := func(name string) string {
 		return pgx.Identifier{schema, name}.Sanitize()
@@ -97,19 +106,19 @@ func (r *Repository) GetExecutionAuthority(ctx context.Context, ref ExecutionAut
 		&i.PrincipalSnapshot.SubjectID, &i.PrincipalSnapshot.ActorID, &i.PrincipalSnapshot.PolicyRevision,
 		&i.PrincipalSnapshot.ConfigDigest, &input)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return empty, ErrCatalogDenied
+		return empty, nil, ErrCatalogDenied
 	}
 	if err != nil {
-		return empty, ErrCatalogUnavailable
+		return empty, nil, ErrCatalogUnavailable
 	}
 	i.PrincipalSnapshot.ProjectID = i.ProjectID
 	i.Version, i.Status, i.RunID, i.WorkflowID = 1, runintent.Accepted, ref.RunID, "agent-run/v1/"+ref.RunID
 	if i.Validate() != nil || i.PrincipalSnapshot.ValidateForProject(i.ProjectID) != nil ||
 		runintent.VerifyExecutionInput(i, input) != nil {
-		return empty, ErrCatalogUnavailable
+		return empty, nil, ErrCatalogUnavailable
 	}
 	return ExecutionAuthority{
 		Ref: ref, PrincipalID: i.PrincipalID, AgentID: i.AgentID, ReleaseID: i.ReleaseID,
 		SessionID: i.SessionID, Snapshot: i.PrincipalSnapshot,
-	}, nil
+	}, input, nil
 }

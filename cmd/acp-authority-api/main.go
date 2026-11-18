@@ -5,9 +5,11 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -22,6 +24,7 @@ import (
 
 type config struct {
 	dsn, cert, key, ca, peer, tenant, address string
+	releaseDirectory, publicationKey          string
 }
 
 func readConfig(getenv func(string) string) (config, error) {
@@ -29,10 +32,14 @@ func readConfig(getenv func(string) string) (config, error) {
 		dsn: getenv("ACP_AUTHORITY_DATABASE_URL"), cert: getenv("ACP_AUTHORITY_TLS_CERT"),
 		key: getenv("ACP_AUTHORITY_TLS_KEY"), ca: getenv("ACP_AUTHORITY_CLIENT_CA"),
 		peer: getenv("ACP_AUTHORITY_PEER_SPIFFE_ID"), tenant: getenv("ACP_AUTHORITY_TENANT"),
-		address: getenv("ACP_AUTHORITY_LISTEN_ADDR"),
+		address:          getenv("ACP_AUTHORITY_LISTEN_ADDR"),
+		releaseDirectory: getenv("ACP_AUTHORITY_RELEASE_DIRECTORY"), publicationKey: getenv("ACP_AUTHORITY_PUBLICATION_KEY"),
 	}
 	if c.dsn == "" || c.cert == "" || c.key == "" || c.ca == "" || c.peer == "" || c.tenant == "" {
 		return config{}, errors.New("database, mTLS trust and tenant configuration required")
+	}
+	if (c.releaseDirectory == "") != (c.publicationKey == "") {
+		return config{}, errors.New("publication requires both release artifacts and signing key")
 	}
 	if c.address == "" {
 		c.address = "127.0.0.1:8444"
@@ -71,9 +78,35 @@ func serve(ctx context.Context, c config) error {
 	if err != nil {
 		return errors.New("authority database unavailable")
 	}
-	handler, err := authorityhttp.NewHandler(runpg.New(pool), c.peer, c.tenant)
-	if err != nil {
-		return err
+	repo := runpg.New(pool)
+	var handler http.Handler
+	if c.publicationKey != "" {
+		file, err := os.Open(c.publicationKey)
+		if err != nil {
+			return errors.New("publication signing key unavailable")
+		}
+		seed, err := io.ReadAll(io.LimitReader(file, ed25519.SeedSize+1))
+		_ = file.Close()
+		if err != nil || len(seed) != ed25519.SeedSize {
+			return errors.New("invalid publication signing seed")
+		}
+		privateKey := ed25519.NewKeyFromSeed(seed)
+		clear(seed)
+		publisher, err := authorityhttp.NewPublisher(c.releaseDirectory, privateKey)
+		clear(privateKey)
+		if err != nil {
+			return err
+		}
+		defer publisher.Close()
+		handler, err = authorityhttp.NewPublicationHandler(repo, publisher, c.peer, c.tenant)
+		if err != nil {
+			return err
+		}
+	} else {
+		handler, err = authorityhttp.NewHandler(repo, c.peer, c.tenant)
+		if err != nil {
+			return err
+		}
 	}
 	srv := &http.Server{
 		Addr: c.address, Handler: handler,

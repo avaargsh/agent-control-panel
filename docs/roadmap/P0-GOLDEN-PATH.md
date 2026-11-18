@@ -222,3 +222,81 @@ journal, credential broker and egress, Guard decision/permit/revocation and
 operation recovery, independent verifier and trace/evidence, real GitHub
 repair workflow and resource cleanup. No protected effects or agent
 long-term production credentials are enabled by these candidates.
+
+
+## Signed Context/Capability and independent Evidence authority
+
+Candidate [ACP #65](https://github.com/avaargsh/agent-control-panel/pull/65)
+publishes `acp.decision-publication.v1` from exact release artifact bytes
+matching the admitted ConfigDigest. The opt-in authority service requires
+a separately provisioned release directory and Ed25519 signing seed
+(`ACP_AUTHORITY_RELEASE_DIRECTORY`, `ACP_AUTHORITY_PUBLICATION_KEY`).
+It checks current original-client catalog authority and exact accepted
+input in one SQL read, derives the bounded SRE context, validates
+operator-provisioned read-only capability contracts, hashes exact schema
+and contract bytes, and signs the deterministic publication. Snapshot
+timestamps are the pinned release validity interval, not proof of the
+physical signature time. The release directory/key must be inaccessible
+to the Agent; a content hash is not provider WORM. No raw prompts,
+credentials, executable endpoints or evidence observations are generated.
+No capability executor availability is asserted by this publication.
+
+[Decision #18](https://github.com/avaargsh/agent-decision/pull/18) independently
+verifies a pinned ACP public key, exact external Run binding, signature,
+release commitment, context and capability content, schema/contract
+digests and current validity. ACP exact earlier head
+`dda60a0b113d6ab6c9874b31fda03a9b96668a48` all CI passed, including
+[actual separate Decision verifier #44255272421](https://github.com/avaargsh/agent-control-panel/actions/runs/44255272421).
+Observed Run 3860b160-4eef-4317-bde1-4818dccd34c1; source substitution,
+different key, changed signed bytes, cross-Run replay and expiry rejected.
+This test uses a trusted fixture's actual ACP/Runtime receipt to provide
+the expected binding; a production independent Runtime binding reader
+and a trusted Decision API principal resolver still need integration.
+
+Decision #18 also adds a separate independent source reference service
+(`internal/evidenceauthority`): explicit per-source/Run/service scope,
+Ed25519 signed EvidenceRef and exact raw observation bytes, independent
+verification, actual immutable PostgreSQL publication and append-only
+revocation, and authenticated read-only TLS route. Source registry
+bootstrap is independently owned; no Agent has the signer or DML.
+Actual test creates three real HTTP failures and captures their metrics
+from a real disposable HTTP service; three independent DB LOGINs prove
+publisher/reader/revoker separation, altered replay and mutation denial,
+and network reads fail after revocation. This is an isolated metrics
+source, not proof of live production metrics/log/change pipelines or
+independent Verifier acceptance of business effects. No production
+registry migration upgrade/attestation, source deployment, key rotation
+or distributed revocation fence is claimed.
+
+## Integrated actual business Start Outbox and Checkpoint
+
+[Runtime #41](https://github.com/avaargsh/agent-runtime/pull/41) combines
+the original #36 dispatcher and #39 checkpoint Git ancestry without
+promoting main. One start lease/dispatcher verifies exact workflow
+profile, serialized Temporal history and canonical Workflow identity.
+It never submits again after an unknown first outcome and cannot adopt
+the older probe's history. The real pre-effect business Activity commits
+RUNNING with immutable Attempt/Turn/Checkpoint; a bounded disconnected
+cancellation Activity records exact checkpoint-bound CANCELLED before
+the Workflow reports cancellation. Cancellation before checkpoint or
+after future protected effects needs separate recovery contracts.
+
+Runtime source `c0aa932c35105ed4f308cae7de2ed17f091fcc22`:
+[Go/PG17](https://github.com/avaargsh/agent-runtime/actions/runs/44256251441)
+and [actual business and Worker SIGKILL](https://github.com/avaargsh/agent-runtime/actions/runs/44256251454)
+PASS: business lost-ACK 12.31s, real checkpoint kill/restart 12.77s.
+ACP same-Run gate now pins one Runtime candidate for actual API and
+business driver, not separate probe/API trees; see current head checks
+[actual ACP business gate](https://github.com/avaargsh/agent-control-panel/actions/runs/44256283882).
+
+All of these are candidate-scoped isolated tests. The independent
+Decision verifier is not yet an authenticated Decision Core invocation
+from the Runtime Workflow; independent Evidence publication must be
+connected to that same Run and actual current Runtime state before
+`WAITING_AUTHORITY` can be released. Remaining Sandbox/AgentD command
+journal, short-lived credentials, egress policy, Guard permit commit,
+Independent Verifier/evidence/trace, real GitHub repair and cleanup gates
+are not complete. Do not use local preparation success as a business
+result. Main promotion requires independent approval and enforceable
+repository governance; current main branch metadata shows no enabled
+protection and no rulesets. No main merge or production deployment.

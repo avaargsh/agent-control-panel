@@ -104,6 +104,11 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 		}
 	}
 	input := []byte(`{ "message": "replay", "number": 9007199254740993 }`)
+	var releaseArtifact []byte
+	if golden {
+		input = []byte(`{"objective":"sre_incident_triage","service":"payments","signal":"latency"}`)
+		releaseArtifact, intent.PrincipalSnapshot.ConfigDigest = goldenReleaseArtifact(t, intent)
+	}
 	intent.RequestDigest, err = runintent.ExecutionInputDigest(intent, input)
 	if err != nil {
 		t.Fatal(err)
@@ -444,7 +449,7 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 		if err != nil || authority.Ref != ref || authority.Snapshot != intent.PrincipalSnapshot {
 			t.Fatalf("live OAuth accepted Run lost catalog authority: %+v %v", authority, err)
 		}
-		readAuthority := newLiveExecutionAuthorityReader(t, pool, acpDSN, runpg.New(pool), ref)
+		readAuthority := newLiveExecutionAuthorityReader(t, pool, acpDSN, runpg.New(pool), ref, intent, releaseArtifact)
 		readAuthority(http.StatusOK)
 		if _, err := pool.Exec(ctx, "INSERT INTO admission_memberships VALUES ($1,$2,$3,'other-ci-client','RUNNER',true)", intent.TenantID, intent.ProjectID, intent.PrincipalID); err != nil {
 			t.Fatal(err)
