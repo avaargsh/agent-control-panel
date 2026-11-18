@@ -24,7 +24,7 @@ import (
 
 type config struct {
 	dsn, cert, key, ca, peer, tenant, address string
-	releaseDirectory, publicationKey         string
+	releaseDirectory, publicationKey          string
 }
 
 func readConfig(getenv func(string) string) (config, error) {
@@ -32,7 +32,7 @@ func readConfig(getenv func(string) string) (config, error) {
 		dsn: getenv("ACP_AUTHORITY_DATABASE_URL"), cert: getenv("ACP_AUTHORITY_TLS_CERT"),
 		key: getenv("ACP_AUTHORITY_TLS_KEY"), ca: getenv("ACP_AUTHORITY_CLIENT_CA"),
 		peer: getenv("ACP_AUTHORITY_PEER_SPIFFE_ID"), tenant: getenv("ACP_AUTHORITY_TENANT"),
-		address: getenv("ACP_AUTHORITY_LISTEN_ADDR"),
+		address:          getenv("ACP_AUTHORITY_LISTEN_ADDR"),
 		releaseDirectory: getenv("ACP_AUTHORITY_RELEASE_DIRECTORY"), publicationKey: getenv("ACP_AUTHORITY_PUBLICATION_KEY"),
 	}
 	if c.dsn == "" || c.cert == "" || c.key == "" || c.ca == "" || c.peer == "" || c.tenant == "" {
