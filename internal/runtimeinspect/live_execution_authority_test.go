@@ -62,6 +62,14 @@ func newLiveExecutionAuthorityReader(t *testing.T, pool *pgxpool.Pool, dsn, runt
 	t.Helper()
 	const peer = "spiffe://example.org/decision"
 	roots, serverCert, clientCert := testSPIFFECertificatesFor(t, "spiffe://example.org/acp", peer)
+	const guardPeer = "spiffe://example.org/ns/guard/sa/engageguard"
+	liveGuard := os.Getenv("ACP_LIVE_GUARD_CAPABILITY") == "1"
+	var guardCert tls.Certificate
+	if liveGuard {
+		// Guard uses a separate independent client CA and workload identity.
+		// Only the dedicated Guard listener can authenticate that identity.
+		_, _, guardCert = testSPIFFECertificatesFor(t, "spiffe://example.org/unused", guardPeer)
+	}
 	binary := os.Getenv("ACP_AUTHORITY_API_BIN")
 	if binary == "" {
 		t.Fatal("live Golden Path requires the compiled ACP authority service")
@@ -138,7 +146,18 @@ func newLiveExecutionAuthorityReader(t *testing.T, pool *pgxpool.Pool, dsn, runt
 	clear(signingKey)
 	certFile, keyFile, caFile := filepath.Join(dir, "acp-authority.pem"), filepath.Join(dir, "acp-authority.key"), filepath.Join(dir, "ca.pem")
 	writeProcessCertificate(t, certFile, keyFile, serverCert)
-	if err := os.WriteFile(caFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: serverCert.Certificate[1]}), 0600); err != nil {
+	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: serverCert.Certificate[1]})
+	guardClientFile, guardKeyFile, guardRootsFile := "", "", ""
+	if liveGuard {
+		caPEM = append(caPEM, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: guardCert.Certificate[1]})...)
+		guardClientFile, guardKeyFile = filepath.Join(dir, "guard-client.pem"), filepath.Join(dir, "guard-client.key")
+		guardRootsFile = filepath.Join(dir, "guard-server-roots.pem")
+		writeProcessCertificate(t, guardClientFile, guardKeyFile, guardCert)
+		if err := os.WriteFile(guardRootsFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: serverCert.Certificate[1]}), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(caFile, caPEM, 0600); err != nil {
 		t.Fatal(err)
 	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -148,6 +167,16 @@ func newLiveExecutionAuthorityReader(t *testing.T, pool *pgxpool.Pool, dsn, runt
 	addr := listener.Addr().String()
 	_ = listener.Close()
 	origin := "https://" + addr
+	guardAddr, guardOrigin := "", ""
+	if liveGuard {
+		guardListener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		guardAddr = guardListener.Addr().String()
+		guardOrigin = "https://" + guardAddr
+		_ = guardListener.Close()
+	}
 	proc := exec.Command(binary)
 	proc.Env = append(goldenPathChildEnvironment(),
 		"ACP_AUTHORITY_DATABASE_URL="+readDSN, "ACP_AUTHORITY_TLS_CERT="+certFile,
@@ -155,6 +184,11 @@ func newLiveExecutionAuthorityReader(t *testing.T, pool *pgxpool.Pool, dsn, runt
 		"ACP_AUTHORITY_PEER_SPIFFE_ID="+peer, "ACP_AUTHORITY_TENANT="+ref.TenantID,
 		"ACP_AUTHORITY_LISTEN_ADDR="+addr, "ACP_AUTHORITY_RELEASE_DIRECTORY="+releaseDir,
 		"ACP_AUTHORITY_PUBLICATION_KEY="+seedFile)
+	if liveGuard {
+		proc.Env = append(proc.Env,
+			"ACP_AUTHORITY_GUARD_PEER_SPIFFE_ID="+guardPeer,
+			"ACP_AUTHORITY_GUARD_LISTEN_ADDR="+guardAddr)
+	}
 	if err := proc.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -330,10 +364,62 @@ func newLiveExecutionAuthorityReader(t *testing.T, pool *pgxpool.Pool, dsn, runt
 			"DECISION_LIVE_DATABASE_URL=" + os.Getenv("ACP_DECISION_DATABASE_URL"),
 		}
 	}
+	// Compile the actual EngageGuard CapabilityAuthority client in its own
+	// repository and call the real isolated ACP read-only server. This
+	// runs on the SAME actual OAuth-admitted/reconciled Run, and specifically
+	// after the original OAuth client is disabled then restored.
+	var runGuardClient func(want int)
+	if liveGuard {
+		guardBinary := os.Getenv("ACP_GUARD_TEST_BIN")
+		if guardBinary == "" {
+			t.Fatal("missing independently compiled EngageGuard capability binary")
+		}
+		ready := false
+		for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); {
+			connection, err := net.DialTimeout("tcp", guardAddr, time.Second)
+			if err == nil {
+				_ = connection.Close()
+				ready = true
+				break
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		if !ready {
+			t.Fatal("ACP dedicated Guard capability listener did not start")
+		}
+		runGuardClient = func(want int) {
+			t.Helper()
+			expect := "verified"
+			if want == http.StatusForbidden {
+				expect = "revoked"
+			}
+			run := exec.Command(guardBinary, "-test.v", "-test.run=^TestExternalLiveACPCapabilityClient$", "-test.timeout=25s")
+			run.Env = append(goldenPathChildEnvironment(),
+				"GUARD_EXTERNAL_LIVE_ACP=1", "GUARD_ACP_EXPECT="+expect,
+				"GUARD_ACP_ORIGIN="+guardOrigin, "GUARD_ACP_PEER=spiffe://example.org/acp",
+				"GUARD_ACP_ROOTS="+guardRootsFile, "GUARD_ACP_CLIENT_CERT="+guardClientFile,
+				"GUARD_ACP_CLIENT_KEY="+guardKeyFile, "GUARD_ACP_TENANT="+admitted.TenantID,
+				"GUARD_ACP_RUN="+ref.RunID, "GUARD_ACP_AGENT="+admitted.AgentID,
+				"GUARD_ACP_RELEASE="+admitted.ReleaseID, "GUARD_ACP_SESSION="+admitted.SessionID)
+			output, err := run.CombinedOutput()
+			marker := "real EngageGuard ACPCapabilityClient verified same-Run "+ref.RunID
+			if expect == "revoked" {
+				marker = "real EngageGuard ACPCapabilityClient denied revoked same-Run "+ref.RunID
+			}
+			if err != nil || !bytes.Contains(output, []byte("--- PASS: TestExternalLiveACPCapabilityClient ")) ||
+				!bytes.Contains(output, []byte(marker)) {
+				t.Fatalf("actual Guard ACP CapabilityAuthority %s failed: %v %s", expect, err, output)
+			}
+			t.Logf("independent real Guard ACP capability evidence: %s", output)
+		}
+	}
 	return func(want int) {
 		t.Helper()
 		body := call(h, http.MethodGet, path, want)
 		pubBody := call(h, http.MethodGet, pubPath, want)
+		if runGuardClient != nil {
+			runGuardClient(want)
+		}
 		if want != http.StatusOK {
 			return
 		}
