@@ -1,0 +1,222 @@
+{
+  "version": "platform-governance/v0.3",
+  "state": "proposed",
+  "root_issue": "https://github.com/avaargsh/agent-control-panel/issues/3",
+  "domain_ownership": [
+    {
+      "id": "agent-definition",
+      "writer": "avaargsh/agent-control-panel",
+      "identifiers": [
+        "tenant_id",
+        "project_id",
+        "agent_id",
+        "bundle_digest",
+        "release_id",
+        "session_id",
+        "run_intent_id"
+      ]
+    },
+    {
+      "id": "run-execution",
+      "writer": "avaargsh/agent-runtime",
+      "identifiers": [
+        "run_id",
+        "workflow_id",
+        "run_attempt_id"
+      ]
+    },
+    {
+      "id": "decision-record",
+      "writer": "avaargsh/agent-decision",
+      "identifiers": [
+        "decision_id",
+        "proposal_id"
+      ]
+    },
+    {
+      "id": "protected-action",
+      "writer": "avaargsh/EngageGuard",
+      "identifiers": [
+        "operation_id",
+        "action_hash",
+        "permit_id",
+        "executor_attempt_id"
+      ]
+    },
+    {
+      "id": "compute",
+      "writer": "avaargsh/compute-control-panel",
+      "identifiers": [
+        "workload_id",
+        "allocation_id",
+        "compute_operation_id"
+      ]
+    },
+    {
+      "id": "workflow-history",
+      "writer": "external:Temporal",
+      "identifiers": [
+        "temporal_activity_attempt"
+      ]
+    },
+    {
+      "id": "provider-facts",
+      "writer": "external:Kubernetes/Kueue/Provider",
+      "identifiers": [
+        "provider_resource_id"
+      ]
+    }
+  ],
+  "contracts": [
+    {
+      "id": "agent-control-run-intent",
+      "repo": "avaargsh/agent-control-panel",
+      "path": "docs/architecture/ADR-003-IDENTITY-AND-RETRY-OWNERSHIP.md",
+      "commit": "a2ed17d68e95b6c4f1649bdc98c788015378a453",
+      "version": "v0.2-draft",
+      "state": "candidate",
+      "issue": "https://github.com/avaargsh/agent-control-panel/issues/3"
+    },
+    {
+      "id": "runtime-run-and-workflow",
+      "repo": "avaargsh/agent-runtime",
+      "path": "docs/architecture/DECISION-INTEGRATION-CONTRACT.md",
+      "commit": "e2089cfee9bc30478ed4ba1276723244869742a6",
+      "version": "v0.1-draft",
+      "state": "candidate",
+      "issue": "https://github.com/avaargsh/agent-runtime/issues/5"
+    },
+    {
+      "id": "decision-core-http",
+      "repo": "avaargsh/agent-decision",
+      "path": "api/openapi.yaml",
+      "commit": "13f526eca976a39d6f0abad26d11962d59ad85fe",
+      "version": "core.v1-draft",
+      "state": "candidate",
+      "issue": "https://github.com/avaargsh/agent-decision/issues/9"
+    },
+    {
+      "id": "framework-plugin-decision-turn",
+      "repo": "avaargsh/agent-decision",
+      "path": "protocol/v0.1/manifest.json",
+      "commit": "5c4690f8452fed15ff70bce1cdfd1370f9d4be5e",
+      "version": "plugin.v0.1-legacy",
+      "state": "blocked",
+      "issue": "https://github.com/avaargsh/agent-decision/issues/9"
+    },
+    {
+      "id": "guard-action-submission",
+      "repo": "avaargsh/EngageGuard",
+      "path": "docs/contracts/action-submission.v1.schema.json",
+      "commit": "15582a24b1bd22ab16cca9dbbf745696745d1ce6",
+      "version": "action-submission.v1-draft",
+      "state": "blocked",
+      "issue": "https://github.com/avaargsh/EngageGuard/issues/3"
+    },
+    {
+      "id": "guard-internal-action-request",
+      "repo": "avaargsh/EngageGuard",
+      "path": "docs/contracts/action-request.v1.schema.json",
+      "commit": "15582a24b1bd22ab16cca9dbbf745696745d1ce6",
+      "version": "guard-internal.v1-draft",
+      "state": "blocked",
+      "issue": "https://github.com/avaargsh/EngageGuard/issues/3"
+    },
+    {
+      "id": "compute-workload-http",
+      "repo": "avaargsh/compute-control-panel",
+      "path": "docs/contracts/COMPUTE-WORKLOAD-V1.md",
+      "commit": "cc2ab75dc95d1c1d5f243868a71659b9486ead2f",
+      "version": "compute.v1-draft",
+      "state": "candidate",
+      "issue": "https://github.com/avaargsh/compute-control-panel/issues/3"
+    }
+  ],
+  "merge_gates": [
+    {
+      "id": "G01",
+      "name": "RunIntent to Run identity and StartRun recovery",
+      "issue": "https://github.com/avaargsh/agent-control-panel/issues/3",
+      "state": "blocked",
+      "owners": [
+        "avaargsh/agent-control-panel",
+        "avaargsh/agent-runtime"
+      ]
+    },
+    {
+      "id": "G02",
+      "name": "Go Decision Core vs Python/TS adapter protocol split",
+      "issue": "https://github.com/avaargsh/agent-decision/issues/9",
+      "state": "blocked",
+      "owners": [
+        "avaargsh/agent-decision",
+        "avaargsh/agent-runtime"
+      ]
+    },
+    {
+      "id": "G03",
+      "name": "Guard operation idempotency and ActionHash RFC8785",
+      "issue": "https://github.com/avaargsh/EngageGuard/issues/3",
+      "state": "blocked",
+      "owners": [
+        "avaargsh/EngageGuard",
+        "avaargsh/agent-runtime"
+      ]
+    },
+    {
+      "id": "G04",
+      "name": "Compute Permit binding and provider UNKNOWN",
+      "issue": "https://github.com/avaargsh/compute-control-panel/issues/3",
+      "state": "blocked",
+      "owners": [
+        "avaargsh/compute-control-panel",
+        "avaargsh/EngageGuard"
+      ]
+    },
+    {
+      "id": "G05",
+      "name": "Durable PostgreSQL/Temporal read-only SRE golden path",
+      "issue": "https://github.com/avaargsh/agent-runtime/issues/5",
+      "state": "blocked",
+      "owners": [
+        "avaargsh/agent-runtime",
+        "avaargsh/agent-decision"
+      ]
+    }
+  ],
+  "issued_request_ids": [
+    {
+      "id": "invocation_id",
+      "created_by": "avaargsh/agent-runtime",
+      "durable_index_owner": "avaargsh/agent-decision",
+      "meaning": "stable Decision/adapter invocation across Runtime Activity retry"
+    },
+    {
+      "id": "guard_submission_key",
+      "created_by": "avaargsh/agent-runtime",
+      "durable_index_owner": "avaargsh/EngageGuard",
+      "meaning": "stable HTTP Guard Idempotency-Key; Guard creates operation_id"
+    }
+  ],
+  "runtime_migration": {
+    "status": "candidate",
+    "strategy": "single-writer-cutover",
+    "baseline_writer": "avaargsh/agent-runtime",
+    "candidate_writer": "avaargsh/agent-infra",
+    "cutover_authorized": false,
+    "gate": "G01",
+    "evidence": {
+      "rust_sqlx_store": "测试通过",
+      "trusted_acp_transport": "当前未知",
+      "workflow_engine_parity": "当前未知",
+      "restart_recovery": "当前未知",
+      "cross_service_golden_path": "当前未知"
+    },
+    "source": {
+      "pr_url": "https://github.com/avaargsh/agent-infra/pull/9",
+      "head_sha": "545269c6c1a9fa486e27286ddef85b1bceac4cc2",
+      "ci_url": "https://github.com/avaargsh/agent-infra/actions/runs/41593065180"
+    },
+    "limitations": "Snapshot describes design authorization only; it does not attest any running deployment, routing state, production cutover, or real-provider recovery."
+  }
+}
