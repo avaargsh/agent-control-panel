@@ -137,9 +137,15 @@ if [[ "$mode" == golden-path ]]; then
   : "${ACP_RUNTIME_API_BIN:?golden path requires the pinned Runtime API binary}"
   : "${ACP_RUNTIME_TEMPORAL_TEST_BIN:?golden path requires the pinned Temporal test binary}"
   export ACP_GOLDEN_PATH=1
-  go test -race -count=1 -v -run '^TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart
- ./internal/runtimeinspect
+  selector='^TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart$'
+  package='./internal/runtimeinspect'
+  test_name='TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart'
 else
-  go test -race -count=1 -v -run '^TestRealOIDCServiceAccountCatalogAdmission
- ./internal/admission
+  selector='^TestRealOIDCServiceAccountCatalogAdmission$'
+  package='./internal/admission'
+  test_name='TestRealOIDCServiceAccountCatalogAdmission'
 fi
+# A zero-test invocation or an unexpected Skip is a failed acceptance gate.
+go test -race -count=1 -v -run "$selector" "$package" | tee "$root/acceptance.log"
+grep -Fq "=== RUN   $test_name" "$root/acceptance.log"
+grep -Fq -- "--- PASS: $test_name " "$root/acceptance.log"
