@@ -500,6 +500,10 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 				!bytes.Contains(out, []byte("DECISION_ACCEPTED; live source revocation denied"))) {
 			t.Fatal("missing actual post-acceptance Worker SIGKILL and source revocation evidence")
 		}
+		if os.Getenv("ACP_LIVE_GUARD_STEP") == "1" &&
+			!bytes.Contains(out, []byte("real Guard Plan Step mTLS verified same-Run "+runID+" and source revocation denied")) {
+			t.Fatal("missing same-Run independently authenticated Guard Plan/Step and post-revocation evidence")
+		}
 		t.Logf("same-Run Temporal evidence:\n%s", out)
 		if id := assertOne(); id != runID {
 			t.Fatal("Temporal recovered a different Runtime Run")
