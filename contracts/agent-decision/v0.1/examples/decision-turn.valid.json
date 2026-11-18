@@ -1,0 +1,36 @@
+{
+  "protocol_version": "v0.1",
+  "invocation_id": "inv-0001",
+  "tenant_id": "tenant-1",
+  "agent_id": "agent-1",
+  "bundle_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "release_id": "release-1",
+  "session_id": "session-1",
+  "run_id": "run-1",
+  "turn_id": "turn-1",
+  "user_input": "Summarize the approved change.",
+  "user_input_ref": "input://run-1/turn-1",
+  "context_projection": {
+    "projection_id": "projection-1",
+    "digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "items": [
+      {
+        "content": "The approved change updates the service boundary.",
+        "source_refs": ["evidence://doc-1/page-2"],
+        "label": "Change record",
+        "media_type": "text/plain"
+      }
+    ]
+  },
+  "context_projection_ref": "projection://run-1/turn-1",
+  "allowed_capabilities": [
+    {
+      "capability_id": "workspace.write",
+      "capability_version": "v1"
+    }
+  ],
+  "deadline": "2026-11-02T20:00:00Z",
+  "trace_context": {
+    "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+  }
+}

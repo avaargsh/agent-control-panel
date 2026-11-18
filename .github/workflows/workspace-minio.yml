@@ -1,0 +1,64 @@
+name: Workspace S3/MinIO signed-byte integration (controlled non-production)
+
+# An operator must supply an approved immutable image digest. The retired
+# upstream Quay release is no longer anonymously pullable (401 in PR CI).
+# Do not substitute an unaudited third-party mirror to make a test green.
+on:
+  workflow_dispatch:
+    inputs:
+      minio_image:
+        description: 'Approved MinIO image reference pinned to @sha256:<64 lowercase hex>'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  GOTOOLCHAIN: local
+  MINIO_IMAGE: ${{ inputs.minio_image }}
+
+jobs:
+  minio-real-bytes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6 pinned
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6 pinned
+        with:
+          go-version: '1.27.4'
+          cache: false
+      - name: Start approved digest-pinned disposable MinIO
+        shell: bash
+        run: |
+          if [[ ! "$MINIO_IMAGE" =~ ^[a-z0-9][a-z0-9./_:-]+@sha256:[0-9a-f]{64}$ ]]; then
+            echo 'MinIO image must be an approved immutable sha256 digest reference' >&2
+            exit 1
+          fi
+          docker pull "$MINIO_IMAGE"
+          docker image inspect --format '{{index .RepoDigests 0}}' "$MINIO_IMAGE"
+          docker run --detach --rm --name acp-workspace-minio \
+            --publish 127.0.0.1:9000:9000 \
+            --env MINIO_ROOT_USER=acp-ci-access \
+            --env MINIO_ROOT_PASSWORD=acp-ci-secret-only \
+            "$MINIO_IMAGE" server /data
+          for attempt in $(seq 1 45); do
+            if curl --fail --silent http://127.0.0.1:9000/minio/health/live >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo 'MinIO health deadline exceeded' >&2
+          exit 1
+      - name: Assert real MinIO object bytes and integrity failures
+        env:
+          S3BLOB_MINIO_TEST_ENDPOINT: http://127.0.0.1:9000
+          S3BLOB_MINIO_TEST_ACCESS_KEY: acp-ci-access
+          S3BLOB_MINIO_TEST_SECRET_KEY: acp-ci-secret-only
+        run: |
+          test "$(go env GOVERSION)" = "go1.27.4"
+          go test -race -count=1 -run '^TestMinIOBackend$' -v ./internal/workspace/s3blob
+      - name: Stop isolated MinIO
+        if: always()
+        run: |
+          docker logs --tail 60 acp-workspace-minio || true
+          docker rm --force acp-workspace-minio || true

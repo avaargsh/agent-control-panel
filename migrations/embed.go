@@ -1,0 +1,8 @@
+package migrations
+
+import "embed"
+
+// FS contains the versioned SQL migrations shipped with the service.
+//
+//go:embed 0001_run_intents_outbox_inbox.sql 0002_inbox_conflict_evidence.sql 0003_inbox_dlq_dispositions.sql 0004_run_intent_principal_snapshot.sql 0005_run_capability_locks.sql 0006_workspace_manifest_cas.sql 0007_workspace_blob_stages.sql 0008_workspace_upload_intents.sql 0009_workspace_gc_claims.sql 0010_run_intent_execution_input.sql 0011_admission_catalog.sql 0012_run_intent_admission_origin.sql
+var FS embed.FS

@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:avaargsh:agent-control-panel:compat-snapshot:decision-result:v0.1",
+  "title": "Agent Decision Turn Result v0.1",
+  "description": "Non-normative historical compatibility snapshot only; Agent Decision Core owns the canonical wire contract. This file must not be treated as a public API schema.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/final_response"
+    },
+    {
+      "$ref": "#/$defs/action_proposals"
+    }
+  ],
+  "$defs": {
+    "final_response": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocol_version",
+        "invocation_id",
+        "kind",
+        "text",
+        "evidence_refs"
+      ],
+      "properties": {
+        "protocol_version": {
+          "const": "v0.1"
+        },
+        "invocation_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "kind": {
+          "const": "final_response"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 65536
+        },
+        "structured_output": {
+          "type": "object",
+          "maxProperties": 256
+        },
+        "evidence_refs": {
+          "type": "array",
+          "maxItems": 128,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          }
+        },
+        "framework_metadata": {
+          "type": "object",
+          "maxProperties": 32
+        }
+      }
+    },
+    "action_proposals": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocol_version",
+        "invocation_id",
+        "kind",
+        "proposals"
+      ],
+      "properties": {
+        "protocol_version": {
+          "const": "v0.1"
+        },
+        "invocation_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "kind": {
+          "const": "action_proposals"
+        },
+        "proposals": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "proposal_id",
+              "capability_id",
+              "capability_version",
+              "arguments",
+              "target_resource_ref",
+              "rationale_ref"
+            ],
+            "properties": {
+              "proposal_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "capability_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "capability_version": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "arguments": {
+                "type": "object",
+                "maxProperties": 128
+              },
+              "target_resource_ref": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512
+              },
+              "rationale_ref": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512
+              }
+            }
+          }
+        },
+        "framework_metadata": {
+          "type": "object",
+          "maxProperties": 32
+        }
+      }
+    }
+  }
+}

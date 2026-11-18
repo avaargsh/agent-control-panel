@@ -1,0 +1,18 @@
+{
+  "protocol_version": "v0.1",
+  "invocation_id": "inv-0002",
+  "kind": "action_proposals",
+  "proposals": [
+    {
+      "proposal_id": "proposal-1",
+      "capability_id": "workspace.write",
+      "capability_version": "v1",
+      "arguments": {
+        "relative_path": "reports/change.txt",
+        "content": "Approved change summary"
+      },
+      "target_resource_ref": "workspace://project-1",
+      "rationale_ref": "evidence://doc-1/page-2"
+    }
+  ]
+}

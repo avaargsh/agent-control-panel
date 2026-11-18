@@ -22,22 +22,25 @@ This path must demonstrate stable identity, recoverable Session/Run state, safe 
 | AgentBundle | Versioned declarative agent package and runtime requirements |
 | AgentRelease | Release intent, rollout and release governance |
 | Session | Canonical user/agent conversation-work identity across Runs |
-| Run | One execution attempt with durable lifecycle identity |
+| RunIntent | ACP-owned, durably accepted desired execution request; not a Run or execution receipt |
+| Run | Runtime-owned execution record and lifecycle, exposed here only as a verified read-only projection |
 | FederationBinding | Binding to a remote control plane/provider |
 | CredentialBinding | References to external credential authorities; never raw secret material |
 | ContextProjectionPolicy | Rules for selecting/projecting context into an execution |
 | Evidence | Immutable references and attestations for lifecycle and execution outcomes |
 
-The Control Plane owns logical Agent/Session/Run identity and desired state. It does not duplicate workflow history, worker scheduling, step retries, checkpoints or sandbox internals.
+The Control Plane owns logical Agent/Session identity, RunIntent and desired state. **Agent Runtime alone creates canonical `run_id`/`workflow_id` and owns Run/Task/Attempt state**; ACP may retain verified, access-controlled references to those records. It does not duplicate workflow history, worker scheduling, step retries, checkpoints or sandbox internals.
 
 ## Responsibility boundaries
 
 - **Agent Control Plane:** domain resources, desired state, lifecycle coordination, authorization delegation, release governance, federation and evidence links.
 - **Agent Runtime / workflow engine (Temporal or compatible):** durable execution, step semantics, retries, waits, checkpoints and worker orchestration.
 - **Sandbox Provider (OpenKruise Agents, OpenSandbox, etc.):** isolated execution environment lifecycle, filesystem/runtime and sandbox-level network enforcement.
-- **Compute Control Plane (`compute-control-panel` / `gpu-compute-platform`):** cluster/provider inventory, compute allocation and accelerator lifecycle.
+- **Compute Control Plane (`compute-control-panel`):** cluster/provider inventory, compute allocation and accelerator lifecycle.
 - **Identity / secrets / policy:** integrate Keycloak or an OIDC provider, OpenBao/Kubernetes Secret, and mature policy systems (OPA/Casbin/Cedar) through adapters.
 - **`agent-control-panel` UI:** operator and developer UX only; no separate authority or lifecycle source of truth.
+
+`gpu-compute-platform` is retired as an active delivery repository and is retained only as historical migration/reference material. New Compute implementation and release evidence belong exclusively to `compute-control-panel`.
 
 ## Architecture principles
 
@@ -67,6 +70,23 @@ This project does not implement a new Agent framework, model serving stack, dura
 ## Development status
 
 This repository is the rewrite target. The architecture contract and P0 Golden Path should be established before broad feature porting. Legacy functionality is not presumed to be part of the new public contract; migrate only after mapping ownership, invariants and acceptance evidence.
+
+## Merge governance and evidence boundaries
+
+A green CI result is evidence only for its **exact commit, workflow, environment and exercised assertions**. A GitHub mergeable indicator, merged feature child PR, or historical test receipt does not establish production authorization. PRs must state the target (`main` or an internal feature branch), base/head SHAs, affected authoritative writer and interface revision, test/negative-case receipts, migrations/rollback, unresolved gates and explicit non-goals. See the [PR evidence template](.github/PULL_REQUEST_TEMPLATE.md).
+
+For changes involving runtime dispatch, protected effects, or provider release, the relevant owners must verify the applicable cross-service gates before promotion to `main`: [G01 RunIntent/Run identity and lost ACK](https://github.com/avaargsh/agent-control-panel/issues/3), [G02 Decision wire compatibility](https://github.com/avaargsh/agent-decision/issues/9), [G03 Guard ActionHash/Permit authority](https://github.com/avaargsh/EngageGuard/issues/3), [G04 Compute provider release/reconciliation](https://github.com/avaargsh/compute-control-panel/issues/3), and [G05 durable PostgreSQL/Temporal golden path](https://github.com/avaargsh/agent-runtime/issues/5). These issue references define review scope, **not** a claim that any gate has passed.
+
+Documentation-only governance corrections may be merged independently when they do not enable a runtime path, publish an unratified protocol as authoritative, or misrepresent historical PR topology as current. A Draft implementation stacked on a non-main parent is **not approved for main** merely because its local tests pass. External side-effect outcomes in `UNKNOWN` remain `UNKNOWN` until inspected by their owning service; do not blindly dispatch, mark FAILED, or finalize cost. Branch protection/required-check enforcement is a separate repository-settings obligation and is **not** established by this README or the PR template.
+
+## Development implementation (not a production release)
+
+The Go development baseline includes the RunIntent/PostgreSQL repository, transactional Outbox publisher, ordered Inbox consumer, broker settlement experiments and authenticated **read-only** Runtime InspectRunIntent client. The selected implementation is integrated from the reviewed internal stack through [ACP PR #14](https://github.com/avaargsh/agent-control-panel/pull/14); the historical cross-service Decision/Guard fixture snapshots are **not** normative protocol sources.
+
+- Source code: `internal/runintent/`, `internal/runtimeinspect/`, `internal/inboxtransport/`; PostgreSQL SQL: `migrations/`.
+- Tests: Go race/PostgreSQL, cross-process read-only Runtime lost-ACK, JetStream POC and contract compatibility.
+- Development means these components may be exercised in controlled test environments; it **does not** enable production dispatch, provide verified operator identity for all deployments, or prove G01–G05.
+- Real credential issuance/revocation, broker operations, Temporal restart, production delivery topology and protected-action Guard/Compute effects remain separate integration and release work.
 
 ## Documentation
 

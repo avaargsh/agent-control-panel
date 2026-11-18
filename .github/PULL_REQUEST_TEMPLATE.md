@@ -4,6 +4,11 @@ What user-visible or architectural behavior changes, and why?
 
 ## Governance metadata
 
+For a ready-to-merge PR targeting `main`, write the current 40-character base and head SHAs in the first field as `main base=<SHA> head=<SHA>`. Update the field whenever the target or source changes. Draft PRs can leave fields incomplete until marked ready.
+
+- Target branch (`main` or internal feature parent); exact base/head commit SHAs:
+- Change class (docs-only / contract / migration / runtime / protected effect / provider):
+
 - Affected domain / sole authoritative writer:
 - Public API/Schema source repository + pinned source commit:
 - Governance gate(s): G01 / G02 / G03 / G04 / G05 / none (explain)
@@ -13,12 +18,16 @@ What user-visible or architectural behavior changes, and why?
 
 ## Evidence (link real CI runs)
 
+- Test/CI evidence at exact HEAD (run URL or explicit no-workflow reason):
+- Authorization/recovery negative-case evidence or explained N/A:
+
 - [ ] Unit tests and negative-path assertions, with source SHA
 - [ ] Contract/schema fixtures shared with actual consumers
 - [ ] Integration tests (DB, Temporal, Guard, provider) where changed
 - [ ] Lost ACK / UNKNOWN / restart / fencing / cancellation cases as applicable
 - [ ] Tenant authorization and revocation checks where changed
 - [ ] No evidence extrapolated from tests that were not executed
+- [ ] Evidence grade recorded: designed / implemented / exact-head repository CI / real-service E2E / deployment acceptance
 
 ## Execution and side-effect safety
 
@@ -33,4 +42,6 @@ What user-visible or architectural behavior changes, and why?
 
 - Remaining blockers and explicit non-goals:
 - Backward compatibility and rollback:
+- Main promotion vs internal-only merge decision, with rationale:
 - Draft until owner/consumer cross-repo gates are met:
+- Required GitHub branch rules/required status checks verified independently (or current status UNKNOWN):

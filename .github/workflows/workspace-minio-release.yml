@@ -1,0 +1,258 @@
+name: Workspace real MinIO byte + PostgreSQL acceptance (official legacy release)
+
+# A *real* MinIO server, not httptest: the historical official GitHub
+# release asset is fixed by its upstream GitHub Release SHA-256 digest.
+# This is interoperability evidence ONLY, not a supported production server.
+# MinIO Community Edition now distributes source rather than maintained
+# precompiled binaries. Never replace this with a mutable mirror/container.
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/workspace-minio-release.yml'
+      - 'internal/workspace/s3blob/**'
+      - '.github/fixtures/minio/**'
+      - 'internal/runintent/postgres/workspace_minio_iam_integration_test.go'
+      - 'internal/runintent/postgres/workspace_minio_history_integration_test.go'
+      - 'docs/implementation/WORKSPACE-MINIO-HISTORICAL-RETENTION.md'
+      - 'docs/implementation/WORKSPACE-MINIO-SCOPED-IAM.md'
+      - 'docs/implementation/WORKSPACE-WRITEONCE-PROVIDER-GATE.md'
+      - '.github/fixtures/aws-s3/**'
+      - 'internal/runintent/postgres/workspace_real_minio_integration_test.go'
+      - 'internal/runintent/postgres/workspace_minio_sigkill_integration_test.go'
+      - 'internal/runintent/postgres/workspace_minio_split_iam_sigkill_integration_test.go'
+      - 'docs/implementation/WORKSPACE-MINIO-SPLIT-IAM-CRASH.md'
+      - 'docs/implementation/WORKSPACE-REAL-MINIO-ACCEPTANCE.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GOTOOLCHAIN: local
+  PGTEST_DSN: postgres://postgres:agent-ci@127.0.0.1:5432/postgres?sslmode=disable
+
+jobs:
+  real-minio-pg:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: agent-ci
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6 pinned
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6 pinned
+        with:
+          go-version: '1.27.4'
+          cache: false
+      - name: Verify patched Go toolchain
+        run: test "$(go env GOVERSION)" = "go1.27.4"
+      - name: Download SHA256-pinned OFFICIAL legacy MinIO release binary
+        shell: bash
+        env:
+          MINIO_RELEASE_URL: https://github.com/minio/minio/releases/download/RELEASE.2025-09-07T16-13-09Z/minio.linux-amd64.RELEASE.2025-09-07T16-13-09Z
+          # Upstream minio/minio GitHub Releases API asset.digest, NOT an
+          # unreviewed third-party mirror or mutable 'latest' pointer.
+          MINIO_RELEASE_SHA256: 7c5bd8512c6e966455b1d198209358b2d191c77a83ab377c4073281065fb855f
+        run: |
+          set -euo pipefail
+          curl --fail --location --silent --show-error \
+            --retry 5 --retry-delay 3 --retry-all-errors \
+            --output "$RUNNER_TEMP/minio-official" "$MINIO_RELEASE_URL"
+          printf '%s  %s\n' "$MINIO_RELEASE_SHA256" "$RUNNER_TEMP/minio-official" | sha256sum --check --status
+          chmod 0700 "$RUNNER_TEMP/minio-official"
+          "$RUNNER_TEMP/minio-official" --version | tee "$RUNNER_TEMP/minio-version.txt"
+          grep --fixed-strings 'RELEASE.2025-09-07T16-13-09Z' "$RUNNER_TEMP/minio-version.txt"
+      - name: Start isolated real MinIO server
+        shell: bash
+        env:
+          MINIO_ROOT_USER: acp-ci-access
+          MINIO_ROOT_PASSWORD: acp-ci-secret-only
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/minio-data"
+          nohup "$RUNNER_TEMP/minio-official" server "$RUNNER_TEMP/minio-data" \
+            --address 127.0.0.1:9000 --console-address 127.0.0.1:9001 \
+            >"$RUNNER_TEMP/minio-server.log" 2>&1 </dev/null &
+          echo $! >"$RUNNER_TEMP/minio-server.pid"
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent --show-error http://127.0.0.1:9000/minio/health/live >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 1
+          done
+          tail -n 50 "$RUNNER_TEMP/minio-server.log" || true
+          echo 'Real MinIO server failed to become healthy' >&2
+          exit 1
+      - name: Real MinIO SigV4 PUT/GET/412 and corruption/deletion rejection
+        env:
+          S3BLOB_MINIO_TEST_ENDPOINT: http://127.0.0.1:9000
+          S3BLOB_MINIO_TEST_ACCESS_KEY: acp-ci-access
+          S3BLOB_MINIO_TEST_SECRET_KEY: acp-ci-secret-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -race -count=1 -v -run '^TestMinIOBackend$' ./internal/workspace/s3blob | tee "$RUNNER_TEMP/minio-s3-test.log"
+          grep --fixed-strings -- '--- PASS: TestMinIOBackend (' "$RUNNER_TEMP/minio-s3-test.log"
+      - name: Download SHA256-pinned official historical MinIO client for IAM fixtures
+        shell: bash
+        env:
+          MC_RELEASE_URL: https://github.com/minio/mc/releases/download/RELEASE.2025-08-13T08-35-41Z/mc.linux-amd64.RELEASE.2025-08-13T08-35-41Z
+          # SHA256 from official minio/mc GitHub Release assets[].digest.
+          MC_RELEASE_SHA256: 01f866e9c5f9b87c2b09116fa5d7c06695b106242d829a8bb32990c00312e891
+        run: |
+          set -euo pipefail
+          curl --fail --location --silent --show-error \
+            --retry 5 --retry-delay 3 --retry-all-errors \
+            --output "$RUNNER_TEMP/mc-official" "$MC_RELEASE_URL"
+          printf '%s  %s\n' "$MC_RELEASE_SHA256" "$RUNNER_TEMP/mc-official" | sha256sum --check --status
+          chmod 0700 "$RUNNER_TEMP/mc-official"
+          "$RUNNER_TEMP/mc-official" --version | tee "$RUNNER_TEMP/mc-version.txt"
+          grep --fixed-strings 'RELEASE.2025-08-13T08-35-41Z' "$RUNNER_TEMP/mc-version.txt"
+      - name: Provision four separate real server IAM identities (admin confined to this step)
+        shell: bash
+        env:
+          MINIO_ROOT_USER: acp-ci-access
+          MINIO_ROOT_PASSWORD: acp-ci-secret-only
+        run: |
+          set -euo pipefail
+          umask 077
+          export MC_CONFIG_DIR="$RUNNER_TEMP/acp-minio-mc-config"
+          mc="$RUNNER_TEMP/mc-official"
+          "$mc" alias set acp-admin http://127.0.0.1:9000 \
+            "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" --api S3v4
+          for role in WRITER READER OTHER DENIED; do
+            role_lower="$(printf '%s' "$role" | tr '[:upper:]' '[:lower:]')"
+            user="acp-ci-$role_lower"
+            secret="$(openssl rand -hex 24)"
+            echo "::add-mask::$secret"
+            "$mc" admin user add acp-admin "$user" "$secret"
+            printf 'S3BLOB_IAM_%s_ACCESS_KEY=%s\n' "$role" "$user" >>"$GITHUB_ENV"
+            printf 'S3BLOB_IAM_%s_SECRET_KEY=%s\n' "$role" "$secret" >>"$GITHUB_ENV"
+          done
+          "$mc" admin policy create acp-admin acp-ci-put-only .github/fixtures/minio/iam-writer-a.json
+          "$mc" admin policy create acp-admin acp-ci-get-only .github/fixtures/minio/iam-reader-a.json
+          "$mc" admin policy create acp-admin acp-ci-tenant-b .github/fixtures/minio/iam-tenant-b.json
+          "$mc" admin policy attach acp-admin acp-ci-put-only --user acp-ci-writer
+          "$mc" admin policy attach acp-admin acp-ci-get-only --user acp-ci-reader
+          "$mc" admin policy attach acp-admin acp-ci-tenant-b --user acp-ci-other
+          # acp-ci-denied intentionally receives no policy.
+          "$mc" admin policy info acp-admin acp-ci-put-only >"$RUNNER_TEMP/minio-writer-policy-evidence.json"
+          "$mc" admin policy info acp-admin acp-ci-get-only >"$RUNNER_TEMP/minio-reader-policy-evidence.json"
+          "$mc" admin policy info acp-admin acp-ci-tenant-b >"$RUNNER_TEMP/minio-other-policy-evidence.json"
+          echo 'Real service policies provisioned; no fixture root credential exported to subsequent test steps.'
+      - name: Provider-enforced real MinIO scoped IAM denial matrix (no fixture admin credentials)
+        shell: bash
+        env:
+          S3BLOB_MINIO_TEST_ENDPOINT: http://127.0.0.1:9000
+        run: |
+          set -euo pipefail
+          go test -race -count=1 -v -run '^TestMinIORealScopedIAM$' ./internal/workspace/s3blob | tee "$RUNNER_TEMP/minio-iam-test.log"
+          grep --fixed-strings -- '--- PASS: TestMinIORealScopedIAM (' "$RUNNER_TEMP/minio-iam-test.log"
+          for case in writer-cannot-read reader-cannot-put reader-cannot-delete writer-cannot-delete other-tenant-cannot-read other-tenant-cannot-write unassigned-cannot-read unassigned-cannot-write writer-cannot-list-buckets; do
+            grep --fixed-strings -- "--- PASS: TestMinIORealScopedIAM/$case (" "$RUNNER_TEMP/minio-iam-test.log"
+          done
+      - name: Real MinIO split-role IAM + PostgreSQL verified Workspace CAS
+        shell: bash
+        env:
+          S3BLOB_MINIO_TEST_ENDPOINT: http://127.0.0.1:9000
+        run: |
+          set -euo pipefail
+          go test -race -count=1 -v -run '^TestWorkspaceRealMinIOScopedIAMPG$' ./internal/runintent/postgres | tee "$RUNNER_TEMP/minio-iam-pg-test.log"
+          grep --fixed-strings -- '--- PASS: TestWorkspaceRealMinIOScopedIAMPG (' "$RUNNER_TEMP/minio-iam-pg-test.log"
+      - name: Expected SECURITY BLOCKER - legacy MinIO scoped writer bypasses conditional PUT
+        shell: bash
+        env:
+          S3BLOB_MINIO_TEST_ENDPOINT: http://127.0.0.1:9000
+        run: |
+          set -euo pipefail
+          # A PASS here means the 2025 legacy server is demonstrably NOT
+          # write-once safe, not that production WORM is accepted.
+          go test -race -count=1 -v -run '^TestMinIOLegacyUnconditionalOverwriteGap$' ./internal/workspace/s3blob | tee "$RUNNER_TEMP/minio-writeonce-gap.log"
+          grep --fixed-strings -- '--- PASS: TestMinIOLegacyUnconditionalOverwriteGap (' "$RUNNER_TEMP/minio-writeonce-gap.log"
+          grep --fixed-strings -- 'EXPECTED SECURITY BLOCKER: legacy scoped writer bypassed If-None-Match' "$RUNNER_TEMP/minio-writeonce-gap.log"
+      - name: Real three-process SIGKILL recovery with scoped IAM credentials only
+        env:
+          S3BLOB_MINIO_TEST_ENDPOINT: http://127.0.0.1:9000
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -z "${S3BLOB_MINIO_TEST_ACCESS_KEY:-}" && test -z "${S3BLOB_MINIO_TEST_SECRET_KEY:-}"
+          test -z "${MINIO_ROOT_USER:-}" && test -z "${MINIO_ROOT_PASSWORD:-}"
+          go test -race -count=1 -v -run '^TestWorkspaceRealMinIOSplitIAMProcessSIGKILLRecovery$' ./internal/runintent/postgres | tee "$RUNNER_TEMP/minio-iam-sigkill-pg-test.log"
+          grep --fixed-strings -- '--- PASS: TestWorkspaceRealMinIOSplitIAMProcessSIGKILLRecovery (' "$RUNNER_TEMP/minio-iam-sigkill-pg-test.log"
+          for phase in before-put after-put after-stage after-cas; do
+            grep --fixed-strings -- "--- PASS: TestWorkspaceRealMinIOSplitIAMProcessSIGKILLRecovery/$phase (" "$RUNNER_TEMP/minio-iam-sigkill-pg-test.log"
+            grep --fixed-strings -- "real SIGKILL verified for phase=$phase;" "$RUNNER_TEMP/minio-iam-sigkill-pg-test.log"
+            grep --fixed-strings -- "verified separate OS reopen phase=$phase contains reader-only MinIO IAM identity;" "$RUNNER_TEMP/minio-iam-sigkill-pg-test.log"
+            if [[ "$phase" != before-put ]]; then
+              grep --fixed-strings -- "verified separate OS recover phase=$phase contains reader-only MinIO IAM identity;" "$RUNNER_TEMP/minio-iam-sigkill-pg-test.log"
+            fi
+          done
+          grep --fixed-strings -- 'four SIGKILL phases passed using separate writer/reader service identities' "$RUNNER_TEMP/minio-iam-sigkill-pg-test.log"
+      - name: Real MinIO scoped IAM + PG16 historical v1/v2 bytes retained after v3 empty CAS
+        shell: bash
+        env:
+          S3BLOB_MINIO_TEST_ENDPOINT: http://127.0.0.1:9000
+        run: |
+          set -euo pipefail
+          # Protected roles: test only receives scoped writer/reader environment
+          # identities, never provisioning administrator credentials.
+          go test -race -count=1 -v -run '^TestWorkspaceRealMinIOHistoricalRetainedBytesPG$' ./internal/runintent/postgres | tee "$RUNNER_TEMP/minio-history-pg.log"
+          grep --fixed-strings -- '--- PASS: TestWorkspaceRealMinIOHistoricalRetainedBytesPG (' "$RUNNER_TEMP/minio-history-pg.log"
+          grep --fixed-strings -- 'REAL MINIO HISTORICAL RETENTION PASS: separate IAM reader verified v1/v2 bytes after v3 empty CAS;' "$RUNNER_TEMP/minio-history-pg.log"
+      - name: Revoke real reader principal and prove provider blocks existing object
+        shell: bash
+        env:
+          S3BLOB_MINIO_TEST_ENDPOINT: http://127.0.0.1:9000
+        run: |
+          set -euo pipefail
+          export MC_CONFIG_DIR="$RUNNER_TEMP/acp-minio-mc-config"
+          "$RUNNER_TEMP/mc-official" admin user disable acp-admin acp-ci-reader
+          go test -race -count=1 -v -run '^TestMinIORealIAMDisabledReader$' ./internal/workspace/s3blob | tee "$RUNNER_TEMP/minio-iam-revoked.log"
+          grep --fixed-strings -- '--- PASS: TestMinIORealIAMDisabledReader (' "$RUNNER_TEMP/minio-iam-revoked.log"
+          grep --fixed-strings -- 'real MinIO user disable enforced by provider;' "$RUNNER_TEMP/minio-iam-revoked.log"
+      - name: Real MinIO and PostgreSQL pinned Workspace + lost ACK reconciliation
+        env:
+          S3BLOB_MINIO_TEST_ENDPOINT: http://127.0.0.1:9000
+          S3BLOB_MINIO_TEST_ACCESS_KEY: acp-ci-access
+          S3BLOB_MINIO_TEST_SECRET_KEY: acp-ci-secret-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -race -count=1 -v -run '^TestWorkspaceRealMinIOPGReconcile$' ./internal/runintent/postgres | tee "$RUNNER_TEMP/minio-workspace-pg-test.log"
+          grep --fixed-strings -- '--- PASS: TestWorkspaceRealMinIOPGReconcile (' "$RUNNER_TEMP/minio-workspace-pg-test.log"
+      - name: Real process SIGKILL + retained PG/MinIO byte recovery at four boundaries
+        env:
+          S3BLOB_MINIO_TEST_ENDPOINT: http://127.0.0.1:9000
+          S3BLOB_MINIO_TEST_ACCESS_KEY: acp-ci-access
+          S3BLOB_MINIO_TEST_SECRET_KEY: acp-ci-secret-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -race -count=1 -v -run '^TestWorkspaceRealMinIOProcessSIGKILLRecovery$' ./internal/runintent/postgres | tee "$RUNNER_TEMP/minio-sigkill-pg-test.log"
+          grep --fixed-strings -- '--- PASS: TestWorkspaceRealMinIOProcessSIGKILLRecovery (' "$RUNNER_TEMP/minio-sigkill-pg-test.log"
+          for phase in before-put after-put after-stage after-cas; do
+            grep --fixed-strings -- "--- PASS: TestWorkspaceRealMinIOProcessSIGKILLRecovery/$phase (" "$RUNNER_TEMP/minio-sigkill-pg-test.log"
+            grep --fixed-strings -- "real SIGKILL verified for phase=$phase;" "$RUNNER_TEMP/minio-sigkill-pg-test.log"
+          done
+      - name: Stop disposable server and retain bounded diagnostics
+        if: always()
+        shell: bash
+        run: |
+          if [[ -f "$RUNNER_TEMP/minio-server.log" ]]; then
+            tail -n 60 "$RUNNER_TEMP/minio-server.log" || true
+          fi
+          if [[ -f "$RUNNER_TEMP/minio-server.pid" ]]; then
+            kill "$(cat "$RUNNER_TEMP/minio-server.pid")" || true
+          fi
