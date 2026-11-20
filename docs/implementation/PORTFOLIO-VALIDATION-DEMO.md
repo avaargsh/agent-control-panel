@@ -68,7 +68,8 @@ gh workflow run acp-temporal-golden-path.yml --ref main
 # 找到新 run ID、head SHA、实际 status/conclusion。
 gh run list --workflow real-oidc-admission.yml --limit 5
 gh run list --workflow acp-temporal-golden-path.yml --limit 5
-gh run view <RUN_ID> --log
+RUN_ID=123456789  # 替换为上一步输出的新 run ID
+gh run view "$RUN_ID" --log
 ```
 
 执行后在演示记录中填写以下字段，而不是预先宣称本次 PASS：
