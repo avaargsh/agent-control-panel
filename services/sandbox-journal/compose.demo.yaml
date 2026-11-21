@@ -1,0 +1,20 @@
+# Disposable local demo only: synthetic data, public test password, no production use.
+# Port is bound to loopback; docker compose down --volumes deletes the demo DB.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: sandbox_demo
+      POSTGRES_PASSWORD: sandbox-demo-only
+      POSTGRES_DB: sandbox_demo
+    ports:
+      - "127.0.0.1:${SANDBOX_DEMO_PORT:-55439}:5432"
+    volumes:
+      - ./migrations/0001_command_journal.sql:/docker-entrypoint-initdb.d/01_command.sql:ro
+      - ./migrations/0002_lease_intents.sql:/docker-entrypoint-initdb.d/02_lease_intents.sql:ro
+      - ./migrations/tests/0001_sandboxctl_smoke.sql:/docker-entrypoint-initdb.d/03_seed.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sandbox_demo -d sandbox_demo"]
+      interval: 2s
+      timeout: 3s
+      retries: 25
