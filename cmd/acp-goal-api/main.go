@@ -29,17 +29,17 @@ import (
 )
 
 type config struct {
-	listenAddress  string
-	certFile       string
-	keyFile        string
-	dsnFile        string
-	oauthCAFile    string
-	oauthEndpoint  string
-	oauthIssuer    string
-	oauthAudience  string
-	oauthClientID  string
+	listenAddress   string
+	certFile        string
+	keyFile         string
+	dsnFile         string
+	oauthCAFile     string
+	oauthEndpoint   string
+	oauthIssuer     string
+	oauthAudience   string
+	oauthClientID   string
 	oauthSecretFile string
-	policy        admission.TrustedGitHubIssuePolicy
+	policy          admission.TrustedGitHubIssuePolicy
 }
 
 func readConfig(getenv func(string) string) (config, error) {
@@ -253,7 +253,7 @@ func serve(ctx context.Context, c config) error {
 	srv := &http.Server{
 		Addr: c.listenAddress, Handler: handler,
 		TLSConfig: &tls.Config{
-			MinVersion: tls.VersionTLS13,
+			MinVersion:   tls.VersionTLS13,
 			Certificates: []tls.Certificate{certificate},
 		},
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second,
