@@ -26,20 +26,24 @@ func fixtureRecoveryBundle(t *testing.T) (Bundle, map[string]ed25519.PublicKey, 
 	signers := make(map[string]ed25519.PrivateKey)
 	for _, authority := range []string{"runtime", "sandbox", "agentd", "guard"} {
 		pub, private, err := ed25519.GenerateKey(rand.Reader)
-		if err != nil { t.Fatal(err) }
+		if err != nil {
+			t.Fatal(err)
+		}
 		keys[authority], signers[authority] = pub, private
 		for _, phase := range []string{"before_fault", "after_recovery"} {
 			report := Observation{
 				Schema: ObservationVersion, Authority: authority, Phase: phase,
 				Subject: subject, FaultID: bundle.Fault.ID, ObservedAt: faultAt.Add(-time.Second),
 			}
-			if phase == "after_recovery" { report.ObservedAt = faultAt.Add(time.Second) }
+			if phase == "after_recovery" {
+				report.ObservedAt = faultAt.Add(time.Second)
+			}
 			switch authority {
 			case "runtime":
 				report.Runtime = &RuntimeObservation{
 					Status: "RUNNING", HistoryDigest: "sha256:" + strings.Repeat("a", 64),
 					CheckpointDigest: "sha256:" + strings.Repeat("b", 64),
-					BreakerState: "CLOSED", BreakerEpoch: 4, BreakerVersion: 7,
+					BreakerState:     "CLOSED", BreakerEpoch: 4, BreakerVersion: 7,
 					Recovered: phase == "after_recovery",
 				}
 			case "sandbox":
@@ -47,7 +51,7 @@ func fixtureRecoveryBundle(t *testing.T) (Bundle, map[string]ed25519.PublicKey, 
 					LeaseID: "lease-1", SandboxUID: "sandbox-uid-1",
 					WorkspaceID: "workspace-1", Generation: 3,
 					RootPath: "/workspace/agent", SentinelPath: ".acp-continuity",
-					SentinelDigest: "sha256:" + strings.Repeat("c", 64),
+					SentinelDigest:   "sha256:" + strings.Repeat("c", 64),
 					ReadbackVerified: true, ProviderState: "ACTIVE",
 				}
 			case "agentd":
@@ -66,7 +70,7 @@ func fixtureRecoveryBundle(t *testing.T) (Bundle, map[string]ed25519.PublicKey, 
 				report.Guard = &GuardObservation{
 					PermitID: "permit-1", PermitEpoch: 8, Status: "VALID",
 					ActionDigest: "sha256:" + strings.Repeat("e", 64),
-					Revalidated: phase == "after_recovery",
+					Revalidated:  phase == "after_recovery",
 				}
 			}
 			bundle.Receipts = append(bundle.Receipts, signFixture(t, report, private))
@@ -78,11 +82,13 @@ func fixtureRecoveryBundle(t *testing.T) (Bundle, map[string]ed25519.PublicKey, 
 func signFixture(t *testing.T, report Observation, signer ed25519.PrivateKey) Receipt {
 	t.Helper()
 	payload, err := json.Marshal(report)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	sig := ed25519.Sign(signer, append([]byte(SignatureDomain), payload...))
 	return Receipt{
 		Authority: report.Authority, Phase: report.Phase,
-		PayloadB64: base64.StdEncoding.EncodeToString(payload),
+		PayloadB64:   base64.StdEncoding.EncodeToString(payload),
 		SignatureB64: base64.StdEncoding.EncodeToString(sig),
 	}
 }
@@ -90,11 +96,17 @@ func signFixture(t *testing.T, report Observation, signer ed25519.PrivateKey) Re
 func mutateReport(t *testing.T, b *Bundle, signers map[string]ed25519.PrivateKey, authority, phase string, mutate func(*Observation)) {
 	t.Helper()
 	for i, receipt := range b.Receipts {
-		if receipt.Authority != authority || receipt.Phase != phase { continue }
+		if receipt.Authority != authority || receipt.Phase != phase {
+			continue
+		}
 		payload, err := base64.StdEncoding.DecodeString(receipt.PayloadB64)
-		if err != nil { t.Fatal(err) }
+		if err != nil {
+			t.Fatal(err)
+		}
 		var report Observation
-		if err := json.Unmarshal(payload, &report); err != nil { t.Fatal(err) }
+		if err := json.Unmarshal(payload, &report); err != nil {
+			t.Fatal(err)
+		}
 		mutate(&report)
 		b.Receipts[i] = signFixture(t, report, signers[authority])
 		return
@@ -116,7 +128,11 @@ func TestPostfaultMissingOrForgedAuthorityCannotPass(t *testing.T) {
 	}{
 		{"sandbox_missing", func(_ *testing.T, b *Bundle, _ map[string]ed25519.PublicKey, _ map[string]ed25519.PrivateKey) {
 			out := b.Receipts[:0]
-			for _, r := range b.Receipts { if r.Authority != "sandbox" { out = append(out, r) } }
+			for _, r := range b.Receipts {
+				if r.Authority != "sandbox" {
+					out = append(out, r)
+				}
+			}
 			b.Receipts = out
 		}},
 		{"signature_tampered", func(_ *testing.T, b *Bundle, _ map[string]ed25519.PublicKey, _ map[string]ed25519.PrivateKey) {
@@ -132,7 +148,7 @@ func TestPostfaultMissingOrForgedAuthorityCannotPass(t *testing.T) {
 			mutateReport(t, b, signers, "sandbox", "after_recovery", func(o *Observation) { o.Subject.RunID = "different-run" })
 		}},
 		{"future_observation", func(t *testing.T, b *Bundle, _ map[string]ed25519.PublicKey, signers map[string]ed25519.PrivateKey) {
-			mutateReport(t, b, signers, "guard", "after_recovery", func(o *Observation) { o.ObservedAt = o.ObservedAt.Add(10*time.Minute) })
+			mutateReport(t, b, signers, "guard", "after_recovery", func(o *Observation) { o.ObservedAt = o.ObservedAt.Add(10 * time.Minute) })
 		}},
 		{"forged_fault_id", func(t *testing.T, b *Bundle, _ map[string]ed25519.PublicKey, signers map[string]ed25519.PrivateKey) {
 			mutateReport(t, b, signers, "guard", "after_recovery", func(o *Observation) { o.FaultID = "different-fault" })
@@ -144,7 +160,9 @@ func TestPostfaultMissingOrForgedAuthorityCannotPass(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			b, keys, signers, now := fixtureRecoveryBundle(t)
 			tc.edit(t, &b, keys, signers)
-			if err := Verify(b, keys, now); err == nil { t.Fatal("untrusted or incomplete proof passed") }
+			if err := Verify(b, keys, now); err == nil {
+				t.Fatal("untrusted or incomplete proof passed")
+			}
 		})
 	}
 }
@@ -157,7 +175,7 @@ func TestPostfaultRejectsBrokenSandboxWorkspaceContinuity(t *testing.T) {
 		{"changed_sandbox_uid", func(s *SandboxObservation) { s.SandboxUID = "replaced" }},
 		{"changed_workspace_id", func(s *SandboxObservation) { s.WorkspaceID = "empty-worktree" }},
 		{"changed_mount_root", func(s *SandboxObservation) { s.RootPath = "/tmp/new" }},
-		{"changed_sentinel_bytes", func(s *SandboxObservation) { s.SentinelDigest = "sha256:" + strings.Repeat("f",64) }},
+		{"changed_sentinel_bytes", func(s *SandboxObservation) { s.SentinelDigest = "sha256:" + strings.Repeat("f", 64) }},
 		{"stale_lease_generation", func(s *SandboxObservation) { s.Generation-- }},
 		{"readback_not_verified", func(s *SandboxObservation) { s.ReadbackVerified = false }},
 		{"provider_missing", func(s *SandboxObservation) { s.ProviderState = "UNKNOWN" }},
@@ -165,7 +183,9 @@ func TestPostfaultRejectsBrokenSandboxWorkspaceContinuity(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			b, keys, signers, now := fixtureRecoveryBundle(t)
 			mutateReport(t, &b, signers, "sandbox", "after_recovery", func(o *Observation) { tc.edit(o.Sandbox) })
-			if err := Verify(b, keys, now); err == nil { t.Fatal("workspace continuity was falsely accepted") }
+			if err := Verify(b, keys, now); err == nil {
+				t.Fatal("workspace continuity was falsely accepted")
+			}
 		})
 	}
 }
@@ -186,16 +206,18 @@ func TestPostfaultRejectsCommandUnknownWithoutAuthoritativeInspect(t *testing.T)
 		t.Run(tc.name, func(t *testing.T) {
 			b, keys, signers, now := fixtureRecoveryBundle(t)
 			mutateReport(t, &b, signers, "agentd", "after_recovery", func(o *Observation) { tc.edit(o.Command) })
-			if err := Verify(b, keys, now); err == nil { t.Fatal("UNKNOWN command incorrectly reconciled or retried") }
+			if err := Verify(b, keys, now); err == nil {
+				t.Fatal("UNKNOWN command incorrectly reconciled or retried")
+			}
 		})
 	}
 }
 
 func TestPostfaultRequiresFreshGuardPermitAndUnchangedRuntimeBreakerEpoch(t *testing.T) {
 	for _, tc := range []struct {
-		name string
+		name      string
 		authority string
-		edit func(*Observation)
+		edit      func(*Observation)
 	}{
 		{"permit_revoked", "guard", func(o *Observation) { o.Guard.Status = "REVOKED" }},
 		{"permit_epoch_changed", "guard", func(o *Observation) { o.Guard.PermitEpoch++ }},
@@ -209,7 +231,9 @@ func TestPostfaultRequiresFreshGuardPermitAndUnchangedRuntimeBreakerEpoch(t *tes
 		t.Run(tc.name, func(t *testing.T) {
 			b, keys, signers, now := fixtureRecoveryBundle(t)
 			mutateReport(t, &b, signers, tc.authority, "after_recovery", tc.edit)
-			if err := Verify(b, keys, now); err == nil { t.Fatal("stale or unauthorized resumed execution accepted") }
+			if err := Verify(b, keys, now); err == nil {
+				t.Fatal("stale or unauthorized resumed execution accepted")
+			}
 		})
 	}
 }
