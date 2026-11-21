@@ -149,3 +149,15 @@ fi
 go test -race -count=1 -v -run "$selector" "$package" | tee "$root/acceptance.log"
 grep -Fq "=== RUN   $test_name" "$root/acceptance.log"
 grep -Fq -- "--- PASS: $test_name " "$root/acceptance.log"
+
+# A second, strictly opt-in-to-this-disposable-job acceptance crosses the
+# actual public api.github.com boundary and the same independent Keycloak,
+# Go HTTPS GoalSubmit host, ACP CatalogPolicy and PostgreSQL authority.
+# No GitHub writes or Runtime dispatch are permitted.
+if [[ "$mode" == oidc ]]; then
+  export ACP_REAL_GOAL_E2E=1
+  goal_test='TestRealGoalHTTPKeycloakGitHubPostgres'
+  go test -race -count=1 -v -run "^$goal_test$" ./internal/goalhttp | tee "$root/goal-acceptance.log"
+  grep -Fq "=== RUN   $goal_test" "$root/goal-acceptance.log"
+  grep -Fq -- "--- PASS: $goal_test " "$root/goal-acceptance.log"
+fi
