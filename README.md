@@ -92,3 +92,7 @@ The Go development baseline includes the RunIntent/PostgreSQL repository, transa
 
 - [Architecture baseline](docs/architecture/BASELINE.md)
 - [P0 Golden Path](docs/roadmap/P0-GOLDEN-PATH.md)
+
+## 面向评审者的可复现演示（非生产）
+
+如果想快速判断这个项目究竟做到了什么，请看 [求职作品：真实 Golden Path 演示与证据边界](docs/implementation/PORTFOLIO-VALIDATION-DEMO.md)。它给出 5–10 分钟讲解路径、可手动触发的 OAuth/Temporal/Decision 集成测试、故障恢复与撤权负例，以及 Guard、Sandbox、Broker、Verifier 等尚未交付的范围。**不要把测试 fixture 和 Draft PR 当作生产能力。**
