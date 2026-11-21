@@ -28,8 +28,16 @@ trap cleanup EXIT
 echo "Starting disposable, loopback-only PostgreSQL demo (never production)..."
 "${compose[@]}" up -d --wait db
 
-dsn="postgres://sandbox_demo:sandbox-demo-only@127.0.0.1:${port}/sandbox_demo?sslmode=disable"
+dsn="postgres://sandbox_demo_reader:demo-reader-only@127.0.0.1:${port}/sandbox_demo?sslmode=disable"
 cd "$root"
+# The demo reader must be unable to perform even a harmless-looking UPDATE.
+# This checks PostgreSQL grants, not just the CLI's read-only query shape.
+if "${compose[@]}" exec -T -e PGPASSWORD=demo-reader-only db \
+  psql -h 127.0.0.1 -U sandbox_demo_reader -d sandbox_demo -v ON_ERROR_STOP=1 \
+  -c "UPDATE sandbox_lease_intents SET state='WAITING_FOR_PERMIT' WHERE tenant_id='sandboxctl-smoke'" >/dev/null 2>&1; then
+  echo "DEMO_ASSERTION_FAILED: database reader has write privileges" >&2
+  exit 1
+fi
 json="$(SANDBOX_JOURNAL_READ_DSN="$dsn" go run ./cmd/sandboxctl inspect \
   --tenant sandboxctl-smoke --lease-intent lease-smoke-1 \
   --sandbox-uid sandbox-smoke-1 --command-id command-smoke-1 --format json)"
