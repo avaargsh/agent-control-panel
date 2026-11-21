@@ -14,7 +14,7 @@ The separate database is not a production permit ledger; the module doesn't auth
 bash services/sandbox-journal/scripts/demo.sh
 ```
 
-The script starts a disposable PostgreSQL 16 container bound **only to 127.0.0.1:55439**, applies Sandbox-only SQL migrations, inserts synthetic pre-Permit fixtures and runs the real `sandboxctl inspect` against that database. It asserts that dispatch, retry, business success and resource release are all denied or unverified, and also confirms a missing lease fails closed. It prints JSON + text and **automatically stops the container and deletes its database** even on error. To avoid a local port conflict, set `SANDBOX_DEMO_PORT=55539`.
+The script starts a disposable PostgreSQL 16 container bound **only to 127.0.0.1:55439**, applies Sandbox-only SQL migrations, creates a separate **SELECT-only demo reader**, inserts synthetic pre-Permit fixtures and runs the real `sandboxctl inspect` against that database. It confirms the demo reader cannot UPDATE a lease row, asserts that dispatch, retry, business success and resource release are all denied or unverified, and also confirms a missing lease fails closed. It prints JSON + text and **automatically stops the container and deletes its database** even on error. To avoid a local port conflict, set `SANDBOX_DEMO_PORT=55539`.
 
 This demo uses a fixed public test password. Never use it with production data or expose the port outside loopback. The demo is deliberately **read-only at the CLI layer**; it does not provision a Sandbox, execute AgentD, issue Guard Permit or prove provider recovery. See PR #84 for scope and CI evidence.
 
