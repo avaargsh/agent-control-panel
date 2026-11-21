@@ -388,7 +388,6 @@ func TestSubmitCLIKeepsDefinitiveHTTPClientDenialsDistinctFromUnknown(t *testing
 	}
 }
 
-
 func TestSubmitCLIUnknownForNonDefinitiveHTTPStatuses(t *testing.T) {
 	// An intermediary may answer after forwarding the POST. Neither a
 	// redirect nor rate limiting proves that the RunIntent was not committed.
