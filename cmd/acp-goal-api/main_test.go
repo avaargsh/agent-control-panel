@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -15,6 +16,10 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	runpg "github.com/avaargsh/agent-control-panel/internal/runintent/postgres"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func completeEnv() map[string]string {
@@ -215,5 +220,49 @@ func TestLoadServerCertificateRequiresCurrentMatchingSAN(t *testing.T) {
 				t.Fatal("parsed leaf certificate was not retained")
 			}
 		})
+	}
+}
+
+
+func TestVerifyAuthoritySchemaRequiresLatestAdmissionMigration(t *testing.T) {
+	dsn := os.Getenv("PGTEST_DSN")
+	if dsn == "" {
+		t.Skip("requires isolated PostgreSQL via PGTEST_DSN")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	admin, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close(context.Background())
+	schema := fmt.Sprintf("test_goal_api_schema_%d", time.Now().UnixNano())
+	if _, err := admin.Exec(ctx, "CREATE SCHEMA "+schema); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = admin.Exec(context.Background(), "DROP SCHEMA "+schema+" CASCADE")
+	})
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.ConnConfig.RuntimeParams["search_path"] = schema
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	if err := runpg.Migrate(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyAuthoritySchema(ctx, pool); err != nil {
+		t.Fatalf("fully migrated ACP authority schema rejected: %v", err)
+	}
+	if _, err := pool.Exec(ctx, "DELETE FROM schema_migrations WHERE version=12"); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyAuthoritySchema(ctx, pool); err == nil {
+		t.Fatal("schema missing admission-origin migration was accepted")
 	}
 }
