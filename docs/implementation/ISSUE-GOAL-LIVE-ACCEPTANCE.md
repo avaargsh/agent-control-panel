@@ -80,13 +80,19 @@ The branch `main` was **not protected** when the test was created. Only this
 isolated test allows `RequireProtectedBranch=false` while keeping the
 target repository, Issue, branch and budget pinned. This is not a production
 policy exception, branch-protection attestation or signed acceptance-rules
-check. The TLS listener is an in-process host with real dependencies; the
-separate opt-in `cmd/acp-goal-api` process plus `acp-goal submit` still
-requires operator deployment evidence.
+check. The initial acceptance used an in-process HTTPS handler with
+real external provider dependencies. A **subsequent actual OS-process test**
+also built and launched `cmd/acp-goal-api` and submitted through the
+separate `acp-goal` executable, then revoked RUNNER and proved zero new
+database effects: [workflow #44866565087](https://github.com/avaargsh/agent-control-panel/actions/runs/44866565087)
+at code commit `fde186eb56c9a51fa51d23b440f22ca15fa3c007`.
+See the [operator-process acceptance contract](ISSUE-GOAL-OPERATOR-PROCESS-ACCEPTANCE.md).
+This is reproducible **disposable CI execution**, not deployment evidence
+for a durable externally operated service or a protected branch.
 
 **Remaining release blockers:** genuine protected-branch rule evidence,
 signed acceptance-rule bytes and trusted authority, independent review of
-the stacked PRs #82 → #85 → #86, a real operator host/CLI transcript,
+the stacked PRs #82 → #85 → #86, deployed-operator evidence,
 revocation/UNKNOWN recovery across independently deployed services, Runtime
 dispatch, Sandbox, independent Verifier and an explicitly approved GitHub PR
 write. None is authorized by the M0 receipt.
