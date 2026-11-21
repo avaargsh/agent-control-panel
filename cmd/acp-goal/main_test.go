@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-const validManifest = `{"schema_version":"acp.issue-goal/v1","target":{"tenant_id":"tenant-a","project_id":"project-a","agent_id":"coding-agent","release_id":"release-v1","session_id":"session-123"},"idempotency_key":"issue-123","issue_url":"https://github.com/example/repository/issues/123","target_branch":"main","experiment_baseline_sha":"1111111111111111111111111111111111111111","integration_baseline_sha":"2222222222222222222222222222222222222222","acceptance_rules_digest":"sha256:3333333333333333333333333333333333333333333333333333333333333333","budget":{"max_tokens":2048,"max_runtime_seconds":3600,"max_sandbox_seconds":1800}}`
+const validManifest = `{"schema_version":"acp.issue-goal/v1","target":{"tenant_id":"tenant-a","project_id":"project-a","agent_id":"coding-agent","release_id":"release-v1","session_id":"session-123"},"idempotency_key":"issue-123","issue_url":"https://github.com/example/repository/issues/123","issue_snapshot_digest":"sha256:4444444444444444444444444444444444444444444444444444444444444444","target_branch":"main","experiment_baseline_sha":"1111111111111111111111111111111111111111","integration_baseline_sha":"2222222222222222222222222222222222222222","acceptance_rules_digest":"sha256:3333333333333333333333333333333333333333333333333333333333333333","budget":{"max_tokens":2048,"max_runtime_seconds":3600,"max_sandbox_seconds":1800}}`
 
 func TestPrepareCLIReadsStdinAndReturnsDigestProposal(t *testing.T) {
 	var out, diagnostics bytes.Buffer
