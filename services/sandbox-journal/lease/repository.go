@@ -10,19 +10,15 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-var (
-	ErrInvalid        = errors.New("invalid sandbox lease intent")
-	ErrUnavailable    = errors.New("sandbox lease-intent store unavailable")
-	ErrNotFound       = errors.New("sandbox lease intent not found")
-	ErrConflict       = errors.New("sandbox lease immutable identity conflict")
-	ErrStaleGeneration = errors.New("sandbox lease-intent generation is stale")
-	ErrCorrupt        = errors.New("sandbox lease-intent record is corrupt")
-)
+var ErrInvalid = errors.New("invalid sandbox lease intent")
+var ErrUnavailable = errors.New("sandbox lease-intent store unavailable")
+var ErrNotFound = errors.New("sandbox lease intent not found")
+var ErrConflict = errors.New("sandbox lease immutable identity conflict")
+var ErrStaleGeneration = errors.New("sandbox lease-intent generation is stale")
+var ErrCorrupt = errors.New("sandbox lease-intent record is corrupt")
 
-const (
-	WaitingForPermit        = "WAITING_FOR_PERMIT"
-	CancelledBeforeProvision = "CANCELLED_BEFORE_PROVISION"
-)
+const WaitingForPermit = "WAITING_FOR_PERMIT"
+const CancelledBeforeProvision = "CANCELLED_BEFORE_PROVISION"
 
 type Intent struct {
 	TenantID         string
