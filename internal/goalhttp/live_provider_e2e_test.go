@@ -79,7 +79,7 @@ func TestRealGoalHTTPKeycloakGitHubPostgres(t *testing.T) {
 		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 		req.Header.Set("User-Agent", "acp-live-goal-acceptance/0.1")
 		client := &http.Client{
-			Timeout: 12 * time.Second,
+			Timeout:       12 * time.Second,
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 		}
 		res, err := client.Do(req)
@@ -95,7 +95,7 @@ func TestRealGoalHTTPKeycloakGitHubPostgres(t *testing.T) {
 		}
 	}
 	var target struct {
-		Name string `json:"name"`
+		Name   string `json:"name"`
 		Commit struct {
 			SHA string `json:"sha"`
 		} `json:"commit"`
@@ -105,7 +105,7 @@ func TestRealGoalHTTPKeycloakGitHubPostgres(t *testing.T) {
 		t.Fatal("live branch HEAD cannot be pinned")
 	}
 	var headObject struct {
-		SHA string `json:"sha"`
+		SHA     string `json:"sha"`
 		Parents []struct {
 			SHA string `json:"sha"`
 		} `json:"parents"`
@@ -123,67 +123,95 @@ func TestRealGoalHTTPKeycloakGitHubPostgres(t *testing.T) {
 			TenantID: "tenant-a", ProjectID: "project-a", AgentID: "coding",
 			ReleaseID: "release-v1", SessionID: "session-1",
 		},
-		IdempotencyKey: fmt.Sprintf("github-issue-70-%d", time.Now().UnixNano()),
-		IssueURL: liveGoalIssueURL,
-		IssueSnapshotDigest: snapshot.Digest,
-		TargetBranch: "main",
-		ExperimentBaselineSHA: headObject.Parents[0].SHA,
+		IdempotencyKey:         fmt.Sprintf("github-issue-70-%d", time.Now().UnixNano()),
+		IssueURL:               liveGoalIssueURL,
+		IssueSnapshotDigest:    snapshot.Digest,
+		TargetBranch:           "main",
+		ExperimentBaselineSHA:  headObject.Parents[0].SHA,
 		IntegrationBaselineSHA: target.Commit.SHA,
-		AcceptanceRulesDigest: "sha256:" + strings.Repeat("3", 64),
+		AcceptanceRulesDigest:  "sha256:" + strings.Repeat("3", 64),
 		Budget: issuegoal.Budget{
 			MaxTokens: 1000, MaxRuntimeSeconds: 600, MaxSandboxSeconds: 300,
 		},
 	}
 	rawManifest, err := json.Marshal(manifest)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	proposal, err := issuegoal.Prepare(rawManifest)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	preparedJSON, err := json.Marshal(proposal)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	admin, err := pgx.Connect(ctx, dsn)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer admin.Close(context.Background())
 	schema := fmt.Sprintf("test_goal_live_%d", time.Now().UnixNano())
-	if _, err := admin.Exec(ctx, "CREATE SCHEMA "+schema); err != nil { t.Fatal(err) }
+	if _, err := admin.Exec(ctx, "CREATE SCHEMA "+schema); err != nil {
+		t.Fatal(err)
+	}
 	defer func() { _, _ = admin.Exec(context.Background(), "DROP SCHEMA "+schema+" CASCADE") }()
 	config, err := pgxpool.ParseConfig(dsn)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	config.ConnConfig.RuntimeParams["search_path"] = schema
 	pool, err := pgxpool.NewWithConfig(ctx, config)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer pool.Close()
-	if err := runpg.Migrate(ctx, pool); err != nil { t.Fatal(err) }
+	if err := runpg.Migrate(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
 
 	caBytes, err := os.ReadFile(issuerCA)
-	if err != nil { t.Fatal("disposable IdP CA is unavailable") }
+	if err != nil {
+		t.Fatal("disposable IdP CA is unavailable")
+	}
 	roots := x509.NewCertPool()
-	if !roots.AppendCertsFromPEM(caBytes) { t.Fatal("disposable IdP CA invalid") }
+	if !roots.AppendCertsFromPEM(caBytes) {
+		t.Fatal("disposable IdP CA invalid")
+	}
 	authClient := &http.Client{
 		Transport: &http.Transport{TLSClientConfig: &tls.Config{
 			RootCAs: roots, MinVersion: tls.VersionTLS12,
 		}},
-		Timeout: 10*time.Second,
+		Timeout:       10 * time.Second,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
 	defer authClient.CloseIdleConnections()
 	auth, err := admission.NewIntrospector(admission.IntrospectionConfig{
-		Endpoint: issuer+"/protocol/openid-connect/token/introspect", Issuer: issuer,
+		Endpoint: issuer + "/protocol/openid-connect/token/introspect", Issuer: issuer,
 		Audience: "acp-control-plane", ClientID: "acp-control-plane",
 		ClientSecret: clientSecret, HTTPClient: authClient,
 	})
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	// Mint the short-lived token only after all setup and public preflight.
 	form := url.Values{"grant_type": {"client_credentials"}, "scope": {admission.RunIntentCreateScope}}
 	tokenReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		issuer+"/protocol/openid-connect/token", strings.NewReader(form.Encode()))
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	tokenReq.SetBasicAuth("acp-ci-runner", runnerSecret)
 	tokenReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	tokenResp, err := authClient.Do(tokenReq)
-	if err != nil { t.Fatal("disposable Keycloak token issuance unavailable") }
+	if err != nil {
+		t.Fatal("disposable Keycloak token issuance unavailable")
+	}
 	defer tokenResp.Body.Close()
-	var tokenReply struct { AccessToken string `json:"access_token"` }
+	var tokenReply struct {
+		AccessToken string `json:"access_token"`
+	}
 	if tokenResp.StatusCode != http.StatusOK ||
 		json.NewDecoder(io.LimitReader(tokenResp.Body, 65536)).Decode(&tokenReply) != nil ||
 		tokenReply.AccessToken == "" {
@@ -202,36 +230,50 @@ func TestRealGoalHTTPKeycloakGitHubPostgres(t *testing.T) {
 	} {
 		if strings.HasPrefix(stmt, "INSERT INTO admission_memberships") {
 			if _, err := pool.Exec(ctx, "INSERT INTO admission_principals VALUES ('tenant-a',$1,$2,'principal-a','subject-a',true)",
-				identity.Issuer, identity.Subject); err != nil { t.Fatal(err) }
+				identity.Issuer, identity.Subject); err != nil {
+				t.Fatal(err)
+			}
 		}
-		if _, err := pool.Exec(ctx, stmt); err != nil { t.Fatal(err) }
+		if _, err := pool.Exec(ctx, stmt); err != nil {
+			t.Fatal(err)
+		}
 	}
 	factory, err := NewCatalogGoalServiceFactory(runpg.New(pool), auth)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	source, err := admission.NewTrustedGitHubIssueVerifier(publicReader, admission.TrustedGitHubIssuePolicy{
 		Target: admission.Target{
 			TenantID: "tenant-a", ProjectID: "project-a", AgentID: "coding",
 			ReleaseID: "release-v1", SessionID: "session-1",
 		},
 		Repository: "avaargsh/agent-control-panel", TargetBranch: "main",
-		AcceptanceRulesDigest: manifest.AcceptanceRulesDigest,
-		MaxBudget: manifest.Budget,
+		AcceptanceRulesDigest:  manifest.AcceptanceRulesDigest,
+		MaxBudget:              manifest.Budget,
 		RequireProtectedBranch: false, // disposable test exception; main currently unprotected
 	})
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	handler, err := NewHandler(factory, source)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	server := httptest.NewTLSServer(handler)
 	defer server.Close()
 
 	submit := func() (int, map[string]any) {
 		t.Helper()
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+SubmitPath, bytes.NewReader(preparedJSON))
-		if err != nil { t.Fatal(err) }
+		if err != nil {
+			t.Fatal(err)
+		}
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+tokenReply.AccessToken)
 		res, err := server.Client().Do(req)
-		if err != nil { t.Fatalf("live Go GoalSubmit host transport failed: %v", err) }
+		if err != nil {
+			t.Fatalf("live Go GoalSubmit host transport failed: %v", err)
+		}
 		defer res.Body.Close()
 		var reply map[string]any
 		if err := json.NewDecoder(io.LimitReader(res.Body, 4096)).Decode(&reply); err != nil {
@@ -246,7 +288,9 @@ func TestRealGoalHTTPKeycloakGitHubPostgres(t *testing.T) {
 		t.Fatalf("real external provider admission failed: HTTP %d %#v", status, first)
 	}
 	id, ok := first["run_intent_id"].(string)
-	if !ok || id == "" { t.Fatalf("missing authoritative RunIntent identity: %#v", first) }
+	if !ok || id == "" {
+		t.Fatalf("missing authoritative RunIntent identity: %#v", first)
+	}
 	status2, replay := submit()
 	if status2 != http.StatusOK || replay["run_intent_id"] != id ||
 		replay["created"] != false || replay["request_digest"] != proposal.RequestDigest {
@@ -254,7 +298,9 @@ func TestRealGoalHTTPKeycloakGitHubPostgres(t *testing.T) {
 	}
 	var intents, outbox int64
 	if err := pool.QueryRow(ctx,
-		"SELECT (SELECT count(*) FROM run_intents), (SELECT count(*) FROM outbox_events)").Scan(&intents, &outbox); err != nil { t.Fatal(err) }
+		"SELECT (SELECT count(*) FROM run_intents), (SELECT count(*) FROM outbox_events)").Scan(&intents, &outbox); err != nil {
+		t.Fatal(err)
+	}
 	if intents != 1 || outbox != 1 {
 		t.Fatalf("real provider replay produced duplicate durable authority: intents=%d outbox=%d", intents, outbox)
 	}
