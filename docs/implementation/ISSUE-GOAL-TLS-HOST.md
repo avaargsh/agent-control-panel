@@ -76,6 +76,22 @@ curl --silent --show-error --cacert /run/acp/ca/goal-server-ca.pem \
   https://127.0.0.1:9443/api/v1/goals:submit
 ```
 
+### Submit with the non-dispatch CLI
+
+The optional CLI subcommand accepts the **prepared** JSON emitted by `acp-goal prepare`, not the original manifest. It sends one direct HTTPS POST to the numeric-loopback Goal API, with a dedicated PEM trust anchor and bearer credential read from a private regular file (`chmod 0600`). It never takes the Bearer in a command-line argument, follows redirects, or honors proxy environment variables.
+
+```sh
+go run ./cmd/acp-goal submit \
+  --file /tmp/acp-proposal.json \
+  --url https://127.0.0.1:9443/api/v1/goals:submit \
+  --token-file /run/acp/secrets/goal-bearer \
+  --ca-file /run/acp/ca/goal-server-ca.pem
+```
+
+On `201` and `200`, the CLI checks the server's schema and request digest against the exact immutable prepared input, checks the RunIntent receipt fields and status/created consistency, and prints only the verified acceptance JSON. It will not call a GitHub write API or execute Runtime work. On any TLS, HTTP, or invalid-receipt error, no acceptance JSON is emitted. A network timeout has an **unknown outcome**; check the authoritative ACP database before replaying the same idempotency key.
+
+The CLI deliberately only permits a direct numeric loopback endpoint and a bounded TLS server response. It cannot currently connect through remote ingress or a proxy; production host deployment and genuine OAuth/GitHub/DB joint validation remain separate acceptance gates.
+
 Expected: HTTP `201` for the first authorized request and `200` for an exact same-key replay, both with the *same* `run_intent_id` and canonical digest; there is **no** `run_id` and no dispatch receipt. A reused key with changed input should result in `409`. Revoke the membership, retry, and expect denial without a new DB row or GitHub source request. For timeouts or ambiguous external responses, inspect the existing database and authoritative source; never blindly synthesize success.
 
 ### Evidence and known limitations
