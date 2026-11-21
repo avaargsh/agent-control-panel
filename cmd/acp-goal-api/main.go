@@ -5,10 +5,10 @@ package main
 
 import (
 	"context"
-	"encoding/hex"
-	"crypto/tls"
 	"crypto/sha256"
+	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -26,9 +26,9 @@ import (
 	"github.com/avaargsh/agent-control-panel/internal/admission"
 	"github.com/avaargsh/agent-control-panel/internal/goalhttp"
 	"github.com/avaargsh/agent-control-panel/internal/issuegoal"
-	"github.com/avaargsh/agent-control-panel/migrations"
 	runpg "github.com/avaargsh/agent-control-panel/internal/runintent/postgres"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/avaargsh/agent-control-panel/migrations"
+
 )
 
 type config struct {
