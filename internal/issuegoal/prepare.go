@@ -48,6 +48,7 @@ type Manifest struct {
 	Target                 Target `json:"target"`
 	IdempotencyKey         string `json:"idempotency_key"`
 	IssueURL               string `json:"issue_url"`
+	IssueSnapshotDigest    string `json:"issue_snapshot_digest"`
 	TargetBranch           string `json:"target_branch"`
 	ExperimentBaselineSHA  string `json:"experiment_baseline_sha"`
 	IntegrationBaselineSHA string `json:"integration_baseline_sha"`
@@ -61,6 +62,7 @@ type Manifest struct {
 type Input struct {
 	Kind                   string `json:"kind"`
 	IssueURL               string `json:"issue_url"`
+	IssueSnapshotDigest    string `json:"issue_snapshot_digest"`
 	TargetBranch           string `json:"target_branch"`
 	ExperimentBaselineSHA  string `json:"experiment_baseline_sha"`
 	IntegrationBaselineSHA string `json:"integration_baseline_sha"`
@@ -103,7 +105,7 @@ func Prepare(raw []byte) (Prepared, error) {
 		return Prepared{}, err
 	}
 	input := Input{
-		Kind: InputKind, IssueURL: m.IssueURL, TargetBranch: m.TargetBranch,
+		Kind: InputKind, IssueURL: m.IssueURL, IssueSnapshotDigest: m.IssueSnapshotDigest, TargetBranch: m.TargetBranch,
 		ExperimentBaselineSHA:  m.ExperimentBaselineSHA,
 		IntegrationBaselineSHA: m.IntegrationBaselineSHA,
 		AcceptanceRulesDigest:  m.AcceptanceRulesDigest, Budget: m.Budget,
@@ -134,6 +136,8 @@ func (m Manifest) validate() error {
 		return ErrInvalidGoal
 	}
 	if !validGitHubIssueURL(m.IssueURL) || !validBranch(m.TargetBranch) ||
+		!strings.HasPrefix(m.IssueSnapshotDigest, "sha256:") ||
+		!validHex(strings.TrimPrefix(m.IssueSnapshotDigest, "sha256:"), 64) ||
 		!validHex(m.ExperimentBaselineSHA, 40) || !validHex(m.IntegrationBaselineSHA, 40) ||
 		!strings.HasPrefix(m.AcceptanceRulesDigest, "sha256:") ||
 		!validHex(strings.TrimPrefix(m.AcceptanceRulesDigest, "sha256:"), 64) {
