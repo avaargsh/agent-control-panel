@@ -11,7 +11,6 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
-	"fmt"
 	"math/big"
 	"net"
 	"net/url"
@@ -245,5 +244,4 @@ func runLiveGoalProcessCLI(t *testing.T, ctx context.Context, in liveGoalProcess
 	}
 	counts(1)
 	t.Logf("independent ACP Goal API and CLI, pinned HTTPS cert, disposable Keycloak, live public GitHub Issue and PostgreSQL: PASS (RunIntent and Outbox only, no dispatch)")
-	_ = fmt.Sprintf // keep explicit formatting support for future diagnostics
 }
