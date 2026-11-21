@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/avaargsh/agent-control-panel/internal/issuegoal"
+	"github.com/avaargsh/agent-control-panel/internal/runintent"
 )
 
 const sourceIssue = "https://github.com/example/repository/issues/123"
@@ -150,5 +151,38 @@ func TestTrustedIssueVerifierFailsClosedOnInvalidConfigAndContext(t *testing.T) 
 	cancel()
 	if err := v.VerifyIssueGoal(ctx, p.Target, in); !errors.Is(err, context.Canceled) || f.readCalls != 0 {
 		t.Fatalf("canceled call reached source: %v", err)
+	}
+}
+
+func TestTrustedGitHubIssueSourceComposesWithExistingRunIntentAdmission(t *testing.T) {
+	wire := preparedGoalWire(t)
+	policy, _, source := fixtureGoalSource()
+	policy.Target = Target{TenantID: "tenant-a", ProjectID: "project-a", AgentID: "agent-a", ReleaseID: "release-a", SessionID: "session-a"}
+	verifier, err := NewTrustedGitHubIssueVerifier(source, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &inputCaptureStore{}
+	authCalls := 0
+	svc := New(store, resolverFunc(func(_ context.Context, req Request) (Grant, error) {
+		authCalls++
+		_, grant := fixture()
+		grant.Target, grant.RequestDigest = req.Target, req.RequestDigest
+		return grant, nil
+	}))
+	intent, created, err := svc.AdmitPreparedIssueGoal(context.Background(), wire, verifier)
+	if err != nil || !created || store.calls != 1 || authCalls != 2 ||
+		source.readCalls != 1 || source.baselineCalls != 1 ||
+		intent.Status != runintent.Pending || intent.RunID != "" {
+		t.Fatalf("source verified admission failed: %v created=%v stores=%d auth=%d issue=%d commit=%d", err, created, store.calls, authCalls, source.readCalls, source.baselineCalls)
+	}
+	if err := runintent.VerifyExecutionInput(intent, store.raw); err != nil {
+		t.Fatalf("wrong immutable input stored: %v", err)
+	}
+	// A source can drift after CLI inspection. On replay, source must be
+	// re-observed before any new authoritative write, even for the same key.
+	source.issue.Digest = "sha256:" + strings.Repeat("5", 64)
+	if _, _, err := svc.AdmitPreparedIssueGoal(context.Background(), wire, verifier); !errors.Is(err, ErrIssueGoalSourceUnverified) || store.calls != 1 || source.readCalls != 2 {
+		t.Fatalf("changed external source not detected during replay: %v writes=%d reads=%d", err, store.calls, source.readCalls)
 	}
 }
