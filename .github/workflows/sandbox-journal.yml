@@ -56,3 +56,25 @@ jobs:
       - name: Vet independent sandbox module
         working-directory: services/sandbox-journal
         run: go vet ./...
+      - name: Smoke sandboxctl against isolated PostgreSQL (read-only)
+        working-directory: services/sandbox-journal
+        env:
+          SANDBOX_JOURNAL_READ_DSN: ${{ env.SANDBOX_JOURNAL_TEST_DSN }}
+        run: |
+          psql "$SANDBOX_JOURNAL_TEST_DSN" -v ON_ERROR_STOP=1 -f migrations/tests/0001_sandboxctl_smoke.sql
+          go run ./cmd/sandboxctl inspect --tenant sandboxctl-smoke --lease-intent lease-smoke-1 --sandbox-uid sandbox-smoke-1 --command-id command-smoke-1 --format json > "$RUNNER_TEMP/sandboxctl-smoke.json"
+          go run ./cmd/sandboxctl inspect --tenant sandboxctl-smoke --lease-intent lease-smoke-1 --format text > "$RUNNER_TEMP/sandboxctl-smoke.txt"
+          python3 - "$RUNNER_TEMP/sandboxctl-smoke.json" "$RUNNER_TEMP/sandboxctl-smoke.txt" <<'PY'
+          import json
+          import pathlib
+          import sys
+          report = json.loads(pathlib.Path(sys.argv[1]).read_text())
+          assert report["source"] == "UNATTESTED_DB_SNAPSHOT"
+          assert report["lease"]["state"] == "WAITING_FOR_PERMIT"
+          assert report["command"]["state"] == "PERMIT_UNAVAILABLE"
+          assert report["next_action"] == "HOLD"
+          for flag in ("can_dispatch", "can_retry", "can_declare_success", "can_declare_released"):
+              assert report[flag] is False, flag
+          text = pathlib.Path(sys.argv[2]).read_text()
+          assert "Dispatch: DENIED" in text and "Release: UNVERIFIED" in text
+          PY
