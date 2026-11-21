@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - 'internal/runtimeinspect/**'
+      - 'internal/postfault/**'
+      - 'cmd/acp-postfault-verify/**'
       - 'internal/admission/**'
       - 'internal/authorityhttp/**'
       - 'cmd/acp-authority-api/**'
@@ -126,9 +128,29 @@ jobs:
           ACP_RUNTIME_TEMPORAL_TEST_BIN: ${{ runner.temp }}/runtime-temporal-acceptance
           PGTEST_DSN: postgres://postgres:acp-test-only@127.0.0.1:5432/acp_golden?sslmode=disable
         run: bash ../issuer-fixture/scripts/test-real-oidc-admission.sh golden-path
+      - name: Compile independent post-fault continuity verifier
+        working-directory: acp
+        run: go build -trimpath -o "$RUNNER_TEMP/acp-postfault-verify" ./cmd/acp-postfault-verify
+      - name: Require same-Run Sandbox workspace, Command UNKNOWN and Guard Epoch proof
+        # Intentionally not continue-on-error. This is the extended recovery
+        # gate, not a static fixture or a synthetic replacement for providers.
+        run: |
+          set -euo pipefail
+          bundle="$RUNNER_TEMP/acp-postfault/proof.json"
+          trust="$RUNNER_TEMP/acp-postfault/trust"
+          if [ ! -s "$bundle" ] || [ ! -d "$trust" ]; then
+            echo "::error::EXTENDED GOLDEN PATH BLOCKED: no real, independently signed Sandbox/AgentD/Guard/Runtime post-fault proof for this Run. Workflow/Decision recovery alone is not a complete release gate."
+            exit 1
+          fi
+          "$RUNNER_TEMP/acp-postfault-verify" --bundle "$bundle" --trust-dir "$trust"
+
 
 # One pinned Runtime candidate provides v12 API and business driver.
 # The driver uses the actually accepted Run, not a probe or seeded Run.
 # Actual Decision API/source registries remain live through post-CAS Worker
 # SIGKILL recovery. New Guard-only mTLS test shares committed live
-# DecisionRecord and denies source revocation. No Permit or effect.
+# DecisionRecord and denies source revocation. It is NOT a Sandbox/AgentD
+# execution or a Guard Permit. The mandatory extended gate intentionally
+# fails until separately owned trusted producers write real post-fault
+# receipts to RUNNER_TEMP/acp-postfault and the independent validator accepts
+# them. Never fabricate those artifacts or turn this into continue-on-error.
