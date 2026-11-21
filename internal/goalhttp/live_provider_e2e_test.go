@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -66,8 +67,16 @@ func TestRealGoalHTTPKeycloakGitHubPostgres(t *testing.T) {
 	// immediately before submitting. Do not fake a digest or SHA in this test.
 	publicReader := issuegoal.NewPublicIssueReader()
 	snapshot, err := publicReader.Read(ctx, liveGoalIssueURL)
-	if err != nil || snapshot.State != "open" || snapshot.Number != 70 {
-		t.Fatalf("live public GitHub Issue unavailable or changed: %v", err)
+	if err != nil {
+		var failure *issuegoal.PublicSourceFailure
+		if errors.As(err, &failure) {
+			t.Fatalf("live public GitHub Issue observation failed: operation=%s reason=%s http_status=%d",
+				failure.Operation, failure.Reason, failure.HTTPStatus)
+		}
+		t.Fatalf("live public GitHub Issue unavailable: %v", err)
+	}
+	if snapshot.State != "open" || snapshot.Number != 70 {
+		t.Fatal("live public GitHub Issue is no longer the required open Issue #70")
 	}
 	readPublic := func(path string, dest any) {
 		t.Helper()
