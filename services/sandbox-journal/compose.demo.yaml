@@ -14,7 +14,15 @@ services:
       - ./migrations/0002_lease_intents.sql:/docker-entrypoint-initdb.d/02_lease_intents.sql:ro
       - ./migrations/tests/0001_sandboxctl_smoke.sql:/docker-entrypoint-initdb.d/03_seed.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U sandbox_demo -d sandbox_demo"]
+      # TCP + seeded-row check avoids reporting healthy during PostgreSQL's
+      # temporary Unix-socket-only init server or before migrations complete.
+      test:
+        - CMD-SHELL
+        - >-
+          PGPASSWORD=sandbox-demo-only psql -h 127.0.0.1
+          -U sandbox_demo -d sandbox_demo -tAc
+          "SELECT 1 FROM sandbox_journal_commands WHERE tenant_id='sandboxctl-smoke' AND command_id='command-smoke-1'"
+          | grep -qx 1
       interval: 2s
       timeout: 3s
       retries: 25
