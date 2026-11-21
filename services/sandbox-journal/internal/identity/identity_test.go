@@ -2,12 +2,13 @@ package identity
 
 import (
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 )
 
 func sample() Intent {
-	return Intent{TenantID: "tenant-1", RunID: "11111111-1111-4111-8111-111111111111", RuntimeAttemptID: "attempt-1", SandboxUID: "sandbox-uid-1", CommandID: "command-1", ExecutorAttemptID: "executor-1", RequestDigest: "sha256:" + strings.Repeat("a", 64)}
+	return Intent{TenantID: "tenant-1", RunID: "11111111-1111-4111-8111-111111111111", RuntimeAttemptID: "attempt-1", SandboxUID: "sandbox-uid-1", CommandID: "command-1", RequestDigest: "sha256:" + strings.Repeat("a", 64)}
 }
 func TestValidIdentity(t *testing.T) {
 	if err := sample().Validate(); err != nil {
@@ -23,7 +24,6 @@ func TestFailsClosedOnMissingOrMalformedIdentity(t *testing.T) {
 		{"cross-domain whitespace", func(i *Intent) { i.RunID = "run 1" }},
 		{"embedded control", func(i *Intent) { i.CommandID = "command\n1" }},
 		{"long sandbox UID", func(i *Intent) { i.SandboxUID = strings.Repeat("a", 129) }},
-		{"missing executor attempt", func(i *Intent) { i.ExecutorAttemptID = "" }},
 		{"unknown digest algorithm", func(i *Intent) { i.RequestDigest = "md5:" + strings.Repeat("a", 32) }},
 		{"uppercase sha", func(i *Intent) { i.RequestDigest = "sha256:" + strings.Repeat("A", 64) }},
 	}
@@ -35,5 +35,11 @@ func TestFailsClosedOnMissingOrMalformedIdentity(t *testing.T) {
 				t.Fatal("invalid identity accepted")
 			}
 		})
+	}
+}
+
+func TestPermitUnavailableDoesNotInventExecutorAttempt(t *testing.T) {
+	if _, exists := reflect.TypeOf(Intent{}).FieldByName("ExecutorAttemptID"); exists {
+		t.Fatal("pre-Permit identity must not claim an executor attempt exists")
 	}
 }
