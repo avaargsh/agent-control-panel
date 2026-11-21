@@ -1,5 +1,6 @@
-// acp-goal prepares immutable Issue Goal input and reads public Issue snapshots.
-// Neither command submits a Run, writes GitHub, or authorizes tool effects.
+// acp-goal prepares and inspects immutable Issue Goal input, then optionally
+// submits it for non-dispatch RunIntent admission over explicit loopback TLS.
+// No command dispatches Runtime work, writes GitHub or grants tool effects.
 package main
 
 import (
@@ -24,13 +25,15 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 
 func runWithIssueReader(args []string, stdin io.Reader, stdout, stderr io.Writer, reader issueReader) error {
 	if len(args) == 0 {
-		return errors.New("usage: acp-goal prepare --file manifest.json | snapshot --issue-url https://github.com/owner/repo/issues/123")
+		return errors.New("usage: acp-goal prepare | snapshot | inspect | submit")
 	}
 	switch args[0] {
 	case "prepare":
 		return prepare(args, stdin, stdout, stderr)
 	case "snapshot":
 		return snapshot(args, stdout, stderr, reader)
+	case "submit":
+		return submit(args, stdin, stdout, stderr)
 	case "inspect":
 		baselines, ok := reader.(baselineReader)
 		if !ok {
