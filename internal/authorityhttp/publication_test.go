@@ -123,7 +123,6 @@ func TestPublishExactReleaseContentAndRejectTamper(t *testing.T) {
 			a.Authority.ConfigDigest = "sha256:" + sha256Hex([]byte("forged-config"))
 			a.Context.Authority = a.Authority
 		}},
-
 	} {
 		t.Run("Guard rejects "+tc.name, func(t *testing.T) {
 			a := record
