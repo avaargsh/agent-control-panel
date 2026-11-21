@@ -53,8 +53,8 @@ type canonicalIssueSnapshotV1 struct {
 // PublicIssueReader only sends read-only requests to the fixed api.github.com
 // hostname. It has no caller-supplied endpoint, token or redirect allowance.
 type PublicIssueReader struct {
-	client  *http.Client
-	bearer  string // explicit, read-only credential; never accepted from a Goal manifest
+	client *http.Client
+	bearer string // explicit, read-only credential; never accepted from a Goal manifest
 }
 
 func NewPublicIssueReader() *PublicIssueReader {
