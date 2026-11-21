@@ -6,11 +6,23 @@ The only callable mutation is `RecordPermitUnavailable` for a fully bound tenant
 
 The separate database is not a production permit ledger; the module doesn't authenticate user-facing API calls. It is not wired to ACP, Runtime, Guard or an external sandbox process. Its opaque identifiers confer no authorization.
 
+## Quickstart: disposable local demo
+
+**One command from the repository root** (requires Docker Compose v2 and Go 1.27.4):
+
+```bash
+bash services/sandbox-journal/scripts/demo.sh
+```
+
+The script starts a disposable PostgreSQL 16 container bound **only to 127.0.0.1:55439**, applies Sandbox-only SQL migrations, inserts synthetic pre-Permit fixtures and runs the real `sandboxctl inspect` against that database. It asserts that dispatch, retry, business success and resource release are all denied or unverified, and also confirms a missing lease fails closed. It prints JSON + text and **automatically stops the container and deletes its database** even on error. To avoid a local port conflict, set `SANDBOX_DEMO_PORT=55539`.
+
+This demo uses a fixed public test password. Never use it with production data or expose the port outside loopback. The demo is deliberately **read-only at the CLI layer**; it does not provision a Sandbox, execute AgentD, issue Guard Permit or prove provider recovery. See PR #84 for scope and CI evidence.
+
 ## Verification
 
 GitHub Actions `Sandbox-owned Command Journal (non-dispatch)` provisions an isolated `sandbox_journal_ci` PostgreSQL 16 database and executes:
 
-````
+```bash
 cd services/sandbox-journal
 go mod verify
 go test -race -count=1 ./...
