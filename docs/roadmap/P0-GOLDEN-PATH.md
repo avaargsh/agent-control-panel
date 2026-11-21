@@ -300,3 +300,17 @@ are not complete. Do not use local preparation success as a business
 result. Main promotion requires independent approval and enforceable
 repository governance; current main branch metadata shows no enabled
 protection and no rulesets. No main merge or production deployment.
+
+
+## 2026-11-21 Postfault complete recovery acceptance (new mandatory gate)
+
+Recovery of Temporal Workflow/Decision on the same Run is a **prerequisite**, never sufficient for protected command continuation. For each Worker SIGKILL / lost-command-ACK scenario, the complete Golden Path now also requires:
+
+1. Actual independently authenticated SandboxLease/UID/generation plus workspace identity and **physical sentinel byte re-read after recovery**, not a new empty directory or a copied fixture.
+2. Actual AgentD CommandJournal with original stable CommandID, durable UNKNOWN, inspect/reconcile of the *same* provider command process UID, strictly increasing journal revision, one original dispatch only, and an independently supported terminal exit receipt. If UNKNOWN remains unresolved, stop instead of retry.
+3. Independent Runtime breaker epoch/version read **and** fresh EngageGuard authorization Permit/epoch/ActionHash validity check after fault. A CLOSED breaker does not grant a Permit; expired or rotated permissions cannot authorize the old operation.
+4. Independently bound expected Tenant/Run/Session/Workflow/GuardOperation/Fault ID from the actual ACP/Runtime acceptance and fault injector, plus distinct source-signed before/after observations from Runtime, SandboxService, AgentD and Guard.
+
+See [versioned verifier, CI gate, fault matrix and blockers](../implementation/POSTFAULT-RECOVERY-GATE.md) and [Draft PR #91](https://github.com/avaargsh/agent-control-panel/pull/91).
+
+**Scope/evidence warning:** the current external Workflow/Decision/Guard read-only harness does not instantiate trusted SandboxService/AgentD or a genuine Guard Permit executor. Unit GREEN only proves the contract checker. The full CI gate is deliberately **BLOCKED** until real source-pinned producers supply these receipts in the same fault-injected Run; it must not be bypassed or marked optional. Open integration ownership: [Issue #70](https://github.com/avaargsh/agent-control-panel/issues/70), [#71](https://github.com/avaargsh/agent-control-panel/issues/71), [#72](https://github.com/avaargsh/agent-control-panel/issues/72).
