@@ -321,3 +321,69 @@ func TestSubmitCLIReportsUnknownForUnverifiableSuccessfulHTTPReply(t *testing.T)
 		})
 	}
 }
+
+func TestSubmitCLIReportsUnknownForPotentiallyCommittedServerErrors(t *testing.T) {
+	// A 5xx error may be emitted after the database transaction committed
+	// (e.g. receipt validation after admission). HTTP 408 can also reflect
+	// an ambiguous request boundary. Neither is proof of a rolled-back write.
+	for _, status := range []int{
+		http.StatusRequestTimeout,
+		http.StatusInternalServerError,
+		http.StatusBadGateway,
+		http.StatusServiceUnavailable,
+		http.StatusGatewayTimeout,
+	} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			var received atomic.Int32
+			url, proposal, tokenFile, caFile, done := submitFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = io.Copy(io.Discard, io.LimitReader(r.Body, issuegoal.MaxPreparedBytes+1))
+				received.Add(1)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(status)
+				_, _ = io.WriteString(w, `{"error":"secret-from-upstream"}`)
+			}))
+			defer done()
+			var out, diagnostics bytes.Buffer
+			err := run([]string{"submit", "--file", "-", "--url", url,
+				"--token-file", tokenFile, "--ca-file", caFile},
+				strings.NewReader(proposal), &out, &diagnostics)
+			if err == nil || !strings.Contains(err.Error(), "outcome unknown") ||
+				!strings.Contains(err.Error(), "inspect ACP before retrying") ||
+				out.Len() != 0 || received.Load() != 1 {
+				t.Fatalf("ambiguous HTTP %d was treated as a confirmed failed write or retried: err=%v requests=%d output=%d", status, err, received.Load(), out.Len())
+			}
+			for _, secret := range []string{"opaque-test-token", "secret-from-upstream"} {
+				if strings.Contains(err.Error(), secret) || strings.Contains(diagnostics.String(), secret) {
+					t.Fatal("ambiguous server response leaked a secret")
+				}
+			}
+		})
+	}
+}
+
+func TestSubmitCLIKeepsDefinitiveHTTPClientDenialsDistinctFromUnknown(t *testing.T) {
+	for _, status := range []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusConflict} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			var calls atomic.Int32
+			url, proposal, tokenFile, caFile, done := submitFixture(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				calls.Add(1)
+				w.WriteHeader(status)
+				_, _ = io.WriteString(w, "untrusted-response-secret")
+			}))
+			defer done()
+			var out, diagnostics bytes.Buffer
+			err := run([]string{"submit", "--file", "-", "--url", url,
+				"--token-file", tokenFile, "--ca-file", caFile},
+				strings.NewReader(proposal), &out, &diagnostics)
+			if err == nil || strings.Contains(err.Error(), "outcome unknown") ||
+				!strings.Contains(err.Error(), fmt.Sprintf("HTTP %d", status)) ||
+				out.Len() != 0 || calls.Load() != 1 {
+				t.Fatalf("definitive HTTP %d denial was misclassified: err=%v requests=%d", status, err, calls.Load())
+			}
+			if strings.Contains(err.Error(), "untrusted-response-secret") ||
+				strings.Contains(diagnostics.String(), "untrusted-response-secret") {
+				t.Fatal("server denial body leaked into CLI")
+			}
+		})
+	}
+}
