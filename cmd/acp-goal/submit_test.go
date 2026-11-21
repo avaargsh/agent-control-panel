@@ -2,16 +2,22 @@ package main
 
 import (
 	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"io"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/avaargsh/agent-control-panel/internal/issuegoal"
 )
@@ -187,10 +193,26 @@ func TestSubmitCLIRequiresTrustedTLS(t *testing.T) {
 		t.Error("untrusted TLS request reached server handler")
 	}))
 	defer done()
-	// A syntactically valid but unrelated CA must not be treated as trust.
-	other := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
-	defer other.Close()
-	if err := os.WriteFile(caFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: other.Certificate().Raw}), 0600); err != nil {
+	// httptest.NewTLSServer uses a shared test certificate on some Go
+	// versions; generate an unrelated self-signed CA instead.
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	ca := &x509.Certificate{
+		SerialNumber: big.NewInt(71),
+		NotBefore: now.Add(-time.Minute),
+		NotAfter: now.Add(time.Hour),
+		IsCA: true,
+		BasicConstraintsValid: true,
+		KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, ca, ca, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(caFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0600); err != nil {
 		t.Fatal(err)
 	}
 	var out, diagnostic bytes.Buffer
