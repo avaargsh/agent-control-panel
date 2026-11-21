@@ -47,3 +47,13 @@ func TestPrepareCLIRejectsInvalidInputWithoutWritingProposal(t *testing.T) {
 		}
 	}
 }
+
+func TestPrepareCLIHelpIsSuccessful(t *testing.T) {
+	var out, diagnostics bytes.Buffer
+	if err := run([]string{"prepare", "--help"}, strings.NewReader(""), &out, &diagnostics); err != nil {
+		t.Fatalf("help must not be a command failure: %v", err)
+	}
+	if !strings.Contains(diagnostics.String(), "Issue Goal manifest path") || out.Len() != 0 {
+		t.Fatalf("missing help output: %s", diagnostics.String())
+	}
+}
