@@ -112,3 +112,35 @@ func TestAdmitPreparedIssueGoalFailsClosedBeforeWriting(t *testing.T) {
 		})
 	}
 }
+
+
+func TestAdmitPreparedIssueGoalRejectsTypedNilDependencies(t *testing.T) {
+	wire := preparedGoalWire(t)
+	var nilSource sourceVerifierFunc
+	var nilStore *inputCaptureStore
+	var nilResolver resolverFunc
+	validSource := sourceVerifierFunc(func(context.Context, Target, issuegoal.Input) error { return nil })
+	cases := []struct {
+		name string
+		service *Service
+		source IssueGoalSourceVerifier
+	}{
+		{name: "typed nil source function", service: New(&inputCaptureStore{}, resolverFunc(func(context.Context, Request) (Grant, error) {
+			t.Fatal("nil source reached resolver")
+			return Grant{}, nil
+		})), source: nilSource},
+		{name: "typed nil store pointer", service: New(nilStore, resolverFunc(func(context.Context, Request) (Grant, error) {
+			t.Fatal("nil store reached resolver")
+			return Grant{}, nil
+		})), source: validSource},
+		{name: "typed nil resolver function", service: New(&inputCaptureStore{}, nilResolver), source: validSource},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, created, err := tc.service.AdmitPreparedIssueGoal(context.Background(), wire, tc.source)
+			if created || !errors.Is(err, ErrInvalidConfig) {
+				t.Fatalf("typed nil dependency was not rejected: created=%v err=%v", created, err)
+			}
+		})
+	}
+}
