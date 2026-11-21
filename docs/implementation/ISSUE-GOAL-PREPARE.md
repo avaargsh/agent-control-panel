@@ -116,3 +116,40 @@ release/budget approval, or a durable source snapshot.** Even when
 and maintain its OAuth/CatalogPolicy admission and independent source
 authority before writing RunIntent. The branch may move after inspection;
 a fresh authoritative recheck remains required.
+
+
+## Internal trusted GitHub source verification
+
+The `admission.NewTrustedGitHubIssueVerifier` adapter now supplies the
+existing `IssueGoalSourceVerifier` boundary. It is internal-only and
+not yet wired to a production HTTP endpoint. Its trusted configuration is
+host-owned (`TrustedGitHubIssuePolicy`), with an exact ACP Target
+(tenant/project/agent/release/session), public repository, target branch,
+operator-approved acceptance rules digest, maximum requested token/runtime/
+sandbox budgets, and optional protected-branch requirement.
+
+For a configured source verifier, `AdmitPreparedIssueGoal` performs:
+
+1. Validate immutable proposal bytes and compute scope-bound request digest.
+2. Authenticate the current caller and check CatalogPolicy **before any
+   GitHub request** (unauthorized requests cannot trigger provider egress).
+3. Fail closed on a target/repository/branch/rules-digest/budget mismatch,
+   before any provider read.
+4. Re-fetch public Issue and validate the versioned Issue ID/content digest.
+5. Re-fetch exact GitHub baseline commits and compare integration SHA with
+   observed current target branch HEAD, optionally requiring branch protection.
+6. Re-authenticate/authorize on the same exact bytes, then use the existing
+   PostgreSQL-authoritative RunIntent/Outbox transaction.
+
+The source verifier makes no GitHub writes, mints no credentials and grants no
+Guard Permit. Its operator-configured rules **digest** is only an allowlist
+constraint: this implementation does **not** yet independently verify rules
+bytes or a cryptographic release signature. The budgets are admission ceilings,
+not actual Runtime token or Sandbox time enforcement.
+
+This boundary does **not** prove the Issue's original content was durably
+retained; the GitHub API observation can change later. A production Source
+Evidence plane, signed rules authority, release-bound authorization, configured
+server API, Runtime dispatch and independently verified Issue→PR completion
+are still separate, required gates. No operator should treat a public CLI
+inspection receipt as authentication or execution authorization.
