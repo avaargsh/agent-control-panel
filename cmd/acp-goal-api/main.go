@@ -32,18 +32,18 @@ import (
 )
 
 type config struct {
-	listenAddress   string
-	certFile        string
-	keyFile         string
-	dsnFile         string
-	oauthCAFile     string
-	oauthEndpoint   string
-	oauthIssuer     string
-	oauthAudience   string
-	oauthClientID   string
-	oauthSecretFile string
+	listenAddress       string
+	certFile            string
+	keyFile             string
+	dsnFile             string
+	oauthCAFile         string
+	oauthEndpoint       string
+	oauthIssuer         string
+	oauthAudience       string
+	oauthClientID       string
+	oauthSecretFile     string
 	githubReadTokenFile string
-	policy          admission.TrustedGitHubIssuePolicy
+	policy              admission.TrustedGitHubIssuePolicy
 }
 
 func readConfig(getenv func(string) string) (config, error) {
