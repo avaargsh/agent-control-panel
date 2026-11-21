@@ -61,7 +61,7 @@ func TestDecodePreparedRejectsModifiedOrAmbiguousProposal(t *testing.T) {
 		"kind rewritten with matching digest":     mustJSON(t, badKind),
 		"non canonical input and matching digest": mustJSON(t, nonCanonical),
 		"unknown top field":                       bytes.Replace(base, []byte(`"schema":`), []byte(`"extra":1,"schema":`), 1),
-		"casefold duplicate top field": bytes.Replace(base, []byte(`"schema":`), []byte(`"Schema":"ignored","schema":`), 1),
+		"casefold duplicate top field":            bytes.Replace(base, []byte(`"schema":`), []byte(`"Schema":"ignored","schema":`), 1),
 		"duplicate top field":                     bytes.Replace(base, []byte(`"schema":`), []byte(`"schema":"wrong","schema":`), 1),
 		"missing target":                          bytes.Replace(base, []byte(`"tenant_id":"tenant-a"`), []byte(`"tenant_id":""`), 1),
 	}
