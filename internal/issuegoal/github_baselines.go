@@ -98,6 +98,7 @@ func (r *PublicIssueReader) baselineGET(ctx context.Context, endpoint string) ([
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 	req.Header.Set("User-Agent", "acp-issue-goal/0.1")
+	r.addReadAuthorization(req)
 	resp, err := r.client.Do(req)
 	if err != nil {
 		return nil, newPublicSourceFailure(ErrBaselineSourceUnavailable, "baseline", "transport", 0)
