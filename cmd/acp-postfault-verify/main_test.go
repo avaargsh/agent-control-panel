@@ -63,9 +63,9 @@ func TestExpectedBindingRejectsUnrelatedHistoricalRunAndFault(t *testing.T) {
 	}
 	at := time.Date(2026, 11, 21, 7, 0, 0, 0, time.UTC)
 	bundle := postfault.Bundle{
-		Schema: postfault.BundleVersion,
+		Schema:  postfault.BundleVersion,
 		Subject: subject,
-		Fault: postfault.Fault{ID: "worker-fault-1", Kind: "worker_sigkill", At: at},
+		Fault:   postfault.Fault{ID: "worker-fault-1", Kind: "worker_sigkill", At: at},
 	}
 	expected := expectedBinding{Subject: subject, FaultID: "worker-fault-1", FaultAt: at}
 	if err := matchesExpected(bundle, expected); err != nil {
