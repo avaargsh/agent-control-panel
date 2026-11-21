@@ -49,6 +49,9 @@ func TestPhysicalWorkspaceSurvivesWorkerSIGKILL(t *testing.T) {
 	if before.RootDevice == 0 || before.RootInode == 0 || before.SentinelDigest == "" {
 		t.Fatal("local workspace has no physical directory/byte evidence")
 	}
+	t.Logf("LOCAL_WORKSPACE_SIGKILL_CONFIRMED run=%s lease=%s sandbox_uid=%s workspace=%s device=%d inode=%d digest=%s",
+		before.RunID, before.LeaseID, before.SandboxUID, before.WorkspaceID,
+		before.RootDevice, before.RootInode, before.SentinelDigest)
 }
 
 func TestPhysicalWorkspaceRecoveryRejectsCorruptionAndStaleBinding(t *testing.T) {
