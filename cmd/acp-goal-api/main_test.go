@@ -151,7 +151,7 @@ func TestSecretFilesRejectSymbolicLinks(t *testing.T) {
 	}
 }
 
-func writeTestServerKeyPair(t *testing.T, directory string, now, notBefore, notAfter time.Time, dnsNames []string, ips []net.IP) (string, string) {
+func writeTestServerKeyPair(t *testing.T, directory string, notBefore, notAfter time.Time, dnsNames []string, ips []net.IP) (string, string) {
 	t.Helper()
 	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -183,7 +183,6 @@ func writeTestServerKeyPair(t *testing.T, directory string, now, notBefore, notA
 	if err := os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privateDER}), 0600); err != nil {
 		t.Fatal(err)
 	}
-	_ = now
 	return certPath, keyPath
 }
 
@@ -205,7 +204,7 @@ func TestLoadServerCertificateRequiresCurrentMatchingSAN(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			directory := t.TempDir()
-			certPath, keyPath := writeTestServerKeyPair(t, directory, now, tc.notBefore, tc.notAfter, tc.dnsNames, tc.ips)
+			certPath, keyPath := writeTestServerKeyPair(t, directory, tc.notBefore, tc.notAfter, tc.dnsNames, tc.ips)
 			certificate, err := loadServerCertificate(certPath, keyPath, "127.0.0.1", now)
 			if tc.wantErr && err == nil {
 				t.Fatal("invalid server certificate was accepted")
