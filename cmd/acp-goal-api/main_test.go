@@ -2,13 +2,13 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"fmt"
 	"math/big"
 	"net"
 	"os"
@@ -222,7 +222,6 @@ func TestLoadServerCertificateRequiresCurrentMatchingSAN(t *testing.T) {
 		})
 	}
 }
-
 
 func TestVerifyAuthoritySchemaRequiresLatestAdmissionMigration(t *testing.T) {
 	dsn := os.Getenv("PGTEST_DSN")
