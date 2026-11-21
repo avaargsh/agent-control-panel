@@ -26,8 +26,8 @@ On errors, HTTP `400` is malformed input, `401` unauthenticated, `403` policy/so
 
 ## Current gate
 
-There is **no host bootstrap / TLS listener wired to this handler in this PR**. No production `acp goal submit` client has been enabled. Tests use in-process HTTP recorders and a fake request-scoped admission service; real OAuth, database and source enforcement are tested separately in prerequisite PRs. Do not treat independent component tests as full authenticated HTTP-to-PostgreSQL E2E.
+An **opt-in, loopback-only TLS host candidate** is now available in `cmd/acp-goal-api`; see [the host guide](ISSUE-GOAL-TLS-HOST.md). It uses the real OAuth introspector, ACP CatalogPolicy, PostgreSQL/Outbox, and the fixed-origin public GitHub reader, but does not change the default read-only ACP server. The integration suite additionally runs an actual HTTPS HTTP endpoint + test HTTPS issuer + PostgreSQL with a **fixture GitHub reader**. Do not treat this as a hosted live-GitHub + real deployed IdP + PostgreSQL end-to-end acceptance or proof of production readiness.
 
 This does not verify signed rule bytes, enforce token/runtime/sandbox consumption ceilings, dispatch an agent, allocate a sandbox, grant a protected effect, create a GitHub PR, or run independent Verifier acceptance. The upstream PR dependency order is **#82 → #85 → this PR**. No auto-merge.
 
-Next gate: create a real TLS-bound host bootstrap with mandatory OAuth/catalog/DB/source config, exercise a live GitHub Issue request via the HTTP listener, then test replay, revocation during source read, timeout and recoverable Outbox behavior before declaring M0 complete.
+Next gate: exercise a live public GitHub Issue request using the opt-in TLS host and independently configured real OAuth/Catalog/DB sources; then verify replay, revocation during source read, timeout/UNKNOWN and recoverable Outbox behavior. Independent review and current exact-head CI remain prerequisites before declaring M0 complete.
