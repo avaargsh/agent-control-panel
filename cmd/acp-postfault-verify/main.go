@@ -76,7 +76,9 @@ func privateBoundedInput(path string) ([]byte, error) {
 		return nil, errors.New("required input file unavailable")
 	}
 	file, err := os.Open(path)
-	if err != nil { return nil, errors.New("required input file unavailable") }
+	if err != nil {
+		return nil, errors.New("required input file unavailable")
+	}
 	defer file.Close()
 	opened, err := file.Stat()
 	if err != nil || !opened.Mode().IsRegular() || !os.SameFile(info, opened) {
