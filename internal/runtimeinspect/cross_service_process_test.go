@@ -129,6 +129,31 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 	writeProcessCertificate(t, certFile, keyFile, serverCert)
 	acpCertFile, acpKeyFile := filepath.Join(dir, "acp.pem"), filepath.Join(dir, "acp.key")
 	writeProcessCertificate(t, acpCertFile, acpKeyFile, acpCert)
+	// Guard's Runtime Safety server has a dedicated strict SPIFFE service
+	// identity, not ACP Inspect's legacy spiffe://example.org/runtime
+	// identity. Keep the latter unchanged for all preexisting clients.
+	composed := golden && os.Getenv("ACP_LIVE_GUARD_COMPOSED") == "1"
+	guardSafetyCertFile, guardSafetyKeyFile, guardSafetyRootFile := "", "", ""
+	safetyServerCertFile, safetyServerKeyFile, guardSafetyCAFile := "", "", ""
+	if composed {
+		_, safetyServer, safetyClient := testSPIFFECertificatesFor(t,
+			"spiffe://example.org/ns/runtime/sa/agent-runtime",
+			"spiffe://example.org/ns/guard/sa/engageguard")
+		guardSafetyCertFile = filepath.Join(dir, "runtime-guard.pem")
+		guardSafetyKeyFile = filepath.Join(dir, "runtime-guard.key")
+		guardSafetyRootFile = filepath.Join(dir, "runtime-guard-roots.pem")
+		safetyServerCertFile = filepath.Join(dir, "runtime-safety-server.pem")
+		safetyServerKeyFile = filepath.Join(dir, "runtime-safety-server.key")
+		guardSafetyCAFile = filepath.Join(dir, "runtime-safety-trust.pem")
+		writeProcessCertificate(t, guardSafetyCertFile, guardSafetyKeyFile, safetyClient)
+		writeProcessCertificate(t, safetyServerCertFile, safetyServerKeyFile, safetyServer)
+		rootsPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: safetyServer.Certificate[1]})
+		for _, path := range []string{guardSafetyRootFile, guardSafetyCAFile} {
+			if err := os.WriteFile(path, rootsPEM, 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
 	if err := os.WriteFile(caFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: serverCert.Certificate[1]}), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -198,6 +223,55 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 	}
 	proc := start()
 	_ = wait(AbsentUncertain)
+	safetyOrigin := ""
+	if composed {
+		// Actual Runtime acp-api implementation, backed by the SAME
+		// PostgreSQL Run/Breaker, hosted behind a distinct strict SPIFFE
+		// server identity and separate mTLS client CA. Unlike a fake
+		// handler, it re-reads current durable breaker state on every GET.
+		safetyListener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		safetyAddress := safetyListener.Addr().String()
+		_ = safetyListener.Close()
+		safetyOrigin = "https://" + safetyAddress
+		safety := exec.Command(binary)
+		safety.Env = append(goldenPathChildEnvironment(),
+			"RUNTIME_DATABASE_URL="+runtimeDSN,
+			"RUNTIME_TLS_CERT="+safetyServerCertFile,
+			"RUNTIME_TLS_KEY="+safetyServerKeyFile,
+			"RUNTIME_CLIENT_CA="+guardSafetyCAFile,
+			"RUNTIME_ACP_SPIFFE_ID=spiffe://example.org/acp",
+			"RUNTIME_ACP_LISTEN_ADDR="+safetyAddress,
+			"RUNTIME_SAFETY_SPIFFE_ID=spiffe://example.org/ns/guard/sa/engageguard",
+			"RUNTIME_SAFETY_TENANT="+intent.TenantID)
+		safetyLog, err := os.OpenFile(filepath.Join(dir, "runtime-safety.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+		if err != nil {
+			t.Fatal(err)
+		}
+		safety.Stdout, safety.Stderr = safetyLog, safetyLog
+		if err := safety.Start(); err != nil {
+			_ = safetyLog.Close()
+			t.Fatal(err)
+		}
+		_ = safetyLog.Close()
+		t.Cleanup(func() { _ = safety.Process.Kill(); _ = safety.Wait() })
+		ready := false
+		for deadline := time.Now().Add(15 * time.Second); time.Now().Before(deadline); {
+			conn, dialErr := net.DialTimeout("tcp", safetyAddress, time.Second)
+			if dialErr == nil {
+				_ = conn.Close()
+				ready = true
+				break
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		if !ready {
+			logs, _ := os.ReadFile(filepath.Join(dir, "runtime-safety.log"))
+			t.Fatalf("real independent strict-SPIFFE Runtime Safety API unavailable: %s", logs)
+		}
+	}
 
 	payload, err := buildAcceptanceBody(intent, input)
 	if err != nil {
@@ -450,6 +524,14 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 			t.Fatalf("live OAuth accepted Run lost catalog authority: %+v %v", authority, err)
 		}
 		readAuthority, liveEnv := newLiveExecutionAuthorityReader(t, pool, acpDSN, runtimeDSN, runpg.New(pool), ref, intent, releaseArtifact)
+		if composed {
+			liveEnv = append(liveEnv,
+				"DECISION_LIVE_GUARD_COMPOSED_RUNTIME_ORIGIN="+safetyOrigin,
+				"DECISION_LIVE_GUARD_COMPOSED_RUNTIME_PEER=spiffe://example.org/ns/runtime/sa/agent-runtime",
+				"DECISION_LIVE_GUARD_COMPOSED_RUNTIME_ROOTS="+guardSafetyRootFile,
+				"DECISION_LIVE_GUARD_COMPOSED_RUNTIME_CERT="+guardSafetyCertFile,
+				"DECISION_LIVE_GUARD_COMPOSED_RUNTIME_KEY="+guardSafetyKeyFile)
+		}
 		readAuthority(http.StatusOK)
 		if _, err := pool.Exec(ctx, "INSERT INTO admission_memberships VALUES ($1,$2,$3,'other-ci-client','RUNNER',true)", intent.TenantID, intent.ProjectID, intent.PrincipalID); err != nil {
 			t.Fatal(err)
@@ -493,7 +575,97 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 		if os.Getenv("ACP_LIVE_CONTINUATION") == "1" {
 			temporal.Env = append(temporal.Env, "RUNTIME_EXTERNAL_LIVE_CONTINUATION=1")
 		}
+		// A disposable ACP test controller, not Guard or Decision, changes the
+		// *actual Runtime PostgreSQL breaker generation* only after both
+		// Decision and ACP have positively verified the same Run. The Guard
+		// subprocess then makes its final real Runtime safety mTLS read.
+		// Restore the synthetic fault before the later source revocation
+		// assertions. This is never a production breaker transition API.
+		var postflightDone chan error
+		if composed {
+			syncDir := t.TempDir()
+			temporal.Env = append(temporal.Env, "DECISION_LIVE_GUARD_COMPOSED_SYNC_DIR="+syncDir)
+			postflightDone = make(chan error, 1)
+			go func() {
+				waitFile := func(filename string) error {
+					deadline := time.Now().Add(3 * time.Minute)
+					for time.Now().Before(deadline) {
+						raw, err := os.ReadFile(filepath.Join(syncDir, filename))
+						if err == nil && string(raw) == runID {
+							return nil
+						}
+						if err != nil && !os.IsNotExist(err) {
+							return fmt.Errorf("%s: %w", filename, err)
+						}
+						select {
+						case <-ctx.Done():
+							return ctx.Err()
+						case <-time.After(40 * time.Millisecond):
+						}
+					}
+					return fmt.Errorf("missing independent Guard postflight marker %s", filename)
+				}
+				if err := waitFile("postflight-capability-verified"); err != nil {
+					postflightDone <- err
+					return
+				}
+				var original int64
+				err := runtimePool.QueryRow(ctx, `
+					SELECT version FROM runtime_circuit_breakers
+					WHERE scope_kind='RUN' AND scope_id=$1
+				`, runID).Scan(&original)
+				if err != nil || original < 1 {
+					postflightDone <- fmt.Errorf("original Runtime breaker unavailable: %w", err)
+					return
+				}
+				change, err := runtimePool.Exec(ctx, `
+					UPDATE runtime_circuit_breakers
+					SET version=version+1, updated_at=clock_timestamp()
+					WHERE scope_kind='RUN' AND scope_id=$1 AND version=$2
+				`, runID, original)
+				if err != nil || change.RowsAffected() != 1 {
+					postflightDone <- fmt.Errorf("failed isolated breaker CAS: %v", err)
+					return
+				}
+				if err := os.WriteFile(filepath.Join(syncDir, "postflight-breaker-changed"), []byte(runID), 0600); err != nil {
+					postflightDone <- err
+					return
+				}
+				deniedErr := waitFile("postflight-denied")
+				// Even after a test failure, restore only the exact fixture
+				// value that this controller changed and never overwrite a
+				// concurrent unrelated breaker generation.
+				restore, restoreErr := runtimePool.Exec(ctx, `
+					UPDATE runtime_circuit_breakers
+					SET version=$2,updated_at=clock_timestamp()
+					WHERE scope_kind='RUN' AND scope_id=$1 AND version=$3
+				`, runID, original, original+1)
+				if restoreErr != nil || restore.RowsAffected() != 1 {
+					postflightDone <- fmt.Errorf("failed isolated breaker cleanup: %v; postflight: %v", restoreErr, deniedErr)
+					return
+				}
+				if deniedErr != nil {
+					postflightDone <- deniedErr
+					return
+				}
+				if err := os.WriteFile(filepath.Join(syncDir, "postflight-restored"), []byte(runID), 0600); err != nil {
+					postflightDone <- err
+					return
+				}
+				postflightDone <- nil
+			}()
+		}
 		out, runErr := temporal.CombinedOutput()
+		if composed {
+			select {
+			case err := <-postflightDone:
+				if err != nil {
+					t.Fatalf("real Guard postflight generation fault injection failed: %v, Temporal output: %s", err, out)
+				}
+			case <-time.After(3 * time.Second):
+				t.Fatalf("missing real Guard postflight completion: %v %s", runErr, out)
+			}
+		}
 		if runErr != nil || !bytes.Contains(out, []byte("--- PASS: TestExternalACPAdmissionTemporalRecovery")) {
 			t.Fatalf("same-Run Temporal execution/recovery failed: %v %s", runErr, out)
 		}
@@ -515,6 +687,12 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 			(!bytes.Contains(out, []byte("real EngageGuard DecisionPlanClient verified same-Run "+runID)) ||
 				!bytes.Contains(out, []byte("real EngageGuard DecisionPlanClient denied revoked same-Run "+runID))) {
 			t.Fatal("missing independently compiled EngageGuard client positive and revoked negative evidence")
+		}
+		if composed &&
+			(!bytes.Contains(out, []byte("real ComposedRunVerifier verified three authorities on same-Run "+runID)) ||
+				!bytes.Contains(out, []byte("real ComposedRunVerifier denied live postflight breaker drift same-Run "+runID)) ||
+				!bytes.Contains(out, []byte("real ComposedRunVerifier denied revoked source same-Run "+runID))) {
+			t.Fatal("missing independently authenticated triple-authority and postflight breaker-denial evidence")
 		}
 		t.Logf("same-Run Temporal evidence:\n%s", out)
 		if id := assertOne(); id != runID {
