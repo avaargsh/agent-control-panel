@@ -200,12 +200,12 @@ func TestSubmitCLIRequiresTrustedTLS(t *testing.T) {
 	}
 	now := time.Now()
 	ca := &x509.Certificate{
-		SerialNumber: big.NewInt(71),
-		NotBefore: now.Add(-time.Minute),
-		NotAfter: now.Add(time.Hour),
-		IsCA: true,
+		SerialNumber:          big.NewInt(71),
+		NotBefore:             now.Add(-time.Minute),
+		NotAfter:              now.Add(time.Hour),
+		IsCA:                  true,
 		BasicConstraintsValid: true,
-		KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
 	}
 	der, err := x509.CreateCertificate(rand.Reader, ca, ca, &key.PublicKey, key)
 	if err != nil {
