@@ -56,7 +56,7 @@ func fixtureRecoveryBundle(t *testing.T) (Bundle, map[string]ed25519.PublicKey, 
 				}
 			case "agentd":
 				report.Command = &CommandObservation{
-					CommandID: "command-1", AttemptID: "command-attempt-1",
+					CommandID: "command-1", AttemptID: "command-attempt-1", ProviderCommandUID: "process-uid-1",
 					JournalVersion: 10, State: "UNKNOWN", DispatchCount: 1,
 				}
 				if phase == "after_recovery" {
@@ -68,7 +68,7 @@ func fixtureRecoveryBundle(t *testing.T) (Bundle, map[string]ed25519.PublicKey, 
 				}
 			case "guard":
 				report.Guard = &GuardObservation{
-					PermitID: "permit-1", PermitEpoch: 8, Status: "VALID",
+					PermitID: "permit-1", PermitEpoch: 8, Status: "VALID", PermitExpiresAt: now.Add(10*time.Minute),
 					ActionDigest: "sha256:" + strings.Repeat("e", 64),
 					Revalidated:  phase == "after_recovery",
 				}
@@ -200,6 +200,7 @@ func TestPostfaultRejectsCommandUnknownWithoutAuthoritativeInspect(t *testing.T)
 		{"no_inspect", func(c *CommandObservation) { c.InspectCount = 0 }},
 		{"no_new_journal_revision", func(c *CommandObservation) { c.JournalVersion = 10 }},
 		{"wrong_command", func(c *CommandObservation) { c.CommandID = "new-command" }},
+		{"replaced_process_uid", func(c *CommandObservation) { c.ProviderCommandUID = "other-process" }},
 		{"no_external_receipt", func(c *CommandObservation) { c.ExitReceiptDigest = "" }},
 		{"self_asserted_exit", func(c *CommandObservation) { c.Source = "worker.report" }},
 	} {
@@ -221,6 +222,8 @@ func TestPostfaultRequiresFreshGuardPermitAndUnchangedRuntimeBreakerEpoch(t *tes
 	}{
 		{"permit_revoked", "guard", func(o *Observation) { o.Guard.Status = "REVOKED" }},
 		{"permit_epoch_changed", "guard", func(o *Observation) { o.Guard.PermitEpoch++ }},
+		{"permit_expired", "guard", func(o *Observation) { o.Guard.PermitExpiresAt = o.ObservedAt.Add(time.Second) }},
+		{"permit_expiry_extended_silently", "guard", func(o *Observation) { o.Guard.PermitExpiresAt = o.Guard.PermitExpiresAt.Add(time.Hour) }},
 		{"permit_changed", "guard", func(o *Observation) { o.Guard.PermitID = "replacement" }},
 		{"guard_not_revalidated", "guard", func(o *Observation) { o.Guard.Revalidated = false }},
 		{"breaker_open", "runtime", func(o *Observation) { o.Runtime.BreakerState = "OPEN" }},
