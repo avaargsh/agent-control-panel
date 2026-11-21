@@ -53,7 +53,8 @@ type canonicalIssueSnapshotV1 struct {
 // PublicIssueReader only sends read-only requests to the fixed api.github.com
 // hostname. It has no caller-supplied endpoint, token or redirect allowance.
 type PublicIssueReader struct {
-	client *http.Client
+	client  *http.Client
+	bearer  string // explicit, read-only credential; never accepted from a Goal manifest
 }
 
 func NewPublicIssueReader() *PublicIssueReader {
@@ -63,6 +64,33 @@ func NewPublicIssueReader() *PublicIssueReader {
 		Transport:     transport,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}}
+}
+
+// NewPublicIssueReaderWithBearer only authenticates read-only requests to
+// the hard-coded api.github.com origin. It does not read environment tokens,
+// accept caller-provided hosts, follow redirects or use proxy settings that
+// could forward the credential outside the intended TLS destination.
+func NewPublicIssueReaderWithBearer(token string) (*PublicIssueReader, error) {
+	if len(token) == 0 || len(token) > 4096 {
+		return nil, ErrInvalidGoal
+	}
+	for _, ch := range token {
+		if !((ch >= '0' && ch <= '9') || (ch >= 'A' && ch <= 'Z') ||
+			(ch >= 'a' && ch <= 'z') || ch == '-' || ch == '_' ||
+			ch == '.' || ch == '~') {
+			return nil, ErrInvalidGoal
+		}
+	}
+	reader := NewPublicIssueReader()
+	reader.bearer = token
+	reader.client.Transport.(*http.Transport).Proxy = nil
+	return reader, nil
+}
+
+func (r *PublicIssueReader) addReadAuthorization(req *http.Request) {
+	if r.bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+r.bearer)
+	}
 }
 
 func ValidateIssueURL(value string) error {
@@ -89,6 +117,7 @@ func (r *PublicIssueReader) Read(ctx context.Context, issueURL string) (GitHubIs
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 	req.Header.Set("User-Agent", "acp-issue-goal/0.1")
+	r.addReadAuthorization(req)
 	resp, err := r.client.Do(req)
 	if err != nil {
 		return GitHubIssueSnapshot{}, newPublicSourceFailure(ErrIssueSourceUnavailable, "issue", "transport", 0)
