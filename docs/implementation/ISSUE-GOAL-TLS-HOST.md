@@ -1,0 +1,89 @@
+# M0 GoalSubmit opt-in TLS host (candidate, no Runtime dispatch)
+
+**Status:** candidate feature on stacked PR #86. This command starts a real TLS listener but only accepts a PostgreSQL-authoritative ACP **RunIntent**, not a Runtime Run, Agent execution, GitHub pull request, Guard Permit or approved release. It is not enabled in the default read-only ACP binary. Do not call this production ready without independent review and live provider acceptance.
+
+## Authority wiring
+
+`cmd/acp-goal-api` composes existing implementations, without creating any additional identity, database, workflow or permission authority:
+
+```text
+Client POST /api/v1/goals:submit (direct TLS; local loopback only)
+    → strict immutable Issue Goal proposal and opaque Bearer header
+    → TLS-validating OAuth RFC7662 introspection + ACP CatalogPolicy preflight
+    → exact trusted tenant/project/agent/release/session + repo/branch/rules/budget scope
+    → read-only public api.github.com Issue and pinned commit/branch checks
+    → fresh OAuth/CatalogPolicy resolution and DB-row-locked authorization
+    → one ACP PostgreSQL RunIntent + Outbox, or exact idempotent replay
+    → HTTP 201/200 (run_intent_id, NOT runtime_run_id)
+```
+
+The host fails closed on missing config, wildcard/non-loopback listeners, absent TLS key/cert, missing or overly permissive secret files, untrusted IdP CA, incorrect source selector and absent migrated DB tables. The outbound GitHub hostname is fixed by `issuegoal.PublicIssueReader`; no caller-provided GitHub token, private repo or redirect is supported.
+
+## Run in an isolated development environment
+
+Prerequisites: Go pinned by `go.mod`, PostgreSQL 16 with all ACP migrations applied by a **separate migration job**, a catalog containing authorized tenant/project/release/session/principal/membership, an OAuth introspection issuer with a trusted CA and client credentials, and a direct TLS server certificate for `127.0.0.1`. The server itself **will not create a database schema, bootstrap users or mint OAuth tokens**.
+
+Keep database DSN and OAuth introspection secret in private local files. The host requires the files be regular, nonempty, at most 64 KiB and not readable by group/others (for example `chmod 0600`). Do not commit either file. For a remote PostgreSQL host, the DSN must enable verified TLS. Local PostgreSQL can use Unix sockets or loopback in the isolated test environment.
+
+```sh
+# The following paths and identifiers are EXAMPLES: supply real operator resources.
+export ACP_GOAL_LISTEN_ADDR=127.0.0.1:9443
+export ACP_GOAL_TLS_CERT_FILE=/run/acp/tls/server.crt
+export ACP_GOAL_TLS_KEY_FILE=/run/acp/tls/server.key
+export ACP_GOAL_PG_DSN_FILE=/run/acp/secrets/postgres-dsn
+export ACP_GOAL_OAUTH_CA_FILE=/run/acp/ca/issuer-ca.pem
+export ACP_GOAL_OAUTH_ENDPOINT=https://issuer.example/realms/acp/protocol/openid-connect/token/introspect
+export ACP_GOAL_OAUTH_ISSUER=https://issuer.example/realms/acp
+export ACP_GOAL_OAUTH_AUDIENCE=acp-control-plane
+export ACP_GOAL_OAUTH_CLIENT_ID=acp-resource
+export ACP_GOAL_OAUTH_CLIENT_SECRET_FILE=/run/acp/secrets/introspection-client
+export ACP_GOAL_TENANT_ID=tenant-a
+export ACP_GOAL_PROJECT_ID=project-a
+export ACP_GOAL_AGENT_ID=coding
+export ACP_GOAL_RELEASE_ID=release-v1
+export ACP_GOAL_SESSION_ID=session-1
+export ACP_GOAL_GITHUB_REPOSITORY=owner/repo
+export ACP_GOAL_TARGET_BRANCH=main
+export ACP_GOAL_RULES_DIGEST=sha256:REPLACE_WITH_ACTUAL_64_CHARACTER_LOWERCASE_HEX
+export ACP_GOAL_MAX_TOKENS=1000
+export ACP_GOAL_MAX_RUNTIME_SECONDS=600
+export ACP_GOAL_MAX_SANDBOX_SECONDS=300
+
+# Default: require GitHub branch protection. Only for disposable demos,
+# explicitly opt out when the chosen public branch has no protection:
+# export ACP_GOAL_ALLOW_UNPROTECTED_TEST_BRANCH=true
+
+go run ./cmd/acp-goal-api
+```
+
+No untrusted HTTPS reverse proxy inference is supported: the listener itself requires a TLS handshake. Binds other than a numeric loopback address are rejected; remote access, production ingress and multi-tenant hosting are not included. The runtime does not expose a health/read API; use platform process supervision and a separate deployment readiness gate.
+
+## Prepare and submit a real public Issue
+
+Use `go run ./cmd/acp-goal snapshot --issue-url https://github.com/owner/repo/issues/1` to obtain the public Issue digest, then build a manifest with the same exact repository/branch, current integration branch tip SHA, separately pinned experiment SHA, operator-approved rule digest, configured target identifiers and an in-ceiling budget.
+
+```sh
+go run ./cmd/acp-goal inspect --file /tmp/acp-issue-goal.json
+go run ./cmd/acp-goal prepare --file /tmp/acp-issue-goal.json > /tmp/acp-proposal.json
+
+# Use a private short-lived Bearer header file; never put tokens in URLs,
+# manifests, curl verbose logs or GitHub Actions artifacts.
+# The private file contains: Authorization: Bearer <actual-token>
+curl --silent --show-error --cacert /run/acp/ca/goal-server-ca.pem \
+  --header @/run/acp/secrets/goal-bearer-header \
+  --header 'Content-Type: application/json' \
+  --data-binary @/tmp/acp-proposal.json \
+  https://127.0.0.1:9443/api/v1/goals:submit
+```
+
+Expected: HTTP `201` for the first authorized request and `200` for an exact same-key replay, both with the *same* `run_intent_id` and canonical digest; there is **no** `run_id` and no dispatch receipt. A reused key with changed input should result in `409`. Revoke the membership, retry, and expect denial without a new DB row or GitHub source request. For timeouts or ambiguous external responses, inspect the existing database and authoritative source; never blindly synthesize success.
+
+### Evidence and known limitations
+
+- Non-network config rejection tests: `go test ./cmd/acp-goal-api`. Exact-head Go/PG workflow must also pass all race-enabled tests.
+- `TestCatalogGoalHTTPRealTLSIntrospectionAndPostgres` runs a real TLS HTTP listener, test TLS issuer, existing CatalogPolicy and real PostgreSQL/Outbox when `PGTEST_DSN` is present. The GitHub reader in this test is **a fixture**, not a real GitHub attestation.
+- This command wires an actual read-only GitHub source reader, but **no hosted live-GitHub + actual OAuth issuer + real ACP database acceptance run has been confirmed yet**. There is no signed ruleset authority, budget consumption accounting, live GitHub PR creation, Sandbox/Verifier/Guard effect or fully vetted production deployment.
+- Public GitHub Issues can change or be closed; their snapshot and pinned branch HEAD must be freshly re-observed on each authorized submission, including replay.
+- Operator must independently verify the exact HEAD SHA, authenticated GitHub logs, failure/negative matrix, database role least privilege, branch protections and a separate reviewer before promoting this candidate.
+
+Related: [HTTP handler contract](ISSUE-GOAL-HTTP.md), [input preparation](ISSUE-GOAL-PREPARE.md), [portfolio demo](PORTFOLIO-VALIDATION-DEMO.md), [PR #86](https://github.com/avaargsh/agent-control-panel/pull/86).
