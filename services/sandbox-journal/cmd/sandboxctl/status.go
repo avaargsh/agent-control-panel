@@ -104,7 +104,7 @@ func inspect(ctx context.Context, q Query, leases LeaseReader, commands CommandR
 		out.Lease = &LeaseView{
 			LeaseIntentID: rec.Intent.LeaseIntentID, RunID: rec.Intent.RunID,
 			RuntimeAttemptID: rec.Intent.RuntimeAttemptID,
-			Generation: rec.Generation, State: rec.State,
+			Generation:       rec.Generation, State: rec.State,
 		}
 		if rec.State == lease.CancelledBeforeProvision {
 			out.NextAction = "STOP_NO_PROVIDER_ACTION"
