@@ -104,6 +104,26 @@ func TestPublishExactReleaseContentAndRejectTamper(t *testing.T) {
 		{"other resource", func(_ *Publication, q *GuardCapabilityRequest) { q.ResourceRef = "other" }},
 		{"effectful capability", func(a *Publication, _ *GuardCapabilityRequest) { a.Capabilities[0].EffectClass = "write" }},
 		{"unsafe idempotency", func(a *Publication, _ *GuardCapabilityRequest) { a.Capabilities[0].Idempotency = "unsafe" }},
+		// RED regression: all of these used to match despite diverging from
+		// the immutable release/config and context bytes that Publisher signed.
+		{"forged contract digest", func(a *Publication, _ *GuardCapabilityRequest) {
+			a.Capabilities[0].ContractSHA256 = sha256Hex([]byte("forged-contract"))
+		}},
+		{"forged input schema digest", func(a *Publication, _ *GuardCapabilityRequest) {
+			a.Capabilities[0].InputSchemaRef = "sha256:" + sha256Hex([]byte("forged-input"))
+		}},
+		{"forged output schema digest", func(a *Publication, _ *GuardCapabilityRequest) {
+			a.Capabilities[0].OutputSchemaRef = "sha256:" + sha256Hex([]byte("forged-output"))
+		}},
+		{"forged context field", func(a *Publication, q *GuardCapabilityRequest) {
+			a.Context.Service = "other"
+			q.ResourceRef = "other"
+		}},
+		{"forged config digest", func(a *Publication, _ *GuardCapabilityRequest) {
+			a.Authority.ConfigDigest = "sha256:" + sha256Hex([]byte("forged-config"))
+			a.Context.Authority = a.Authority
+		}},
+
 	} {
 		t.Run("Guard rejects "+tc.name, func(t *testing.T) {
 			a := record
