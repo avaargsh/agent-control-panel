@@ -155,6 +155,13 @@ grep -Fq -- "--- PASS: $test_name " "$root/acceptance.log"
 # Go HTTPS GoalSubmit host, ACP CatalogPolicy and PostgreSQL authority.
 # No GitHub writes or Runtime dispatch are permitted.
 if [[ "$mode" == oidc ]]; then
+  # Build two separate executables before minting the short-lived Goal token.
+  # Neither binary is installed on the runner or shipped as a public artifact.
+  go build -trimpath -o "$root/acp-goal-api" ./cmd/acp-goal-api
+  go build -trimpath -o "$root/acp-goal" ./cmd/acp-goal
+  export ACP_REAL_GOAL_API_BIN="$root/acp-goal-api"
+  export ACP_REAL_GOAL_CLI_BIN="$root/acp-goal"
+  export ACP_REAL_GOAL_PROCESS=1
   export ACP_REAL_GOAL_E2E=1
   goal_test='TestRealGoalHTTPKeycloakGitHubPostgres'
   go test -race -count=1 -v -run "^$goal_test$" ./internal/goalhttp | tee "$root/goal-acceptance.log"
