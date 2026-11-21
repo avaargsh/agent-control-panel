@@ -170,8 +170,8 @@ func TestGoalHTTPAuthorityRevokedDuringGitHubReadLeavesNoIntentOrOutbox(t *testi
 			defer server.Close()
 			type response struct {
 				status int
-				body []byte
-				err error
+				body   []byte
+				err    error
 			}
 			done := make(chan response, 1)
 			preparedGoal := validProposal(t)
