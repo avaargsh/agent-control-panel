@@ -33,6 +33,16 @@ class ReceiptError(ValueError):
     """The supplied metadata cannot support even a narrow CI observation."""
 
 
+def unique_json_object(pairs):
+    """Reject ambiguous JSON objects before downstream receipt validation."""
+    obj = {}
+    for key, value in pairs:
+        if key in obj:
+            raise ReceiptError('Duplicate JSON key in exported CI metadata: ' + key)
+        obj[key] = value
+    return obj
+
+
 def _required(condition, message):
     if not condition:
         raise ReceiptError(message)
@@ -95,7 +105,7 @@ def main(argv=None):
     p.add_argument('--scenario', required=True, choices=sorted(SCENARIOS))
     args = p.parse_args(argv)
     try:
-        data = json.loads(args.run_json.read_text(encoding='utf-8'))
+        data = json.loads(args.run_json.read_text(encoding='utf-8'), object_pairs_hook=unique_json_object)
         result = verify_run(data, args.expected_sha, args.scenario)
     except (ReceiptError, ValueError, OSError) as exc:
         print(json.dumps({'ok': False, 'error': str(exc)}, ensure_ascii=False), file=sys.stderr)
