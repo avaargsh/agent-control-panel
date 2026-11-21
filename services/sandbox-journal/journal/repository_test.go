@@ -17,7 +17,7 @@ import (
 func sample() identity.Intent {
 	return identity.Intent{
 		TenantID: "tenant-a", RunID: "11111111-1111-4111-8111-111111111111", RuntimeAttemptID: "runtime-attempt-1",
-		SandboxUID: "sandbox-uid-1", CommandID: "command-1", ExecutorAttemptID: "exec-attempt-1", RequestDigest: "sha256:" + strings.Repeat("a", 64),
+		SandboxUID: "sandbox-uid-1", CommandID: "command-1", RequestDigest: "sha256:" + strings.Repeat("a", 64),
 	}
 }
 func setup(t *testing.T) *Repository {
@@ -92,9 +92,9 @@ func TestNoCrossTenantOrDigestConflictAndNoDuplicateEvent(t *testing.T) {
 		t.Fatalf("changed Run accepted: %v", err)
 	}
 	bad = in
-	bad.CommandID = "command-2" // same executor attempt cannot be rebound
+	bad.RuntimeAttemptID = "runtime-attempt-2" // same command cannot change Runtime Attempt
 	if _, _, err := repo.RecordPermitUnavailable(context.Background(), bad); !errors.Is(err, ErrConflict) {
-		t.Fatalf("reused executor attempt accepted: %v", err)
+		t.Fatalf("changed Runtime Attempt accepted: %v", err)
 	}
 	if _, err := repo.Get(context.Background(), "tenant-b", in.SandboxUID, in.CommandID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("cross-tenant row exposed: %v", err)
