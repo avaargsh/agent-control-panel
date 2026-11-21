@@ -22,6 +22,25 @@ import (
 
 const maxBundleBytes = 128 << 10
 
+const expectedBindingVersion = "acp.postfault-expected/v1"
+
+// The expected binding must be read independently from the actual ACP/Runtime
+// authority and fault injector, not copied from the submitted bundle.
+type expectedBinding struct {
+	Schema  string            `json:"schema"`
+	Subject postfault.Subject `json:"subject"`
+	FaultID string            `json:"fault_id"`
+	FaultAt time.Time         `json:"fault_at"`
+}
+
+func matchesExpected(bundle postfault.Bundle, expected expectedBinding) error {
+	if bundle.Subject != expected.Subject || bundle.Fault.ID != expected.FaultID ||
+		!bundle.Fault.At.Equal(expected.FaultAt) {
+		return errors.New("postfault bundle does not match independently accepted Run and injected fault")
+	}
+	return nil
+}
+
 func main() {
 	if err := run(os.Args[1:]); err != nil {
 		// Never print raw payloads, keys, bearer tokens or provider errors.
@@ -35,10 +54,11 @@ func run(args []string) error {
 	flags := flag.NewFlagSet("acp-postfault-verify", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	bundlePath := flags.String("bundle", "", "externally signed recovery bundle")
+	expectedPath := flags.String("expected", "", "independent ACP/Runtime same-Run and injected-fault binding")
 	trustDir := flags.String("trust-dir", "", "out-of-band trusted authority public keys")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 ||
-		*bundlePath == "" || *trustDir == "" {
-		return errors.New("requires --bundle and --trust-dir; absence is not a PASS")
+		*bundlePath == "" || *expectedPath == "" || *trustDir == "" {
+		return errors.New("requires --bundle, --expected and --trust-dir; absence is not a PASS")
 	}
 	data, err := privateBoundedInput(*bundlePath)
 	if err != nil || len(data) > maxBundleBytes {
@@ -49,6 +69,20 @@ func run(args []string) error {
 	decoder.DisallowUnknownFields()
 	if decoder.Decode(&bundle) != nil || decoder.Decode(new(any)) != io.EOF {
 		return errors.New("postfault bundle is invalid")
+	}
+	bindingBytes, err := privateBoundedInput(*expectedPath)
+	if err != nil || len(bindingBytes) > 4096 {
+		return errors.New("independent authoritative Run/fault binding unavailable")
+	}
+	var expected expectedBinding
+	expectedDecoder := json.NewDecoder(bytes.NewReader(bindingBytes))
+	expectedDecoder.DisallowUnknownFields()
+	if expectedDecoder.Decode(&expected) != nil || expectedDecoder.Decode(new(any)) != io.EOF ||
+		expected.Schema != expectedBindingVersion || expected.FaultID == "" || expected.FaultAt.IsZero() {
+		return errors.New("independent authoritative Run/fault binding is invalid")
+	}
+	if err := matchesExpected(bundle, expected); err != nil {
+		return err
 	}
 	keys := make(map[string]ed25519.PublicKey, 4)
 	for _, authority := range []string{"runtime", "sandbox", "agentd", "guard"} {
