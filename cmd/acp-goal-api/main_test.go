@@ -2,10 +2,19 @@ package main
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"math/big"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func completeEnv() map[string]string {
@@ -105,5 +114,108 @@ func TestServerFailsBeforeBindingWithMissingTLSFiles(t *testing.T) {
 	}
 	if err := serve(context.Background(), c); err == nil {
 		t.Fatal("host started without trusted TLS key material")
+	}
+}
+
+
+func TestUnprotectedBranchOverrideRequiresDevelopmentEnvironment(t *testing.T) {
+	env := completeEnv()
+	env["ACP_GOAL_ALLOW_UNPROTECTED_TEST_BRANCH"] = "true"
+	if _, err := readConfig(configuredEnv(env)); err == nil {
+		t.Fatal("unprotected branch override accepted outside development environment")
+	}
+	env["ACP_GOAL_ENV"] = "production"
+	if _, err := readConfig(configuredEnv(env)); err == nil {
+		t.Fatal("unprotected branch override accepted in production")
+	}
+	env["ACP_GOAL_ENV"] = "development"
+	if cfg, err := readConfig(configuredEnv(env)); err != nil {
+		t.Fatalf("explicit development override rejected: %v", err)
+	} else if cfg.policy.RequireProtectedBranch {
+		t.Fatal("explicit development override did not disable branch-protection requirement")
+	}
+}
+
+func TestSecretFilesRejectSymbolicLinks(t *testing.T) {
+	directory := t.TempDir()
+	target := filepath.Join(directory, "target")
+	link := filepath.Join(directory, "secret-link")
+	if err := os.WriteFile(target, []byte("private-value"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readSecretFile(link); err == nil {
+		t.Fatal("symbolic link to a private credential was accepted")
+	}
+}
+
+func writeTestServerKeyPair(t *testing.T, directory string, now, notBefore, notAfter time.Time, dnsNames []string, ips []net.IP) (string, string) {
+	t.Helper()
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject: pkix.Name{CommonName: "ACP test server"},
+		NotBefore: notBefore,
+		NotAfter: notAfter,
+		KeyUsage: x509.KeyUsageDigitalSignature,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		DNSNames: dnsNames,
+		IPAddresses: ips,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &privateKey.PublicKey, privateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	privateDER, err := x509.MarshalPKCS8PrivateKey(privateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certPath := filepath.Join(directory, "server.crt")
+	keyPath := filepath.Join(directory, "server.key")
+	if err := os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privateDER}), 0600); err != nil {
+		t.Fatal(err)
+	}
+	_ = now
+	return certPath, keyPath
+}
+
+func TestLoadServerCertificateRequiresCurrentMatchingSAN(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	tests := []struct {
+		name string
+		notBefore time.Time
+		notAfter time.Time
+		dnsNames []string
+		ips []net.IP
+		wantErr bool
+	}{
+		{name: "matching loopback IP", notBefore: now.Add(-time.Hour), notAfter: now.Add(time.Hour), ips: []net.IP{net.ParseIP("127.0.0.1")}},
+		{name: "wrong DNS identity", notBefore: now.Add(-time.Hour), notAfter: now.Add(time.Hour), dnsNames: []string{"localhost"}, wantErr: true},
+		{name: "expired", notBefore: now.Add(-2 * time.Hour), notAfter: now.Add(-time.Hour), ips: []net.IP{net.ParseIP("127.0.0.1")}, wantErr: true},
+		{name: "not yet valid", notBefore: now.Add(time.Hour), notAfter: now.Add(2 * time.Hour), ips: []net.IP{net.ParseIP("127.0.0.1")}, wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			directory := t.TempDir()
+			certPath, keyPath := writeTestServerKeyPair(t, directory, now, tc.notBefore, tc.notAfter, tc.dnsNames, tc.ips)
+			certificate, err := loadServerCertificate(certPath, keyPath, "127.0.0.1", now)
+			if tc.wantErr && err == nil {
+				t.Fatal("invalid server certificate was accepted")
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("valid server certificate rejected: %v", err)
+			}
+			if !tc.wantErr && certificate.Leaf == nil {
+				t.Fatal("parsed leaf certificate was not retained")
+			}
+		})
 	}
 }
