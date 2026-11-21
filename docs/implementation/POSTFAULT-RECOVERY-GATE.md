@@ -33,9 +33,11 @@ The verifier executable is built from cmd/acp-postfault-verify. It only reads a 
 
 Run (only after the trusted producers have created actual observations):
 
-    go run ./cmd/acp-postfault-verify --bundle "$RUNNER_TEMP/acp-postfault/proof.json" --trust-dir "$RUNNER_TEMP/acp-postfault/trust"
+    go run ./cmd/acp-postfault-verify --bundle "$RUNNER_TEMP/acp-postfault/proof.json" --expected "$RUNNER_TEMP/acp-postfault/expected.json" --trust-dir "$RUNNER_TEMP/acp-postfault/trust"
 
 The trust directory must contain four distinct, independently provisioned **hex-encoded Ed25519 public keys**, named runtime.pub, sandbox.pub, agentd.pub and guard.pub. These keys must NOT be taken from the user-supplied bundle, the ACP Goal Manifest or untrusted PR code.
+
+The separate expected.json file must be created by the trusted ACP/Runtime acceptance test and actual fault injector, **not** copied from the bundle. It uses schema acp.postfault-expected/v1 and contains subject (original tenant/run/session/workflow/guard_operation) plus fault_id and fault_at. All values must match the signed receipts and recorded injection time exactly; evidence for a different Run cannot pass.
 
 The bundle has schema acp.postfault-bundle/v1, the original Subject and Fault, plus eight receipt objects with authority, phase, payload_b64 and signature_b64. The exact decoded observation JSON bytes are signed with Ed25519 using domain prefix acp.postfault-observation/v1 followed by a NUL byte. The strict schema acp.postfault-observation/v1 requires one owner-specific observation, original fault ID, matching Run, signed timestamp and owner phase.
 
@@ -49,7 +51,7 @@ These generate **test-only signing keys** and validate signature/tamper/identity
 
 ## Mandatory CI fail-closed behavior
 
-The existing acp-temporal-golden-path.yml now builds the verifier **after** the existing real Worker/Decision recovery stage. Its final required step reads the same-job RUNNER_TEMP postfault proof and external trust directory. If no real producers have supplied both, the workflow **fails with an explicit BLOCKED error**. There is no continue-on-error and no synthetic artifact generator.
+The existing acp-temporal-golden-path.yml now builds the verifier **after** the existing real Worker/Decision recovery stage. Its final required step reads the same-job RUNNER_TEMP independently accepted expected Run/fault binding, signed postfault proof and external trust directory. If no real producers have supplied both, the workflow **fails with an explicit BLOCKED error**. There is no continue-on-error and no synthetic artifact generator.
 
 At the time of this change the pinned workflow does not build SandboxService/AgentD nor an issuing Guard Permit/PEP, so the expanded full Golden Path **cannot pass**. The legacy Workflow/Decision step may still pass on its own; that is not full business recovery acceptance.
 
