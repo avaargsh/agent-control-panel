@@ -2,7 +2,7 @@
 
 > 作品定位：**Enterprise Agent Infrastructure / Agent Control Plane**。本页用于招聘面试、开源读者和评审者，演示的是**受控环境中的跨服务可靠执行证据**，不是生产交付声明。
 >
-> 基准：2026-11-21；`main` = [`28e6ec23a03309bd759e865f5402d029cfdf280c`](https://github.com/avaargsh/agent-control-panel/commit/28e6ec23a03309bd759e865f5402d029cfdf280c)。仓库持续演进；展示任何新运行结果前须重新记录实际 HEAD、GitHub Actions run ID、源码依赖 SHA 与结论。
+> 基准：2026-11-21；`main` = [`4b2d6949ff2ea8996082e0e47650f2eeb1db6a6a`](https://github.com/avaargsh/agent-control-panel/commit/4b2d6949ff2ea8996082e0e47650f2eeb1db6a6a)（本次核查时）。仓库持续演进；展示任何新运行结果前须重新记录实际 HEAD、GitHub Actions run ID、源码依赖 SHA 与结论。
 
 ## 一句话说明
 
@@ -41,6 +41,22 @@ flowchart LR
 | 独立 Verifier、签名 Evidence/Trace、GitHub Issue→修复 PR→资源回收 | [Issue #72](https://github.com/avaargsh/agent-control-panel/issues/72) | **待实现/联合验收** |
 
 **特别注意**：CI 绿色只证明该 run 的精确 commit、依赖版本、fixture 和断言。业务 Run 的持久化恢复 ≠ 受保护操作的 Exactly Once；不宣称 Guard Permit、真实工具副作用、生产 IAM/密钥、生产 K8s/MicroVM 资源回收或跨服务统一上线已获验收。
+
+## M0 Issue Goal 输入与非派发受理：候选 PR，不属于 main 的演示结论
+
+2026-11-21 核查时，Issue Goal 入门链已拆成三层独立、尚未合并的候选改动：
+
+| PR | 新增的候选能力 | 本阶段不可宣称 |
+|---|---|---|
+| [#82](https://github.com/avaargsh/agent-control-panel/pull/82) | 严格校验 Issue Goal 输入、计算固定摘要、复用现有可信 RunIntent 准入 | 无自动 GitHub Issue→PR，非真实执行 |
+| [#85](https://github.com/avaargsh/agent-control-panel/pull/85) | 核查公共 GitHub Issue 快照、固定基线 Commit 和来源约束 | 规则签名/授权的完整权威闭环未实现 |
+| [#86](https://github.com/avaargsh/agent-control-panel/pull/86) | 内部 `POST /api/v1/goals:submit` handler；按认证上下文受理且 **不派发**；返回 `run_intent_id` | 无真实 TLS 监听器/服务接线、无运行时任务执行、无受保护写操作 |
+
+依赖顺序为 **#82 → #85 → #86**。这些 PR 上的 Go/PG、OIDC 或模拟 HTTP 测试只证明各自的精确源码范围，不是把三层放到同一个真实 HTTP→OAuth→GitHub→PostgreSQL 部署中验证，也不代表 Workflow 已启动。
+
+面试时如果展示候选 API，必须同时口述：`run_intent_id` 是 ACP 受理标识，不是 Runtime 的 `run_id`；**201/200 仅表示首次受理/幂等重放，并非任务完成**。HTTP 处理器没有启用到默认服务；不可对外展示为已上线可调用的产品入口。
+
+下一步的最小实跑验收不是再加一套控制面，而是以可信 TLS Host 连接 OAuth/CatalogPolicy、GitHub 来源核验和现有 PostgreSQL RunIntent Authority，记录真实的首次受理、同键重放、变更输入冲突、授权撤销及 Outbox 观察。所有错误路径记录是否存在持久化写入；失败或不确定的步骤不得发出 Runtime Dispatch。完成此门禁前，后续 Sandbox、Guard、Verifier 和 GitHub PR 的交付链仍按 [#70–#72](https://github.com/avaargsh/agent-control-panel/issues/72) 标记为未交付。
 
 ## 5–10 分钟面试现场演示
 
