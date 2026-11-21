@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 
 	"github.com/avaargsh/agent-control-panel/internal/issuegoal"
 	"github.com/avaargsh/agent-control-panel/internal/runintent"
@@ -19,13 +20,30 @@ type IssueGoalSourceVerifier interface {
 
 var ErrIssueGoalSourceUnverified = errors.New("issue goal source could not be verified")
 
+// A typed nil function or pointer assigned to an interface is not equal to
+// nil. Reject it before any admission work rather than panicking inside an
+// absent verifier, resolver, or store.
+func issueGoalDependencyConfigured(value any) bool {
+	if value == nil {
+		return false
+	}
+	v := reflect.ValueOf(value)
+	switch v.Kind() {
+	case reflect.Func, reflect.Ptr, reflect.Interface, reflect.Map, reflect.Slice, reflect.Chan:
+		return !v.IsNil()
+	default:
+		return true
+	}
+}
+
 // AdmitPreparedIssueGoal is an INTERNAL, non-dispatch adapter. It validates
 // every untrusted proposal byte and requires an independent trusted source
 // verifier before calling the EXISTING authenticated RunIntent admission.
 // The normal resolver must still authenticate/authorize on every replay;
 // this method does not mint Run IDs, issue Guard Permits, or enable execution.
 func (s *Service) AdmitPreparedIssueGoal(ctx context.Context, proposalJSON []byte, sources IssueGoalSourceVerifier) (runintent.Intent, bool, error) {
-	if s == nil || s.store == nil || s.resolver == nil || sources == nil {
+	if s == nil || !issueGoalDependencyConfigured(s.store) ||
+		!issueGoalDependencyConfigured(s.resolver) || !issueGoalDependencyConfigured(sources) {
 		return runintent.Intent{}, false, ErrInvalidConfig
 	}
 	if err := ctx.Err(); err != nil {
