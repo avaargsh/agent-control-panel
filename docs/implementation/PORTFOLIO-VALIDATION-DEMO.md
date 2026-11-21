@@ -2,7 +2,37 @@
 
 > 作品定位：**Enterprise Agent Infrastructure / Agent Control Plane**。本页用于招聘面试、开源读者和评审者，演示的是**受控环境中的跨服务可靠执行证据**，不是生产交付声明。
 >
-> 基准：2026-11-21；`main` = [`28e6ec23a03309bd759e865f5402d029cfdf280c`](https://github.com/avaargsh/agent-control-panel/commit/28e6ec23a03309bd759e865f5402d029cfdf280c)。仓库持续演进；展示任何新运行结果前须重新记录实际 HEAD、GitHub Actions run ID、源码依赖 SHA 与结论。
+> 最近核验：2026-11-21；`main` = [`1d143034053c4b1496d6a4cdc55a730eeec8bb87`](https://github.com/avaargsh/agent-control-panel/commit/1d143034053c4b1496d6a4cdc55a730eeec8bb87)。以下 M0 GoalSubmit 演示来自**尚未合并的叠加 PR**；历史 Run 的绿色结果不能替代最新 HEAD。
+
+## 最适合先演示：5 分钟真实 GitHub Issue 准入（M0，候选实现）
+
+**面向面试官的一句话**：我实现并独立验证了一条企业 Agent 的安全任务准入入口：从真实公开 GitHub Issue 取得不可变输入，用真实 OAuth 服务账号及动态权限进行准入，通过独立的 TLS API 和 CLI 将一次请求落成 PostgreSQL 中唯一的 RunIntent + Outbox；撤权之后相同输入不能越权重复提交。**这不是 Issue 自动修复，也不是生产运行系统。**
+
+```text
+公开 GitHub Issue #70（只读）
+  → 精确 Issue 快照摘要 + main/父提交 SHA
+  → 临时 Keycloak OAuth + ACP CatalogPolicy
+  → acp-goal submit（独立 CLI 进程，HTTPS + 显式 CA）
+  → acp-goal-api（独立 TLS 服务进程）
+  → PostgreSQL RunIntent + Outbox（各 1 条）
+  → RUNNER 降权为 VIEWER → 再提交拒绝，数据库行数不变
+```
+
+**代码边界**：[#82](https://github.com/avaargsh/agent-control-panel/pull/82) 已合并到 main；[#85](https://github.com/avaargsh/agent-control-panel/pull/85)、[#86](https://github.com/avaargsh/agent-control-panel/pull/86) 为未合并 Draft；来源失败诊断与本演示改版在 [#88](https://github.com/avaargsh/agent-control-panel/pull/88)，同为 Draft。**不能把叠加 PR 的测试结果称为 main 已交付能力。**
+
+| 面试现场操作 | 需要指给面试官看的真实证据 |
+|---|---|
+| 1. 打开 [独立服务 + CLI CI #44866824509](https://github.com/avaargsh/agent-control-panel/actions/runs/44866824509) | 精确 HEAD `40faf07c42accf362b6e8792c5d0b0e17245762c`，`TestRealGoalHTTPKeycloakGitHubPostgres` 确实 RUN/PASS |
+| 2. 展示两进程与凭证隔离 | [进程级测试](../../internal/goalhttp/live_operator_process_test.go)；真实可执行程序分别由 `cmd/acp-goal-api`、`cmd/acp-goal` 构建，证书与 Token 仅存在一次性环境 |
+| 3. 展示“成功”与“拒绝” | 第一次只受理 `PENDING`，PostgreSQL **1 个 RunIntent + 1 个 Outbox**，持久化输入逐字节一致；撤销 RUNNER 后，CLI 失败且行数不变 |
+| 4. 展示 [Go/PostgreSQL #44866824518](https://github.com/avaargsh/agent-control-panel/actions/runs/44866824518) | 同一 SHA 的 Go 格式、静态分析、PostgreSQL/租户隔离、全量 Race 测试完成 SUCCESS |
+| 5. 主动指出失败和限制 | [首次来源读取失败 #44866656974](https://github.com/avaargsh/agent-control-panel/actions/runs/44866656974) 与 [回放来源 503 #44865832430](https://github.com/avaargsh/agent-control-panel/actions/runs/44865832430) 均须保留；目前缺真实生产身份、分支保护、签名规则、Runtime、Sandbox、Verifier 与 GitHub PR 写权限闭环 |
+
+**推荐口述（约 45 秒）**：我主要解决企业 Agent 长任务中“能不能接、是谁提交、原始输入是什么、出错后能不能重复提交”这几个基础问题。ACP 只负责权威准入与治理，真正的执行交给 Runtime。我用真实 GitHub Issue、一次性 Keycloak、独立 API 与 CLI 两个进程、PostgreSQL 组成非生产联调。首单只创建一个可审计的 RunIntent 和 Outbox，角色被撤销后重复提交被拒绝。完整结果由精确 GitHub Actions HEAD 和 Race 测试支持，真实来源读取也出现过失败，所以我补充了可诊断的安全失败分类。下一步才是经过审批的 Runtime 执行、独立验证与 PR 交付。
+
+**演示安全边界**：使用公开测试 Issue、一次性 CA/Token 和临时 PostgreSQL Schema；不要提交真实 OAuth 凭证、不要给面试官生产集群写权限。仓库的 `main` 当时**未启用分支保护**，测试特批仅在 `ACP_GOAL_ENV=test` 生效。完整部署证据与缺口见 [独立进程验收](ISSUE-GOAL-OPERATOR-PROCESS-ACCEPTANCE.md) 和 [真实来源验收](ISSUE-GOAL-LIVE-ACCEPTANCE.md)。
+
+---
 
 ## 一句话说明
 
