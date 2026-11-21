@@ -120,7 +120,17 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		reject(w, classify(err), "goal_not_admitted")
 		return
 	}
-	if intent.ID == "" || intent.RequestDigest != proposal.RequestDigest || intent.TenantID != proposal.Target.TenantID || intent.Status == "" {
+	// A downstream response is not a trustworthy acceptance receipt unless
+	// the whole immutable target scope and RunIntent state are valid. Do not
+	// expose a cross-project or malformed record merely because its digest matches.
+	if err := intent.Validate(); err != nil ||
+		intent.RequestDigest != proposal.RequestDigest ||
+		intent.TenantID != proposal.Target.TenantID ||
+		intent.ProjectID != proposal.Target.ProjectID ||
+		intent.AgentID != proposal.Target.AgentID ||
+		intent.ReleaseID != proposal.Target.ReleaseID ||
+		intent.SessionID != proposal.Target.SessionID ||
+		intent.IdempotencyKey != proposal.IdempotencyKey {
 		reject(w, http.StatusServiceUnavailable, "invalid_admission_receipt")
 		return
 	}
