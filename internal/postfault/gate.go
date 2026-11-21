@@ -82,25 +82,25 @@ type SandboxObservation struct {
 }
 
 type CommandObservation struct {
-	CommandID         string `json:"command_id"`
-	AttemptID         string `json:"attempt_id"`
+	CommandID          string `json:"command_id"`
+	AttemptID          string `json:"attempt_id"`
 	ProviderCommandUID string `json:"provider_command_uid"`
-	JournalVersion    uint64 `json:"journal_version"`
-	State             string `json:"state"`
-	DispatchCount     uint64 `json:"dispatch_count"`
-	InspectCount      uint64 `json:"inspect_count"`
-	Source            string `json:"source"`
-	ExitReceiptDigest string `json:"exit_receipt_digest"`
-	Replayed          bool   `json:"replayed"`
+	JournalVersion     uint64 `json:"journal_version"`
+	State              string `json:"state"`
+	DispatchCount      uint64 `json:"dispatch_count"`
+	InspectCount       uint64 `json:"inspect_count"`
+	Source             string `json:"source"`
+	ExitReceiptDigest  string `json:"exit_receipt_digest"`
+	Replayed           bool   `json:"replayed"`
 }
 
 type GuardObservation struct {
-	PermitID     string `json:"permit_id"`
-	PermitEpoch  uint64    `json:"permit_epoch"`
+	PermitID        string    `json:"permit_id"`
+	PermitEpoch     uint64    `json:"permit_epoch"`
 	PermitExpiresAt time.Time `json:"permit_expires_at"`
-	Status       string    `json:"status"`
-	ActionDigest string `json:"action_digest"`
-	Revalidated  bool   `json:"revalidated"`
+	Status          string    `json:"status"`
+	ActionDigest    string    `json:"action_digest"`
+	Revalidated     bool      `json:"revalidated"`
 }
 
 type Observation struct {
