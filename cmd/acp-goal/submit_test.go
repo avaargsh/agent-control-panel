@@ -220,3 +220,44 @@ func TestSubmitCLIRequiresTrustedTLS(t *testing.T) {
 		t.Fatal("untrusted TLS certificate accepted")
 	}
 }
+
+func TestSubmitCLIReportsUnknownWhenServerLosesReplyAfterReceivingGoal(t *testing.T) {
+	// The server can receive the full proposal (and possibly commit a
+	// RunIntent) before the reply disappears. The CLI must never fabricate
+	// an acceptance receipt or automatically submit the request twice.
+	var received atomic.Int32
+	url, proposal, tokenFile, caFile, done := submitFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.TLS == nil || r.Method != http.MethodPost ||
+			r.Header.Get("Authorization") != "Bearer opaque-test-token" {
+			t.Error("ambiguous response fixture received an invalid request")
+			return
+		}
+		if _, err := io.Copy(io.Discard, io.LimitReader(r.Body, issuegoal.MaxPreparedBytes+1)); err != nil {
+			t.Errorf("fixture could not read proposal: %v", err)
+			return
+		}
+		received.Add(1)
+		hijacker, ok := w.(http.Hijacker)
+		if !ok {
+			t.Error("test HTTP server does not support connection hijacking")
+			return
+		}
+		conn, _, err := hijacker.Hijack()
+		if err != nil {
+			t.Errorf("failed to close accepted connection before reply: %v", err)
+			return
+		}
+		_ = conn.Close()
+	}))
+	defer done()
+	var out, diagnostics bytes.Buffer
+	err := run([]string{"submit", "--file", "-", "--url", url, "--token-file", tokenFile, "--ca-file", caFile},
+		strings.NewReader(proposal), &out, &diagnostics)
+	if err == nil || !strings.Contains(err.Error(), "outcome unknown") ||
+		out.Len() != 0 || received.Load() != 1 {
+		t.Fatalf("ambiguous server outcome was turned into success or retried: err=%v received=%d", err, received.Load())
+	}
+	if strings.Contains(err.Error(), "opaque-test-token") || strings.Contains(diagnostics.String(), "opaque-test-token") {
+		t.Fatal("private bearer leaked into ambiguous error")
+	}
+}
