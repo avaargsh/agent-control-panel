@@ -239,9 +239,9 @@ func TestVerifyAuthoritySchemaRequiresLatestAdmissionMigration(t *testing.T) {
 	if _, err := admin.Exec(ctx, "CREATE SCHEMA "+schema); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
+	defer func() {
 		_, _ = admin.Exec(context.Background(), "DROP SCHEMA "+schema+" CASCADE")
-	})
+	}()
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		t.Fatal(err)
