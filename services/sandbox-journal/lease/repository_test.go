@@ -17,9 +17,9 @@ import (
 func sampleIntent() Intent {
 	return Intent{
 		TenantID: "tenant-a", LeaseIntentID: "sandbox-intent-1",
-		RunID: "11111111-1111-4111-8111-111111111111",
+		RunID:            "11111111-1111-4111-8111-111111111111",
 		RuntimeAttemptID: "runtime-attempt-1",
-		RequestDigest: "sha256:" + strings.Repeat("a", 64),
+		RequestDigest:    "sha256:" + strings.Repeat("a", 64),
 	}
 }
 
