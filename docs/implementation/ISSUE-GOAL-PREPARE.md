@@ -41,3 +41,43 @@ Before claiming M0 complete, demonstrate real tenant-isolated PostgreSQL admissi
 go test -race -count=1 ./internal/issuegoal ./cmd/acp-goal ./internal/admission
 # The repository's full workflow also runs gofmt, go mod verify/tidy, go vet ./..., go test -race -count=1 ./...
 ```
+
+
+## Public Issue snapshot (read-only)
+
+From the repository root, inspect a public open GitHub Issue and obtain a
+content-addressed digest for the existing manifest's `issue_snapshot_digest`:
+
+```bash
+go run ./cmd/acp-goal snapshot \
+  --issue-url https://github.com/avaargsh/agent-control-panel/issues/70
+```
+
+The CLI sends exactly one unauthenticated read-only request to
+`https://api.github.com/repos/<owner>/<repo>/issues/<number>`.
+The endpoint is fixed and cannot be redirected by a user URL. TLS verification,
+a 10-second timeout, response-size limit and no-redirect policy are enforced.
+The CLI emits only the version, Issue URL, numeric Issue ID, updated timestamp
+and digest, **not** the Issue body. The Issue text remains untrusted input.
+
+The digest version is `acp.github-issue-snapshot/v1`. Its SHA-256
+preimage uses Go's `encoding/json` (UTF-8, no indentation), with
+keys in this exact order:
+`schema, issue_url, issue_id, number, state, title, body, updated_at`.
+A null Issue body is normalized to the empty string; `updated_at` is the
+original RFC3339 value. The digest itself is **not** part of the preimage. See
+`TestPublicIssueReaderCanonicalDigestAndChangeDetection` for the
+independently pinned golden vector.
+
+**Scope:** Public open Issues only. This is a GitHub TLS API observation,
+not a GitHub-signed attestation, immutable stored copy or complete Source
+Verifier. It neither verifies baseline commits nor acceptance-rule signatures,
+release/budget policy or user authorization. A trusted server must re-fetch and
+compare the snapshot and independently verify all other preconditions before
+using `AdmitPreparedIssueGoal`. It does not submit a RunIntent,
+dispatch a model, create a PR or authorize a protected effect.
+
+Local focused acceptance:
+```bash
+go test -race -count=1 ./internal/issuegoal ./cmd/acp-goal
+```
