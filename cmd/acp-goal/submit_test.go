@@ -387,3 +387,45 @@ func TestSubmitCLIKeepsDefinitiveHTTPClientDenialsDistinctFromUnknown(t *testing
 		})
 	}
 }
+
+
+func TestSubmitCLIUnknownForNonDefinitiveHTTPStatuses(t *testing.T) {
+	// An intermediary may answer after forwarding the POST. Neither a
+	// redirect nor rate limiting proves that the RunIntent was not committed.
+	// The CLI must not follow redirects, leak the reply or retry automatically.
+	for _, status := range []int{
+		http.StatusTemporaryRedirect,
+		http.StatusUnprocessableEntity,
+		http.StatusTooManyRequests,
+	} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			var received atomic.Int32
+			url, proposal, tokenFile, caFile, done := submitFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost || r.Header.Get("Authorization") != "Bearer opaque-test-token" {
+					t.Error("unexpected request or missing authenticated bearer")
+				}
+				_, _ = io.Copy(io.Discard, io.LimitReader(r.Body, issuegoal.MaxPreparedBytes+1))
+				received.Add(1)
+				w.Header().Set("Location", "https://example.invalid/unsafe")
+				w.WriteHeader(status)
+				_, _ = io.WriteString(w, "private-upstream-response")
+			}))
+			defer done()
+			var out, diagnostics bytes.Buffer
+			err := run([]string{"submit", "--file", "-", "--url", url,
+				"--token-file", tokenFile, "--ca-file", caFile},
+				strings.NewReader(proposal), &out, &diagnostics)
+			if err == nil || !strings.Contains(err.Error(), "outcome unknown") ||
+				!strings.Contains(err.Error(), "inspect ACP before retrying") ||
+				out.Len() != 0 || received.Load() != 1 {
+				t.Fatalf("non-definitive HTTP %d was called a refusal, followed, or retried: err=%v requests=%d out=%d",
+					status, err, received.Load(), out.Len())
+			}
+			for _, secret := range []string{"opaque-test-token", "private-upstream-response"} {
+				if strings.Contains(err.Error(), secret) || strings.Contains(diagnostics.String(), secret) {
+					t.Fatal("sensitive data leaked through uncertain outcome")
+				}
+			}
+		})
+	}
+}
