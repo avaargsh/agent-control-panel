@@ -28,8 +28,8 @@ import (
 // but before the OAuth/Catalog recheck and any RunIntent/Outbox transaction.
 type pausingGitHubReader struct {
 	fixtureGitHubReader
-	arrived chan struct{}
-	release chan struct{}
+	arrived  chan struct{}
+	release  chan struct{}
 	failOnce atomic.Bool // simulated upstream deadline, not an actual GitHub response
 }
 
