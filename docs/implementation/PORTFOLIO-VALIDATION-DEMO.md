@@ -50,13 +50,13 @@ flowchart LR
 |---|---|---|
 | [#82](https://github.com/avaargsh/agent-control-panel/pull/82) | 严格校验 Issue Goal 输入、计算固定摘要、复用现有可信 RunIntent 准入 | 无自动 GitHub Issue→PR，非真实执行 |
 | [#85](https://github.com/avaargsh/agent-control-panel/pull/85) | 核查公共 GitHub Issue 快照、固定基线 Commit 和来源约束 | 规则签名/授权的完整权威闭环未实现 |
-| [#86](https://github.com/avaargsh/agent-control-panel/pull/86) | 内部 `POST /api/v1/goals:submit` handler；按认证上下文受理且 **不派发**；返回 `run_intent_id` | 无真实 TLS 监听器/服务接线、无运行时任务执行、无受保护写操作 |
+| [#86](https://github.com/avaargsh/agent-control-panel/pull/86) | 内部 `POST /api/v1/goals:submit` handler 与**独立可选的 loopback-only TLS Goal API Host**；请求级 OAuth/CatalogPolicy/PostgreSQL 组合、GitHub Issue 来源读取；仅受理，不派发 | 已有 Host 候选源码和测试夹具，但无真实外部 OAuth + GitHub + PostgreSQL 部署联合验收、无运行时任务执行或受保护写操作 |
 
 依赖顺序为 **#82 → #85 → #86**。这些 PR 上的 Go/PG、OIDC 或模拟 HTTP 测试只证明各自的精确源码范围，不是把三层放到同一个真实 HTTP→OAuth→GitHub→PostgreSQL 部署中验证，也不代表 Workflow 已启动。
 
-面试时如果展示候选 API，必须同时口述：`run_intent_id` 是 ACP 受理标识，不是 Runtime 的 `run_id`；**201/200 仅表示首次受理/幂等重放，并非任务完成**。HTTP 处理器没有启用到默认服务；不可对外展示为已上线可调用的产品入口。
+面试时如果展示候选 API，必须同时口述：`run_intent_id` 是 ACP 受理标识，不是 Runtime 的 `run_id`；**201/200 仅表示首次受理/幂等重放，并非任务完成**。默认 ACP 服务仍未启用该处理器；独立 TLS Host 仅为显式配置的候选入口，尚无已部署并验收的产品 API。
 
-下一步的最小实跑验收不是再加一套控制面，而是以可信 TLS Host 连接 OAuth/CatalogPolicy、GitHub 来源核验和现有 PostgreSQL RunIntent Authority，记录真实的首次受理、同键重放、变更输入冲突、授权撤销及 Outbox 观察。所有错误路径记录是否存在持久化写入；失败或不确定的步骤不得发出 Runtime Dispatch。完成此门禁前，后续 Sandbox、Guard、Verifier 和 GitHub PR 的交付链仍按 [#70–#72](https://github.com/avaargsh/agent-control-panel/issues/72) 标记为未交付。
+下一步应复用 #86 已提交的独立 TLS Host，在隔离真实环境中连接外部 OAuth/CatalogPolicy、公共 GitHub Issue 来源核验和现有 PostgreSQL RunIntent Authority，记录首次受理、同键重放、变更输入冲突、授权撤销及 Outbox 观察；现有测试 issuer 和模拟 GitHub reader 不可冒充这项联合验收。所有错误路径记录是否存在持久化写入；失败或不确定的步骤不得发出 Runtime Dispatch。完成此门禁前，后续 Sandbox、Guard、Verifier 和 GitHub PR 的交付链仍按 [#70–#72](https://github.com/avaargsh/agent-control-panel/issues/72) 标记为未交付。
 
 ## 5–10 分钟面试现场演示
 
