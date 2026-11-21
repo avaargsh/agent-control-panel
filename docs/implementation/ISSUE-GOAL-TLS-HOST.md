@@ -88,7 +88,21 @@ go run ./cmd/acp-goal submit \
   --ca-file /run/acp/ca/goal-server-ca.pem
 ```
 
-On `201` and `200`, the CLI checks the server's schema and request digest against the exact immutable prepared input, checks the RunIntent receipt fields and status/created consistency, and prints only the verified acceptance JSON. It will not call a GitHub write API or execute Runtime work. On any TLS, HTTP, or invalid-receipt error, no acceptance JSON is emitted. A network timeout has an **unknown outcome**; check the authoritative ACP database before replaying the same idempotency key.
+On `201` and `200`, the CLI checks the server's schema and request digest against the exact immutable prepared input, checks the RunIntent receipt fields and status/created consistency, and prints only the verified acceptance JSON. It will not call a GitHub write API or execute Runtime work. On any TLS, HTTP, or invalid-receipt error, **no acceptance JSON is emitted**.
+
+### HTTP ACK uncertainty contract
+
+| Observed CLI result | Authority conclusion | Operator action |
+|---|---|---|
+| HTTP 201 with a complete, matching and verified receipt | `PENDING` RunIntent admitted; **not executed** | Record the ID and request digest |
+| HTTP 200 with a complete, matching and verified replay receipt | An existing same-key RunIntent was observed; **not a new execution** | Record the same ID and digest |
+| Connection/TLS failure or timeout before the reply | **UNKNOWN**: server might already have committed | Inspect authoritative ACP PostgreSQL/Outbox before deciding whether to retry |
+| HTTP 200/201 but missing `no-store`, wrong media type, truncated/oversized JSON or mismatched receipt | **UNKNOWN**: a success status is not a verifiable receipt | Inspect authoritative ACP PostgreSQL/Outbox; never assume a failed write or retry automatically |
+| HTTP 408 or any 5xx reply | **UNKNOWN**: the server may have committed RunIntent/Outbox before returning an error | Inspect authoritative ACP PostgreSQL/Outbox before deciding whether to retry; never assume rollback |
+| Explicit HTTP 400/401/403/409 denial | No verified acceptance receipt; rejected request classified by HTTP status without untrusted body | Correct input/auth/policy or conflict; do not fabricate success |
+| Other non-200/201 replies (including 307 redirect, 422 and 429 rate limit) | **UNKNOWN**: an intermediary may answer after forwarding an already-committed POST; no trustworthy receipt | Never follow the redirect or retry automatically; inspect authoritative ACP state first |
+
+The CLI intentionally makes **one submission per explicit invocation**, never silently retries, and never prints provider response bodies or credentials in an UNKNOWN error. The current M0 surface does **not** provide an authoritative read-only status API; operator inspection requires trusted database access. This is a candidate behavior in [PR #90](https://github.com/avaargsh/agent-control-panel/pull/90) and must pass its own exact-HEAD tests before a release claim.
 
 The CLI deliberately only permits a direct numeric loopback endpoint and a bounded TLS server response. It cannot currently connect through remote ingress or a proxy; production host deployment and genuine OAuth/GitHub/DB joint validation remain separate acceptance gates.
 

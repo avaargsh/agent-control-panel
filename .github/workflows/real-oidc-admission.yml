@@ -3,6 +3,10 @@ name: Live OIDC service-account admission (non-production)
 on:
   pull_request:
     paths:
+      # The live acceptance compiles both binaries; changes to either must
+      # trigger the real TLS + OAuth + PostgreSQL + GitHub provider gate.
+      - 'cmd/acp-goal/**'
+      - 'cmd/acp-goal-api/**'
       - 'internal/admission/**'
       - 'internal/goalhttp/**'
       - 'internal/issuegoal/**'
