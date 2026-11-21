@@ -240,9 +240,9 @@ func verifyAuthoritySchema(ctx context.Context, pool *pgxpool.Pool) error {
 			expectedMigrations = append(expectedMigrations, entry.Name())
 		}
 	}
-	var appliedCount int
+	var appliedCount int64
 	if err := pool.QueryRow(ctx, "SELECT count(*) FROM schema_migrations").Scan(&appliedCount); err != nil ||
-		appliedCount != len(expectedMigrations) || len(expectedMigrations) == 0 {
+		appliedCount != int64(len(expectedMigrations)) || len(expectedMigrations) == 0 {
 		return errors.New("ACP authority schema migration incomplete")
 	}
 	for _, name := range expectedMigrations {
