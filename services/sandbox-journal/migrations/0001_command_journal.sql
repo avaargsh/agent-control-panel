@@ -7,13 +7,11 @@ CREATE TABLE IF NOT EXISTS sandbox_journal_commands (
   command_id text NOT NULL CHECK (length(command_id) BETWEEN 1 AND 128 AND command_id ~ '^[A-Za-z0-9][A-Za-z0-9_.:-]*$'),
   run_id text NOT NULL CHECK (length(run_id) BETWEEN 1 AND 128 AND run_id ~ '^[A-Za-z0-9][A-Za-z0-9_.:-]*$'),
   runtime_attempt_id text NOT NULL CHECK (length(runtime_attempt_id) BETWEEN 1 AND 128 AND runtime_attempt_id ~ '^[A-Za-z0-9][A-Za-z0-9_.:-]*$'),
-  executor_attempt_id text NOT NULL CHECK (length(executor_attempt_id) BETWEEN 1 AND 128 AND executor_attempt_id ~ '^[A-Za-z0-9][A-Za-z0-9_.:-]*$'),
   request_digest text NOT NULL CHECK (request_digest ~ '^sha256:[0-9a-f]{64}$'),
   generation bigint NOT NULL DEFAULT 1 CHECK (generation = 1),
   state text NOT NULL DEFAULT 'PERMIT_UNAVAILABLE' CHECK (state = 'PERMIT_UNAVAILABLE'),
   created_at timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (tenant_id, sandbox_uid, command_id),
-  UNIQUE (tenant_id, executor_attempt_id)
+  PRIMARY KEY (tenant_id, sandbox_uid, command_id)
 );
 CREATE TABLE IF NOT EXISTS sandbox_journal_outbox (
   event_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
