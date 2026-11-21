@@ -81,3 +81,38 @@ Local focused acceptance:
 ```bash
 go test -race -count=1 ./internal/issuegoal ./cmd/acp-goal
 ```
+
+
+## Public Baseline inspection (optional CLI, non-authoritative)
+
+After obtaining a real public Issue snapshot with `acp-goal snapshot`, edit
+the Goal manifest with that `issue_snapshot_digest`, a real full
+`experiment_baseline_sha`, and the **exact current branch HEAD** as
+`integration_baseline_sha`. A real Issue and actual commit IDs must be
+substituted for the deliberately fake values in the example.
+
+```sh
+go run ./cmd/acp-goal inspect --file /tmp/acp-issue-goal.json
+```
+
+The new `inspect` command first checks the immutable manifest; then it
+reads the current public Issue and requires the content digest to match.
+It reads `GET /repos/{owner}/{repo}/branches/{target_branch}` from the
+fixed GitHub API hostname and requires the observed branch tip to equal
+the exact integration SHA. It then reads both
+`GET /repos/{owner}/{repo}/git/commits/{full_sha}` endpoints and requires
+the returned SHA to match. When both SHA values are identical, the object
+is fetched once. All endpoints are constructed from canonical selectors:
+no configurable host, no credential, no redirect and no HTTP write.
+Failed source, stale Issue, moved branch, bad commit ID, rate limit,
+response ambiguity and timeout are **fail-closed**.
+
+The output schema `acp.public-goal-inspection/v1` deliberately uses
+`status=public-source-observed-only`, alongside immutable request digest
+and observed branch tip. **This is not GoalSubmit, authorization, a signed
+GitHub statement, commit ancestry validation, verified rule content,
+release/budget approval, or a durable source snapshot.** Even when
+`inspect` succeeds, the server must independently verify these inputs,
+and maintain its OAuth/CatalogPolicy admission and independent source
+authority before writing RunIntent. The branch may move after inspection;
+a fresh authoritative recheck remains required.
