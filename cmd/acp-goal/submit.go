@@ -27,6 +27,7 @@ const (
 	maxGoalReplyBytes = 4096
 	maxCABytes        = 64 << 10
 	maxBearerBytes    = 8192
+	unknownGoalReceipt = "GoalSubmit acceptance receipt unverifiable; outcome unknown, inspect ACP before retrying"
 )
 
 // submit sends only an immutable, already prepared Issue Goal proposal to the
@@ -107,11 +108,11 @@ func submit(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	}
 	media, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
 	if err != nil || media != "application/json" || !strings.Contains(resp.Header.Get("Cache-Control"), "no-store") {
-		return errors.New("GoalSubmit acceptance response is not trustworthy")
+		return errors.New(unknownGoalReceipt)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxGoalReplyBytes+1))
 	if err != nil || len(body) > maxGoalReplyBytes {
-		return errors.New("GoalSubmit acceptance response is too large or incomplete")
+		return errors.New(unknownGoalReceipt)
 	}
 	var receipt struct {
 		Schema        string `json:"schema"`
@@ -128,7 +129,7 @@ func submit(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		receipt.Created == nil || *receipt.Created != (resp.StatusCode == http.StatusCreated) ||
 		!validGoalReceiptID(receipt.RunIntentID) || !validGoalReceiptStatus(receipt.Status) ||
 		(*receipt.Created && receipt.Status != "PENDING") {
-		return errors.New("GoalSubmit returned an unbound or malformed admission receipt")
+		return errors.New(unknownGoalReceipt)
 	}
 	return json.NewEncoder(stdout).Encode(receipt)
 }
