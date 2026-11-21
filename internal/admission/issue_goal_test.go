@@ -71,9 +71,9 @@ func TestAdmitPreparedIssueGoalFailsClosedBeforeWriting(t *testing.T) {
 	wire := preparedGoalWire(t)
 	denied := errors.New("github source unavailable")
 	for _, tc := range []struct {
-		name string
-		wire []byte
-		verify sourceVerifierFunc
+		name          string
+		wire          []byte
+		verify        sourceVerifierFunc
 		resolverError error
 	}{
 		{name: "no source verifier", wire: wire},
