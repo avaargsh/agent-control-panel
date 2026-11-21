@@ -113,7 +113,6 @@ func TestAdmitPreparedIssueGoalFailsClosedBeforeWriting(t *testing.T) {
 	}
 }
 
-
 func TestAdmitPreparedIssueGoalRejectsTypedNilDependencies(t *testing.T) {
 	wire := preparedGoalWire(t)
 	var nilSource sourceVerifierFunc
