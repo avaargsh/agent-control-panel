@@ -174,10 +174,11 @@ func TestGoalHTTPAuthorityRevokedDuringGitHubReadLeavesNoIntentOrOutbox(t *testi
 				err error
 			}
 			done := make(chan response, 1)
+			preparedGoal := validProposal(t)
 			// No sleep or race-based timing: the GitHub reader explicitly signals
 			// after the first OAuth + ACP catalog checks have succeeded.
 			go func() {
-				req, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+SubmitPath, bytes.NewReader(validProposal(t)))
+				req, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+SubmitPath, bytes.NewReader(preparedGoal))
 				if err != nil {
 					done <- response{err: err}
 					return
