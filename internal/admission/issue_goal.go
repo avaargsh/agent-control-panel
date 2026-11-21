@@ -36,9 +36,9 @@ func (s *Service) AdmitPreparedIssueGoal(ctx context.Context, proposalJSON []byt
 		return runintent.Intent{}, false, err
 	}
 	target := Target{
-		TenantID: proposal.Target.TenantID,
+		TenantID:  proposal.Target.TenantID,
 		ProjectID: proposal.Target.ProjectID,
-		AgentID: proposal.Target.AgentID,
+		AgentID:   proposal.Target.AgentID,
 		ReleaseID: proposal.Target.ReleaseID,
 		SessionID: proposal.Target.SessionID,
 	}
