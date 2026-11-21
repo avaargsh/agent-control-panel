@@ -38,7 +38,13 @@ func prepareLocalWorkspace(root string, content []byte) (localWorkspaceSnapshot,
 	if err := writeAndSyncLocalFD(sentinel, content); err != nil {
 		return localWorkspaceSnapshot{}, err
 	}
-	hash := sha256.Sum256(content)
+	// Read the actual file bytes from the directory handle *before* SIGKILL.
+	// Hashing the caller's buffer would not prove the disk content existed.
+	persisted, err := readLocalWorkspaceFile(dirfd, localSentinelFile, 4096)
+	if err != nil || !bytes.Equal(persisted, content) {
+		return localWorkspaceSnapshot{}, errors.New("pre-fault physical byte readback failed")
+	}
+	hash := sha256.Sum256(persisted)
 	snapshot := localWorkspaceSnapshot{
 		TenantID: "tenant-local", RunID: "run-local-1", LeaseID: "lease-local-1",
 		SandboxUID: "sandbox-local-1", WorkspaceID: "workspace-local-1",
