@@ -16,7 +16,7 @@ def fixture():
     return {
         'databaseId': 123456789,
         'url': 'https://github.com/avaargsh/agent-control-panel/actions/runs/123456789',
-        'workflowName': 'Same ACP Run to recovered Decision acceptance (non-production)',
+        'workflowName': 'Same ACP Run real Guard Plan Step mTLS (non-production)',
         'headSha': SHA,
         'headBranch': 'main',
         'event': 'workflow_dispatch',
@@ -37,6 +37,19 @@ class ReceiptTest(unittest.TestCase):
         self.assertEqual(receipt['grade'], 'CI_METADATA_CHECK_ONLY')
         self.assertFalse(receipt['production_accepted'])
         self.assertEqual(receipt['required_job'], 'e2e')
+
+    def test_golden_contract_matches_actual_github_workflow(self):
+        workflow = (SCRIPT.parent.parent / '.github' / 'workflows' / 'acp-temporal-golden-path.yml').read_text(encoding='utf-8')
+        self.assertTrue(workflow.startswith('name: '))
+        self.assertEqual(module.SCENARIOS['golden'][0], workflow.splitlines()[0].removeprefix('name: '))
+        self.assertIn('  e2e:', workflow)
+        self.assertIn('      - name: ' + GOLDEN_STEP, workflow)
+
+    def test_stale_golden_workflow_name_is_denied(self):
+        data = fixture()
+        data['workflowName'] = 'Same ACP Run to recovered Decision acceptance (non-production)'
+        with self.assertRaises(module.ReceiptError):
+            module.verify_run(data, SHA, 'golden')
 
     def test_wrong_sha_is_denied(self):
         with self.assertRaises(module.ReceiptError):
