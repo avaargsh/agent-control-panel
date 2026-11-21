@@ -136,6 +136,22 @@ class ReceiptTest(unittest.TestCase):
                 self.assertIn('"ok": false', err.getvalue().lower())
                 self.assertEqual(out.getvalue(), '')
 
+    def test_nonfinite_json_constants_fail_closed_at_cli_boundary(self):
+        original = json.dumps(fixture())
+        for value in ('NaN', 'Infinity', '-Infinity'):
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / 'run.json'
+                payload = original[:-1] + ', "extra_metadata": ' + value + '}'
+                path.write_text(payload, encoding='utf-8')
+                out, err = io.StringIO(), io.StringIO()
+                with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                    code = module.main([
+                        '--run-json', str(path), '--expected-sha', SHA, '--scenario', 'golden',
+                    ])
+                self.assertEqual(code, 1, 'Non-standard JSON constants cannot support a CI receipt')
+                self.assertIn('"ok": false', err.getvalue().lower())
+                self.assertEqual(out.getvalue(), '')
+
     def test_sha_validation(self):
         with self.assertRaises(module.ReceiptError): module.verify_run(fixture(), 'main','golden')
         with self.assertRaises(module.ReceiptError): module.verify_run(fixture(), SHA,'other')
