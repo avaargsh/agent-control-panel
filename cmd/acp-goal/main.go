@@ -31,6 +31,12 @@ func runWithIssueReader(args []string, stdin io.Reader, stdout, stderr io.Writer
 		return prepare(args, stdin, stdout, stderr)
 	case "snapshot":
 		return snapshot(args, stdout, stderr, reader)
+	case "inspect":
+		baselines, ok := reader.(baselineReader)
+		if !ok {
+			return errors.New("public baseline reader not configured")
+		}
+		return inspect(args, stdin, stdout, stderr, reader, baselines)
 	default:
 		return errors.New("usage: acp-goal prepare --file manifest.json | snapshot --issue-url https://github.com/owner/repo/issues/123")
 	}
