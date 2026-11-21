@@ -51,15 +51,15 @@ func (r *Repository) RecordPermitUnavailable(ctx context.Context, in identity.In
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
 	row := tx.QueryRow(ctx, `INSERT INTO sandbox_journal_commands
- (tenant_id,sandbox_uid,command_id,run_id,runtime_attempt_id,executor_attempt_id,request_digest)
- VALUES($1,$2,$3,$4,$5,$6,$7)
+ (tenant_id,sandbox_uid,command_id,run_id,runtime_attempt_id,request_digest)
+ VALUES($1,$2,$3,$4,$5,$6)
  ON CONFLICT (tenant_id,sandbox_uid,command_id) DO NOTHING
- RETURNING tenant_id,run_id,runtime_attempt_id,sandbox_uid,command_id,executor_attempt_id,request_digest,generation,state,created_at`,
-		in.TenantID, in.SandboxUID, in.CommandID, in.RunID, in.RuntimeAttemptID, in.ExecutorAttemptID, in.RequestDigest)
+ RETURNING tenant_id,run_id,runtime_attempt_id,sandbox_uid,command_id,request_digest,generation,state,created_at`,
+		in.TenantID, in.SandboxUID, in.CommandID, in.RunID, in.RuntimeAttemptID, in.RequestDigest)
 	rec, err := scan(row)
 	created := err == nil
 	if errors.Is(err, pgx.ErrNoRows) {
-		rec, err = scan(tx.QueryRow(ctx, `SELECT tenant_id,run_id,runtime_attempt_id,sandbox_uid,command_id,executor_attempt_id,request_digest,generation,state,created_at
+		rec, err = scan(tx.QueryRow(ctx, `SELECT tenant_id,run_id,runtime_attempt_id,sandbox_uid,command_id,request_digest,generation,state,created_at
  FROM sandbox_journal_commands WHERE tenant_id=$1 AND sandbox_uid=$2 AND command_id=$3 FOR SHARE`, in.TenantID, in.SandboxUID, in.CommandID))
 		if err != nil {
 			return Record{}, false, fmt.Errorf("read replay: %w", err)
@@ -74,8 +74,8 @@ func (r *Repository) RecordPermitUnavailable(ctx context.Context, in identity.In
 		_, err = tx.Exec(ctx, `INSERT INTO sandbox_journal_outbox
  (tenant_id,sandbox_uid,command_id,generation,event_type,payload)
  VALUES ($1,$2,$3,1,'sandbox.command.permit-unavailable',
- jsonb_build_object('run_id',$4::text,'runtime_attempt_id',$5::text,'executor_attempt_id',$6::text,'request_digest',$7::text))`,
-			in.TenantID, in.SandboxUID, in.CommandID, in.RunID, in.RuntimeAttemptID, in.ExecutorAttemptID, in.RequestDigest)
+ jsonb_build_object('run_id',$4::text,'runtime_attempt_id',$5::text,'request_digest',$6::text))`,
+			in.TenantID, in.SandboxUID, in.CommandID, in.RunID, in.RuntimeAttemptID, in.RequestDigest)
 		if err != nil {
 			return Record{}, false, fmt.Errorf("atomic outbox append: %w", err)
 		}
@@ -97,7 +97,7 @@ func (r *Repository) Get(ctx context.Context, tenantID, sandboxUID, commandID st
 			return Record{}, identity.ErrInvalid
 		}
 	}
-	rec, err := scan(r.pool.QueryRow(ctx, `SELECT tenant_id,run_id,runtime_attempt_id,sandbox_uid,command_id,executor_attempt_id,request_digest,generation,state,created_at
+	rec, err := scan(r.pool.QueryRow(ctx, `SELECT tenant_id,run_id,runtime_attempt_id,sandbox_uid,command_id,request_digest,generation,state,created_at
  FROM sandbox_journal_commands WHERE tenant_id=$1 AND sandbox_uid=$2 AND command_id=$3`, tenantID, sandboxUID, commandID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Record{}, ErrNotFound
@@ -110,7 +110,7 @@ func (r *Repository) Get(ctx context.Context, tenantID, sandboxUID, commandID st
 func scan(row pgx.Row) (Record, error) {
 	var rec Record
 	var generation int64
-	err := row.Scan(&rec.Identity.TenantID, &rec.Identity.RunID, &rec.Identity.RuntimeAttemptID, &rec.Identity.SandboxUID, &rec.Identity.CommandID, &rec.Identity.ExecutorAttemptID, &rec.Identity.RequestDigest, &generation, &rec.State, &rec.CreatedAt)
+	err := row.Scan(&rec.Identity.TenantID, &rec.Identity.RunID, &rec.Identity.RuntimeAttemptID, &rec.Identity.SandboxUID, &rec.Identity.CommandID, &rec.Identity.RequestDigest, &generation, &rec.State, &rec.CreatedAt)
 	if err != nil {
 		return Record{}, err
 	}
