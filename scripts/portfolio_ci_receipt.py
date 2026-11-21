@@ -17,7 +17,7 @@ SHA = re.compile(r'^[0-9a-f]{40}$')
 RUN_URL = re.compile(r'^https://github\.com/avaargsh/agent-control-panel/actions/runs/([1-9][0-9]*)$')
 SCENARIOS = {
     'golden': (
-        'Same ACP Run to recovered Decision acceptance (non-production)',
+        'Same ACP Run real Guard Plan Step mTLS (non-production)',
         'e2e',
         'Execute live OAuth to same Run Temporal recovery and Decision acceptance',
     ),
@@ -31,6 +31,21 @@ SCENARIOS = {
 
 class ReceiptError(ValueError):
     """The supplied metadata cannot support even a narrow CI observation."""
+
+
+def reject_nonfinite_constant(value):
+    """Python accepts NaN/Infinity by default; strict CI JSON must reject them."""
+    raise ReceiptError('Non-standard JSON constant in exported CI metadata: ' + value)
+
+
+def unique_json_object(pairs):
+    """Reject ambiguous JSON objects before downstream receipt validation."""
+    obj = {}
+    for key, value in pairs:
+        if key in obj:
+            raise ReceiptError('Duplicate JSON key in exported CI metadata: ' + key)
+        obj[key] = value
+    return obj
 
 
 def _required(condition, message):
@@ -95,7 +110,7 @@ def main(argv=None):
     p.add_argument('--scenario', required=True, choices=sorted(SCENARIOS))
     args = p.parse_args(argv)
     try:
-        data = json.loads(args.run_json.read_text(encoding='utf-8'))
+        data = json.loads(args.run_json.read_text(encoding='utf-8'), object_pairs_hook=unique_json_object, parse_constant=reject_nonfinite_constant)
         result = verify_run(data, args.expected_sha, args.scenario)
     except (ReceiptError, ValueError, OSError) as exc:
         print(json.dumps({'ok': False, 'error': str(exc)}, ensure_ascii=False), file=sys.stderr)
