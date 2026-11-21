@@ -210,6 +210,33 @@ func loadServerCertificate(certFile, keyFile, host string, now time.Time) (tls.C
 	return certificate, nil
 }
 
+func verifyAuthoritySchema(ctx context.Context, pool *pgxpool.Pool) error {
+	if pool == nil {
+		return errors.New("ACP authority database unavailable")
+	}
+	var relationsReady bool
+	if err := pool.QueryRow(ctx, `SELECT
+		to_regclass('schema_migrations') IS NOT NULL AND
+		to_regclass('run_intents') IS NOT NULL AND
+		to_regclass('outbox_events') IS NOT NULL AND
+		to_regclass('admission_tenants') IS NOT NULL AND
+		to_regclass('admission_projects') IS NOT NULL AND
+		to_regclass('admission_principals') IS NOT NULL AND
+		to_regclass('admission_memberships') IS NOT NULL AND
+		to_regclass('admission_releases') IS NOT NULL AND
+		to_regclass('admission_sessions') IS NOT NULL`).Scan(&relationsReady); err != nil || !relationsReady {
+		return errors.New("ACP authority schema missing")
+	}
+	var latestAdmissionMigration bool
+	if err := pool.QueryRow(ctx, `SELECT EXISTS (
+		SELECT 1 FROM schema_migrations
+		WHERE version = 12 AND name = '0012_run_intent_admission_origin.sql'
+	)`).Scan(&latestAdmissionMigration); err != nil || !latestAdmissionMigration {
+		return errors.New("ACP authority schema migration incomplete")
+	}
+	return nil
+}
+
 func serve(ctx context.Context, c config) error {
 	host, _, err := net.SplitHostPort(c.listenAddress)
 	if err != nil {
@@ -275,14 +302,9 @@ func serve(ctx context.Context, c config) error {
 		return errors.New("PostgreSQL authority unavailable")
 	}
 	// This binary is not a migration runner or a schema owner. Fail closed
-	// if the production migration job has not prepared ACP authority tables.
-	var ready bool
-	if err := pool.QueryRow(ctx, `SELECT
-		to_regclass('run_intents') IS NOT NULL AND
-		to_regclass('outbox_events') IS NOT NULL AND
-		to_regclass('admission_tenants') IS NOT NULL AND
-		to_regclass('admission_memberships') IS NOT NULL`).Scan(&ready); err != nil || !ready {
-		return errors.New("ACP authority schema missing")
+	// unless the full ACP catalog and admission-origin migration are present.
+	if err := verifyAuthoritySchema(ctx, pool); err != nil {
+		return err
 	}
 	repo := runpg.New(pool)
 	factory, err := goalhttp.NewCatalogGoalServiceFactory(repo, auth)
