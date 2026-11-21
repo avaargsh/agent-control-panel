@@ -106,6 +106,7 @@ type Observation struct {
 	Authority  string               `json:"authority"`
 	Phase      string               `json:"phase"`
 	ObservedAt time.Time            `json:"observed_at"`
+	FaultID    string               `json:"fault_id"`
 	Subject    Subject              `json:"subject"`
 	Runtime    *RuntimeObservation  `json:"runtime,omitempty"`
 	Sandbox    *SandboxObservation  `json:"sandbox,omitempty"`
@@ -215,7 +216,7 @@ func Verify(b Bundle, keys map[string]ed25519.PublicKey, now time.Time) error {
 		var o Observation
 		if !decodeStrict(data, &o) || o.Schema != ObservationVersion ||
 			o.Authority != authority || o.Phase != phase ||
-			o.Subject != b.Subject || !validateSingleOwner(o) {
+			o.Subject != b.Subject || o.FaultID != b.Fault.ID || !validateSingleOwner(o) {
 			return failure("untrusted or cross-run authority statement")
 		}
 		if o.ObservedAt.IsZero() || o.ObservedAt.After(now) {
@@ -250,7 +251,7 @@ func checkContinuity(observed map[string]Observation) error {
 	sa := observed["sandbox/after_recovery"].Sandbox
 	if !safeID(sb.LeaseID) || !safeID(sb.SandboxUID) || !safeID(sb.WorkspaceID) ||
 		sb.Generation == 0 || !strings.HasPrefix(sb.RootPath, "/") ||
-		!safeID(sb.SentinelPath) || strings.Contains(sb.SentinelPath, "..") ||
+		!safeID(sb.SentinelPath) || strings.HasPrefix(sb.SentinelPath, "/") || strings.Contains(sb.SentinelPath, "..") ||
 		!validDigest(sb.SentinelDigest) ||
 		sb.ProviderState != "ACTIVE" || sa.ProviderState != "ACTIVE" ||
 		!sb.ReadbackVerified || !sa.ReadbackVerified ||
