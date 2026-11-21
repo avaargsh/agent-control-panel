@@ -67,6 +67,14 @@ jobs:
           grep -q 'UNATTESTED_DB_SNAPSHOT' "$RUNNER_TEMP/sandbox-demo.log"
           grep -q 'Dispatch: DENIED' "$RUNNER_TEMP/sandbox-demo.log"
           grep -q '"can_declare_released": false' "$RUNNER_TEMP/sandbox-demo.log"
+          if docker ps -a --format '{{.Names}}' | grep -Eq '^acp-sandbox-demo-[0-9]+-'; then
+            echo 'Demo left a Docker container running or stopped' >&2
+            exit 1
+          fi
+          if docker network ls --format '{{.Name}}' | grep -Eq '^acp-sandbox-demo-[0-9]+_'; then
+            echo 'Demo left a Docker network' >&2
+            exit 1
+          fi
       - name: Smoke sandboxctl against isolated PostgreSQL (read-only)
         working-directory: services/sandbox-journal
         env:
