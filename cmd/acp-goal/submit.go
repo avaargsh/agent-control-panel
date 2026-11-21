@@ -104,6 +104,12 @@ func submit(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		// A server-side failure or request timeout can be returned after
+		// PostgreSQL committed the intent/outbox. Do not call that a
+		// definite refusal or silently repeat the POST.
+		if resp.StatusCode == http.StatusRequestTimeout || resp.StatusCode >= http.StatusInternalServerError {
+			return fmt.Errorf("GoalSubmit returned HTTP %d; outcome unknown, inspect ACP before retrying", resp.StatusCode)
+		}
 		return fmt.Errorf("GoalSubmit not accepted (HTTP %d); inspect ACP before retrying", resp.StatusCode)
 	}
 	media, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
