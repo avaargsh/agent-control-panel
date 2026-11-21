@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"mime"
 	"net/http"
@@ -55,6 +54,7 @@ type canonicalIssueSnapshotV1 struct {
 // hostname. It has no caller-supplied endpoint, token or redirect allowance.
 type PublicIssueReader struct {
 	client *http.Client
+	bearer string // explicit, read-only credential; never accepted from a Goal manifest
 }
 
 func NewPublicIssueReader() *PublicIssueReader {
@@ -64,6 +64,33 @@ func NewPublicIssueReader() *PublicIssueReader {
 		Transport:     transport,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}}
+}
+
+// NewPublicIssueReaderWithBearer only authenticates read-only requests to
+// the hard-coded api.github.com origin. It does not read environment tokens,
+// accept caller-provided hosts, follow redirects or use proxy settings that
+// could forward the credential outside the intended TLS destination.
+func NewPublicIssueReaderWithBearer(token string) (*PublicIssueReader, error) {
+	if len(token) == 0 || len(token) > 4096 {
+		return nil, ErrInvalidGoal
+	}
+	for _, ch := range token {
+		if !((ch >= '0' && ch <= '9') || (ch >= 'A' && ch <= 'Z') ||
+			(ch >= 'a' && ch <= 'z') || ch == '-' || ch == '_' ||
+			ch == '.' || ch == '~') {
+			return nil, ErrInvalidGoal
+		}
+	}
+	reader := NewPublicIssueReader()
+	reader.bearer = token
+	reader.client.Transport.(*http.Transport).Proxy = nil
+	return reader, nil
+}
+
+func (r *PublicIssueReader) addReadAuthorization(req *http.Request) {
+	if r.bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+r.bearer)
+	}
 }
 
 func ValidateIssueURL(value string) error {
@@ -90,20 +117,23 @@ func (r *PublicIssueReader) Read(ctx context.Context, issueURL string) (GitHubIs
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 	req.Header.Set("User-Agent", "acp-issue-goal/0.1")
+	r.addReadAuthorization(req)
 	resp, err := r.client.Do(req)
 	if err != nil {
-		return GitHubIssueSnapshot{}, fmt.Errorf("%w: request failed", ErrIssueSourceUnavailable)
+		return GitHubIssueSnapshot{}, newPublicSourceFailure(ErrIssueSourceUnavailable, "issue", "transport", 0)
 	}
 	defer resp.Body.Close()
 	media, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
-	if resp.StatusCode != http.StatusOK || err != nil ||
-		(media != "application/json" && media != "application/vnd.github+json") {
-		return GitHubIssueSnapshot{}, ErrIssueSourceUnavailable
+	if resp.StatusCode != http.StatusOK {
+		return GitHubIssueSnapshot{}, newPublicSourceFailure(ErrIssueSourceUnavailable, "issue", "http_status", resp.StatusCode)
+	}
+	if err != nil || (media != "application/json" && media != "application/vnd.github+json") {
+		return GitHubIssueSnapshot{}, newPublicSourceFailure(ErrIssueSourceUnavailable, "issue", "invalid_media", resp.StatusCode)
 	}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxPublicIssueResponseBytes+1))
 	if err != nil || len(raw) > maxPublicIssueResponseBytes ||
 		rejectCaseFoldKeyCollisions(raw) != nil {
-		return GitHubIssueSnapshot{}, ErrIssueSourceUnavailable
+		return GitHubIssueSnapshot{}, newPublicSourceFailure(ErrIssueSourceUnavailable, "issue", "invalid_body", resp.StatusCode)
 	}
 	var observed struct {
 		ID            int64           `json:"id"`
@@ -117,17 +147,17 @@ func (r *PublicIssueReader) Read(ctx context.Context, issueURL string) (GitHubIs
 		PullRequest   json.RawMessage `json:"pull_request"`
 	}
 	if json.Unmarshal(raw, &observed) != nil {
-		return GitHubIssueSnapshot{}, ErrIssueSourceUnavailable
+		return GitHubIssueSnapshot{}, newPublicSourceFailure(ErrIssueSourceUnavailable, "issue", "invalid_body", resp.StatusCode)
 	}
 	wantNumber, _ := strconv.ParseInt(number, 10, 64)
 	if observed.ID <= 0 || observed.Number != wantNumber ||
 		observed.HTMLURL != issueURL || observed.RepositoryURL != repoAPI ||
 		observed.Title == "" || len(observed.Title) > 16*1024 ||
 		observed.State != "open" || len(observed.PullRequest) != 0 {
-		return GitHubIssueSnapshot{}, ErrIssueSourceUnavailable
+		return GitHubIssueSnapshot{}, newPublicSourceFailure(ErrIssueSourceUnavailable, "issue", "invalid_body", resp.StatusCode)
 	}
 	if _, err := time.Parse(time.RFC3339, observed.UpdatedAt); err != nil {
-		return GitHubIssueSnapshot{}, ErrIssueSourceUnavailable
+		return GitHubIssueSnapshot{}, newPublicSourceFailure(ErrIssueSourceUnavailable, "issue", "invalid_body", resp.StatusCode)
 	}
 	body := ""
 	if observed.Body != nil {
@@ -144,7 +174,7 @@ func (r *PublicIssueReader) Read(ctx context.Context, issueURL string) (GitHubIs
 		Title: snapshot.Title, Body: snapshot.Body, UpdatedAt: snapshot.UpdatedAt,
 	})
 	if err != nil {
-		return GitHubIssueSnapshot{}, ErrIssueSourceUnavailable
+		return GitHubIssueSnapshot{}, newPublicSourceFailure(ErrIssueSourceUnavailable, "issue", "invalid_body", resp.StatusCode)
 	}
 	digest := sha256.Sum256(canonical)
 	snapshot.Digest = "sha256:" + hex.EncodeToString(digest[:])

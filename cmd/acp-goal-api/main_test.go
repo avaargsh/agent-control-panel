@@ -271,3 +271,32 @@ func TestVerifyAuthoritySchemaRequiresLatestAdmissionMigration(t *testing.T) {
 		t.Fatal("schema missing admission-origin migration was accepted")
 	}
 }
+
+func TestGitHubBearerFileOptInOnlyForDisposableTestEnvironment(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		env  string
+		path string
+		ok   bool
+	}{
+		{"anonymous production remains default", "production", "", true},
+		{"production token file denied", "production", "/run/secrets/github", false},
+		{"development token file denied", "development", "/run/secrets/github", false},
+		{"test file accepted", "test", "/run/secrets/github", true},
+		{"test empty file path remains anonymous", "test", "", true},
+		{"test whitespace file path denied", "test", " /run/secrets/github", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := completeEnv()
+			env["ACP_GOAL_ENV"] = tc.env
+			env["ACP_GOAL_GITHUB_READ_TOKEN_FILE"] = tc.path
+			cfg, err := readConfig(configuredEnv(env))
+			if (err == nil) != tc.ok {
+				t.Fatalf("test-only read-only GitHub token path policy mismatch: %v", err)
+			}
+			if tc.ok && cfg.githubReadTokenFile != tc.path {
+				t.Fatal("configured private GitHub bearer file lost its explicit binding")
+			}
+		})
+	}
+}

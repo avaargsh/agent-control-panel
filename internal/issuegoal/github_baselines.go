@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"mime"
 	"net/http"
@@ -99,18 +98,22 @@ func (r *PublicIssueReader) baselineGET(ctx context.Context, endpoint string) ([
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 	req.Header.Set("User-Agent", "acp-issue-goal/0.1")
+	r.addReadAuthorization(req)
 	resp, err := r.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("%w: request failed", ErrBaselineSourceUnavailable)
+		return nil, newPublicSourceFailure(ErrBaselineSourceUnavailable, "baseline", "transport", 0)
 	}
 	defer resp.Body.Close()
 	media, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
-	if resp.StatusCode != http.StatusOK || err != nil || (media != "application/json" && media != "application/vnd.github+json") {
-		return nil, ErrBaselineSourceUnavailable
+	if resp.StatusCode != http.StatusOK {
+		return nil, newPublicSourceFailure(ErrBaselineSourceUnavailable, "baseline", "http_status", resp.StatusCode)
+	}
+	if err != nil || (media != "application/json" && media != "application/vnd.github+json") {
+		return nil, newPublicSourceFailure(ErrBaselineSourceUnavailable, "baseline", "invalid_media", resp.StatusCode)
 	}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxBaselineResponseBytes+1))
 	if err != nil || len(raw) > maxBaselineResponseBytes || rejectCaseFoldKeyCollisions(raw) != nil {
-		return nil, ErrBaselineSourceUnavailable
+		return nil, newPublicSourceFailure(ErrBaselineSourceUnavailable, "baseline", "invalid_body", resp.StatusCode)
 	}
 	return raw, nil
 }

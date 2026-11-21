@@ -32,17 +32,18 @@ import (
 )
 
 type config struct {
-	listenAddress   string
-	certFile        string
-	keyFile         string
-	dsnFile         string
-	oauthCAFile     string
-	oauthEndpoint   string
-	oauthIssuer     string
-	oauthAudience   string
-	oauthClientID   string
-	oauthSecretFile string
-	policy          admission.TrustedGitHubIssuePolicy
+	listenAddress       string
+	certFile            string
+	keyFile             string
+	dsnFile             string
+	oauthCAFile         string
+	oauthEndpoint       string
+	oauthIssuer         string
+	oauthAudience       string
+	oauthClientID       string
+	oauthSecretFile     string
+	githubReadTokenFile string
+	policy              admission.TrustedGitHubIssuePolicy
 }
 
 func readConfig(getenv func(string) string) (config, error) {
@@ -138,6 +139,14 @@ func readConfig(getenv func(string) string) (config, error) {
 	case "", "production", "development", "test":
 	default:
 		return config{}, errors.New("ACP_GOAL_ENV must be production, development or test")
+	}
+	// Only isolated test jobs may provide a read-only GitHub API token.
+	// Production/development remain anonymous until separately reviewed IAM.
+	if githubFile := getenv("ACP_GOAL_GITHUB_READ_TOKEN_FILE"); githubFile != "" {
+		if environment != "test" || strings.TrimSpace(githubFile) != githubFile || len(githubFile) > 4096 {
+			return config{}, errors.New("GitHub read token file is permitted only in the isolated test environment")
+		}
+		c.githubReadTokenFile = githubFile
 	}
 	switch getenv("ACP_GOAL_ALLOW_UNPROTECTED_TEST_BRANCH") {
 	case "":
@@ -345,7 +354,19 @@ func serve(ctx context.Context, c config) error {
 	}
 	// No caller-configurable outbound GitHub host, credentials or redirect
 	// behavior: the existing public Issue reader is read-only and fixed-origin.
-	source, err := admission.NewTrustedGitHubIssueVerifier(issuegoal.NewPublicIssueReader(), c.policy)
+	githubReader := issuegoal.NewPublicIssueReader()
+	if c.githubReadTokenFile != "" {
+		githubBearer, err := readSecretFile(c.githubReadTokenFile)
+		if err != nil {
+			return errors.New("private GitHub read token file unavailable")
+		}
+		githubReader, err = issuegoal.NewPublicIssueReaderWithBearer(githubBearer)
+		githubBearer = ""
+		if err != nil {
+			return errors.New("invalid scoped GitHub read token")
+		}
+	}
+	source, err := admission.NewTrustedGitHubIssueVerifier(githubReader, c.policy)
 	if err != nil {
 		return errors.New("GitHub source policy configuration rejected")
 	}

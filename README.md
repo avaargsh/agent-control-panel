@@ -95,4 +95,6 @@ The Go development baseline includes the RunIntent/PostgreSQL repository, transa
 
 ## 面向评审者的可复现演示（非生产）
 
-如果想快速判断这个项目究竟做到了什么，请看 [求职作品：真实 Golden Path 演示与证据边界](docs/implementation/PORTFOLIO-VALIDATION-DEMO.md)。它给出 5–10 分钟讲解路径、可手动触发的 OAuth/Temporal/Decision 集成测试、故障恢复与撤权负例，以及 Guard、Sandbox、Broker、Verifier 等尚未交付的范围。**不要把测试 fixture 和 Draft PR 当作生产能力。**
+建议从 [5 分钟求职作品演示：真实 GitHub Issue → OAuth → 独立 API/CLI → PostgreSQL](docs/implementation/PORTFOLIO-VALIDATION-DEMO.md) 开始。精确证据：[非生产服务进程+CLI+Keycloak+GitHub CI #44866824509](https://github.com/avaargsh/agent-control-panel/actions/runs/44866824509)，配套 [Go/PostgreSQL 全量 Race CI #44866824518](https://github.com/avaargsh/agent-control-panel/actions/runs/44866824518)，二者对应候选 SHA `40faf07c42accf362b6e8792c5d0b0e17245762c`。受理创建 **1 个 RunIntent + 1 个 Outbox**，数据库中原始输入可核验，撤销 RUNNER 后拒绝继续提交。
+
+**合并边界**：#82 已合入 `main`；[#85](https://github.com/avaargsh/agent-control-panel/pull/85)、[#86](https://github.com/avaargsh/agent-control-panel/pull/86)、[#88](https://github.com/avaargsh/agent-control-panel/pull/88) 为叠加 Draft 候选。它们的 CI 证据**不代表 main 已具备 M0 HTTP/CLI 入口**，也不代表 Runtime/Sandbox/Verifier/Issue→PR 自动修复已完成。仓库明确记录了外部 GitHub 来源读取失败，不能把 CI GREEN 延伸为生产 SLO 或发布批准。
