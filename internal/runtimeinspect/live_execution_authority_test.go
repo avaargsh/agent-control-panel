@@ -411,6 +411,32 @@ func newLiveExecutionAuthorityReader(t *testing.T, pool *pgxpool.Pool, dsn, runt
 				t.Fatalf("actual Guard ACP CapabilityAuthority %s failed: %v %s", expect, err, output)
 			}
 			t.Logf("independent real Guard ACP capability evidence: %s", output)
+			if os.Getenv("ACP_LIVE_GUARD_PROTECTED") == "1" {
+				// Use the SAME original real OAuth/Runtime Run and the SAME
+				// independent ACP Guard-only mTLS listener. The trusted
+				// Release remains SRE read-only: write escalation must be
+				// denied before, during and after source revocation.
+				protected := exec.Command(guardBinary, "-test.v", "-test.run=^TestExternalLiveACPProtectedWorkspaceClient$", "-test.timeout=25s")
+				protected.Env = append(goldenPathChildEnvironment(),
+					"GUARD_EXTERNAL_LIVE_PROTECTED_ACP=1", "GUARD_ACP_EXPECT="+expect,
+					"GUARD_ACP_ORIGIN="+guardOrigin, "GUARD_ACP_PEER=spiffe://example.org/acp",
+					"GUARD_ACP_ROOTS="+guardRootsFile, "GUARD_ACP_CLIENT_CERT="+guardClientFile,
+					"GUARD_ACP_CLIENT_KEY="+guardKeyFile, "GUARD_ACP_TENANT="+admitted.TenantID,
+					"GUARD_ACP_RUN="+ref.RunID, "GUARD_ACP_AGENT="+admitted.AgentID,
+					"GUARD_ACP_RELEASE="+admitted.ReleaseID, "GUARD_ACP_SESSION="+admitted.SessionID,
+					"GUARD_ACP_SUBJECT="+admitted.PrincipalSnapshot.SubjectID,
+					"GUARD_ACP_POLICY="+admitted.PrincipalSnapshot.PolicyRevision)
+				result, err := protected.CombinedOutput()
+				marker := "actual ACP and independent Guard denied protected write on readonly same-Run " + ref.RunID + " while read remained verified"
+				if expect == "revoked" {
+					marker = "actual ACP and independent Guard denied protected write and revoked original OAuth source on same-Run " + ref.RunID
+				}
+				if err != nil || !bytes.Contains(result, []byte("--- PASS: TestExternalLiveACPProtectedWorkspaceClient ")) ||
+					!bytes.Contains(result, []byte(marker)) {
+					t.Fatalf("actual ACP/EngageGuard protected-readonly anti-escalation %s failed: %v %s", expect, err, result)
+				}
+				t.Logf("source-pinned ACP/Guard protected anti-escalation evidence: %s", result)
+			}
 		}
 	}
 	return func(want int) {
