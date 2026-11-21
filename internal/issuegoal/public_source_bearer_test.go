@@ -27,8 +27,8 @@ func TestPublicIssueReaderExplicitBearerIsBoundToGitHubAPI(t *testing.T) {
 		}
 		return &http.Response{
 			StatusCode: http.StatusOK,
-			Header: http.Header{"Content-Type": []string{"application/json"}},
-			Body: io.NopCloser(strings.NewReader(sampleIssueAPI)),
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(sampleIssueAPI)),
 		}, nil
 	})
 	if _, err := reader.Read(context.Background(), sampleIssueURL); err != nil || received != 1 {
@@ -57,8 +57,8 @@ func TestPublicBaselineExplicitBearerAndNoUnsafeRedirect(t *testing.T) {
 		}
 		return &http.Response{
 			StatusCode: http.StatusFound,
-			Header: http.Header{"Location": []string{"https://attacker.example/steal"}, "Content-Type": []string{"text/html"}},
-			Body: io.NopCloser(strings.NewReader("private-upstream")),
+			Header:     http.Header{"Location": []string{"https://attacker.example/steal"}, "Content-Type": []string{"text/html"}},
+			Body:       io.NopCloser(strings.NewReader("private-upstream")),
 		}, nil
 	})
 	_, err = reader.baselineGET(context.Background(), "https://api.github.com/repos/acme/example/branches/main")
