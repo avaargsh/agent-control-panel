@@ -21,7 +21,7 @@ const maxPublicIssueResponseBytes = 128 * 1024
 
 var (
 	ErrIssueSourceUnavailable = errors.New("GitHub Issue source unavailable")
-	ErrIssueSnapshotMismatch = errors.New("GitHub Issue snapshot digest mismatch")
+	ErrIssueSnapshotMismatch  = errors.New("GitHub Issue snapshot digest mismatch")
 )
 
 // GitHubIssueSnapshot is observed public Issue content, not a GitHub
