@@ -158,6 +158,10 @@ func TestTrustedGitHubIssueSourceComposesWithExistingRunIntentAdmission(t *testi
 	wire := preparedGoalWire(t)
 	policy, _, source := fixtureGoalSource()
 	policy.Target = Target{TenantID: "tenant-a", ProjectID: "project-a", AgentID: "agent-a", ReleaseID: "release-a", SessionID: "session-a"}
+	// The shared admission fixture requests 2048 tokens / 3600 seconds /
+	// 1800 sandbox seconds, unlike this package's smaller policy fixture.
+	// This success-path policy must explicitly encompass that request.
+	policy.MaxBudget = issuegoal.Budget{MaxTokens: 4096, MaxRuntimeSeconds: 7200, MaxSandboxSeconds: 3600}
 	verifier, err := NewTrustedGitHubIssueVerifier(source, policy)
 	if err != nil {
 		t.Fatal(err)
