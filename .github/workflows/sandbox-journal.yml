@@ -56,6 +56,17 @@ jobs:
       - name: Vet independent sandbox module
         working-directory: services/sandbox-journal
         run: go vet ./...
+      - name: One-command disposable demo (Docker Compose)
+        working-directory: services/sandbox-journal
+        timeout-minutes: 8
+        run: |
+          bash -n scripts/demo.sh
+          docker compose -f compose.demo.yaml config --quiet
+          bash scripts/demo.sh > "$RUNNER_TEMP/sandbox-demo.log"
+          grep -q 'SANDBOX_DEMO_PASS' "$RUNNER_TEMP/sandbox-demo.log"
+          grep -q 'UNATTESTED_DB_SNAPSHOT' "$RUNNER_TEMP/sandbox-demo.log"
+          grep -q 'Dispatch: DENIED' "$RUNNER_TEMP/sandbox-demo.log"
+          grep -q '"can_declare_released": false' "$RUNNER_TEMP/sandbox-demo.log"
       - name: Smoke sandboxctl against isolated PostgreSQL (read-only)
         working-directory: services/sandbox-journal
         env:
