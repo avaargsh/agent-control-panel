@@ -28,6 +28,7 @@ import (
 	"github.com/avaargsh/agent-control-panel/internal/issuegoal"
 	runpg "github.com/avaargsh/agent-control-panel/internal/runintent/postgres"
 	"github.com/avaargsh/agent-control-panel/migrations"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type config struct {
