@@ -36,16 +36,16 @@ type CommandView struct {
 }
 
 type Report struct {
-	Schema             string `json:"schema"`
-	Source             string `json:"source"`
-	TenantID           string `json:"tenant_id"`
-	Lease              *LeaseView `json:"lease,omitempty"`
+	Schema             string       `json:"schema"`
+	Source             string       `json:"source"`
+	TenantID           string       `json:"tenant_id"`
+	Lease              *LeaseView   `json:"lease,omitempty"`
 	Command            *CommandView `json:"command,omitempty"`
-	NextAction         string `json:"next_action"`
-	CanDispatch        bool `json:"can_dispatch"`
-	CanRetry           bool `json:"can_retry"`
-	CanDeclareSuccess  bool `json:"can_declare_success"`
-	CanDeclareReleased bool `json:"can_declare_released"`
+	NextAction         string       `json:"next_action"`
+	CanDispatch        bool         `json:"can_dispatch"`
+	CanRetry           bool         `json:"can_retry"`
+	CanDeclareSuccess  bool         `json:"can_declare_success"`
+	CanDeclareReleased bool         `json:"can_declare_released"`
 }
 
 type LeaseReader interface {
