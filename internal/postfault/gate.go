@@ -29,11 +29,11 @@ var ErrUnverifiedRecovery = errors.New("postfault recovery proof unavailable or 
 // Subject is the original authoritative Run binding, not a model-generated ID.
 // Attempt IDs are intentionally not frozen here: Temporal may replace workers.
 type Subject struct {
-	TenantID          string `json:"tenant_id"`
-	RunID             string `json:"run_id"`
-	SessionID         string `json:"session_id"`
-	WorkflowID        string `json:"workflow_id"`
-	GuardOperationID  string `json:"guard_operation_id"`
+	TenantID         string `json:"tenant_id"`
+	RunID            string `json:"run_id"`
+	SessionID        string `json:"session_id"`
+	WorkflowID       string `json:"workflow_id"`
+	GuardOperationID string `json:"guard_operation_id"`
 }
 
 type Fault struct {
@@ -94,30 +94,34 @@ type CommandObservation struct {
 }
 
 type GuardObservation struct {
-	PermitID    string `json:"permit_id"`
-	PermitEpoch uint64 `json:"permit_epoch"`
-	Status      string `json:"status"`
+	PermitID     string `json:"permit_id"`
+	PermitEpoch  uint64 `json:"permit_epoch"`
+	Status       string `json:"status"`
 	ActionDigest string `json:"action_digest"`
-	Revalidated bool   `json:"revalidated"`
+	Revalidated  bool   `json:"revalidated"`
 }
 
 type Observation struct {
-	Schema     string               `json:"schema"`
-	Authority  string               `json:"authority"`
-	Phase      string               `json:"phase"`
-	ObservedAt time.Time            `json:"observed_at"`
-	FaultID    string               `json:"fault_id"`
-	Subject    Subject              `json:"subject"`
-	Runtime    *RuntimeObservation  `json:"runtime,omitempty"`
-	Sandbox    *SandboxObservation  `json:"sandbox,omitempty"`
-	Command    *CommandObservation  `json:"command,omitempty"`
-	Guard      *GuardObservation    `json:"guard,omitempty"`
+	Schema     string              `json:"schema"`
+	Authority  string              `json:"authority"`
+	Phase      string              `json:"phase"`
+	ObservedAt time.Time           `json:"observed_at"`
+	FaultID    string              `json:"fault_id"`
+	Subject    Subject             `json:"subject"`
+	Runtime    *RuntimeObservation `json:"runtime,omitempty"`
+	Sandbox    *SandboxObservation `json:"sandbox,omitempty"`
+	Command    *CommandObservation `json:"command,omitempty"`
+	Guard      *GuardObservation   `json:"guard,omitempty"`
 }
 
 func safeID(s string) bool {
-	if s == "" || len(s) > 256 || strings.TrimSpace(s) != s { return false }
+	if s == "" || len(s) > 256 || strings.TrimSpace(s) != s {
+		return false
+	}
 	for _, ch := range s {
-		if ch <= 32 || ch >= 127 || ch == '\\' || ch == '?' || ch == '#' { return false }
+		if ch <= 32 || ch >= 127 || ch == '\\' || ch == '?' || ch == '#' {
+			return false
+		}
 	}
 	return true
 }
@@ -128,9 +132,13 @@ func validSubject(s Subject) bool {
 }
 
 func validDigest(s string) bool {
-	if len(s) != len("sha256:")+64 || !strings.HasPrefix(s, "sha256:") { return false }
+	if len(s) != len("sha256:")+64 || !strings.HasPrefix(s, "sha256:") {
+		return false
+	}
 	for _, c := range strings.TrimPrefix(s, "sha256:") {
-		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) { return false }
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			return false
+		}
 	}
 	return true
 }
@@ -138,7 +146,9 @@ func validDigest(s string) bool {
 func decodeStrict(data []byte, dst any) bool {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
-	if decoder.Decode(dst) != nil { return false }
+	if decoder.Decode(dst) != nil {
+		return false
+	}
 	return decoder.Decode(new(any)) == io.EOF
 }
 
@@ -154,15 +164,24 @@ func allowedAuthority(authority string) bool {
 func validateSingleOwner(o Observation) bool {
 	count := 0
 	for _, p := range []bool{o.Runtime != nil, o.Sandbox != nil, o.Command != nil, o.Guard != nil} {
-		if p { count++ }
+		if p {
+			count++
+		}
 	}
-	if count != 1 { return false }
+	if count != 1 {
+		return false
+	}
 	switch o.Authority {
-	case "runtime": return o.Runtime != nil
-	case "sandbox": return o.Sandbox != nil
-	case "agentd": return o.Command != nil
-	case "guard": return o.Guard != nil
-	default: return false
+	case "runtime":
+		return o.Runtime != nil
+	case "sandbox":
+		return o.Sandbox != nil
+	case "agentd":
+		return o.Command != nil
+	case "guard":
+		return o.Guard != nil
+	default:
+		return false
 	}
 }
 
@@ -223,15 +242,21 @@ func Verify(b Bundle, keys map[string]ed25519.PublicKey, now time.Time) error {
 			return failure("future or missing authority observation time")
 		}
 		if phase == "before_fault" {
-			if !o.ObservedAt.Before(b.Fault.At) { return failure("missing pre-fault evidence") }
+			if !o.ObservedAt.Before(b.Fault.At) {
+				return failure("missing pre-fault evidence")
+			}
 		} else if !o.ObservedAt.After(b.Fault.At) || now.Sub(o.ObservedAt) > maxPostFaultAge {
 			return failure("stale or pre-fault recovery observation")
 		}
 		observed[key] = o
 	}
 	for _, authority := range []string{"runtime", "sandbox", "agentd", "guard"} {
-		if _, ok := observed[authority+"/before_fault"]; !ok { return failure("missing pre-fault authority") }
-		if _, ok := observed[authority+"/after_recovery"]; !ok { return failure("missing post-fault authority") }
+		if _, ok := observed[authority+"/before_fault"]; !ok {
+			return failure("missing pre-fault authority")
+		}
+		if _, ok := observed[authority+"/after_recovery"]; !ok {
+			return failure("missing post-fault authority")
+		}
 	}
 	return checkContinuity(observed)
 }
