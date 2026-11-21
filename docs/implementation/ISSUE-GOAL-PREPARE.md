@@ -1,6 +1,6 @@
 # Issue Goal input preparation (M0 candidate, non-dispatch)
 
-This is the first **offline** user-facing step toward ACP's GitHub Issue → PR Golden Path. It prepares a strictly validated, immutable input proposal; it **does not by itself submit a Goal**, admit a RunIntent, start a Runtime Run, contact GitHub, enforce budgets, run a model, or grant any protected operation. An internal adapter can now pass independently verified input to existing authenticated admission, but no public authenticated submit route is wired.
+This is the **offline** user-facing input step toward ACP's GitHub Issue → PR Golden Path. It prepares a strictly validated, immutable input proposal; **prepare alone** does not submit a Goal, admit a RunIntent, start a Runtime Run, contact GitHub, enforce budgets, run a model, or grant any protected operation. An opt-in, loopback-only HTTPS admission host and an explicit `acp-goal submit` client are now available as **candidate features in stacked PR #86**. They only admit an ACP RunIntent; they do not dispatch or create a PR. See [the TLS host and client guide](ISSUE-GOAL-TLS-HOST.md).
 
 ## Reproduce
 
@@ -31,7 +31,7 @@ The result has `schema=acp.issue-goal-submission/v1`, ACP admission selectors, a
 
 ## Mandatory next integration gate
 
-Wire the new **internal**, non-dispatch `admission.Service.AdmitPreparedIssueGoal` adapter to a real, independently authenticated Issue/baseline/rule/budget source verifier, real OAuth introspection and current CatalogPolicy, then verify PostgreSQL replay/Outbox and Runtime ID projection. The adapter currently depends on a trusted verifier injected by the host and is **not wired to a user-facing HTTP route**. Never accept the proposal JSON as an authorization assertion: the server must independently decode/validate scope (using `issuegoal.DecodePrepared`), recalculate the input digest from exact bytes, verify external source evidence, and recheck current authorization. Keep Runtime/Temporal Run IDs owned exclusively by agent-runtime.
+The opt-in HTTPS admission candidate now composes the existing `admission.Service.AdmitPreparedIssueGoal` adapter with TLS OAuth introspection, current CatalogPolicy, a fixed-origin public GitHub source reader, and one PostgreSQL RunIntent/Outbox authority. However, a deployed real-issuer + live-public-GitHub + PostgreSQL operator acceptance is **not yet proven**. Never accept the proposal JSON as an authorization assertion: the server must independently decode/validate scope (using `issuegoal.DecodePrepared`), recalculate the input digest from exact bytes, verify external source evidence, and recheck current authorization. Signed acceptance rules, per-run budget consumption, Runtime dispatch, Sandbox and independent Verifier remain outside M0. Keep Runtime/Temporal Run IDs owned exclusively by agent-runtime.
 
 Before claiming M0 complete, demonstrate real tenant-isolated PostgreSQL admissions, identical replay yielding one RunIntent/Outbox, changed-content conflict, revoked actor denial, wrong-scope denial, signed release/rules existence, and an operator-facing Run view. Protected action/PR creation remains blocked on EngageGuard, Sandbox and Independent Verifier gates (#70–#72).
 
