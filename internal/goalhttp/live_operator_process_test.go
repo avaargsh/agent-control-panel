@@ -133,11 +133,23 @@ func runLiveGoalProcessCLI(t *testing.T, ctx context.Context, in liveGoalProcess
 		t.Fatal("disposable Goal API TLS CA unusable")
 	}
 
+	// Do not propagate live GitHub/Keycloak tokens as environment variables
+	// to either child process. Each receives only its own private file path.
+	childEnv := make([]string, 0, len(os.Environ()))
+	for _, variable := range os.Environ() {
+		key, _, _ := strings.Cut(variable, "=")
+		switch key {
+		case "ACP_REAL_GITHUB_READ_TOKEN", "GITHUB_TOKEN", "GH_TOKEN",
+			"ACP_REAL_IDP_SECRET", "ACP_REAL_RUNNER_SECRET":
+			continue
+		}
+		childEnv = append(childEnv, variable)
+	}
 	command := exec.CommandContext(ctx, apiBin)
 	var apiStdout, apiStderr bytes.Buffer
 	command.Stdout = &apiStdout
 	command.Stderr = &apiStderr
-	command.Env = append(os.Environ(),
+	command.Env = append(childEnv,
 		"ACP_GOAL_ENV=test",
 		"ACP_GOAL_ALLOW_UNPROTECTED_TEST_BRANCH=true",
 		"ACP_GOAL_GITHUB_READ_TOKEN_FILE="+githubReadFile,
@@ -216,6 +228,7 @@ func runLiveGoalProcessCLI(t *testing.T, ctx context.Context, in liveGoalProcess
 		defer cancel()
 		cli := exec.CommandContext(cliCtx, cliBin, "submit", "--file", proposalFile,
 			"--url", endpoint, "--token-file", tokenFile, "--ca-file", CAFile)
+		cli.Env = childEnv
 		var output, diagnostics bytes.Buffer
 		cli.Stdout, cli.Stderr = &output, &diagnostics
 		err := cli.Run()
