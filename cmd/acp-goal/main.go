@@ -21,6 +21,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	flags.SetOutput(stderr)
 	path := flags.String("file", "", "Issue Goal manifest path; - reads stdin")
 	if err := flags.Parse(args[1:]); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
 		return err
 	}
 	if *path == "" || flags.NArg() != 0 {
