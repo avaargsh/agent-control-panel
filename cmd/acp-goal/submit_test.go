@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -50,11 +51,10 @@ func submitFixture(t *testing.T, handler http.Handler) (url, proposal, tokenFile
 }
 
 func TestSubmitCLIOverTLSWithExactBoundReceipt(t *testing.T) {
-	observed := 0
-	created := true
+	var observed atomic.Int32
 	var proposal string
 	url, preparedJSON, tokenFile, caFile, closeServer := submitFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		observed++
+		created := observed.Add(1) == 1
 		if r.TLS == nil || r.URL.Path != "/api/v1/goals:submit" || r.Method != http.MethodPost ||
 			r.Header.Get("Authorization") != "Bearer opaque-test-token" ||
 			r.Header.Get("Content-Type") != "application/json" {
@@ -89,7 +89,6 @@ func TestSubmitCLIOverTLSWithExactBoundReceipt(t *testing.T) {
 	proposal = preparedJSON
 	defer closeServer()
 	for _, wantCreated := range []bool{true, false} {
-		created = wantCreated
 		var out, diagnostics bytes.Buffer
 		err := run([]string{"submit", "--file", "-", "--url", url, "--token-file", tokenFile, "--ca-file", caFile},
 			strings.NewReader(proposal), &out, &diagnostics)
@@ -108,15 +107,15 @@ func TestSubmitCLIOverTLSWithExactBoundReceipt(t *testing.T) {
 			t.Fatal("bearer leaked to CLI output")
 		}
 	}
-	if observed != 2 {
-		t.Fatalf("expected one submission per explicit invocation; got %d", observed)
+	if got := observed.Load(); got != 2 {
+		t.Fatalf("expected one submission per explicit invocation; got %d", got)
 	}
 }
 
 func TestSubmitCLIRejectsUnsafeConfigBeforeSendingBearer(t *testing.T) {
-	observed := 0
+	var observed atomic.Int32
 	url, proposal, tokenFile, caFile, closeServer := submitFixture(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		observed++
+		observed.Add(1)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer closeServer()
@@ -145,15 +144,15 @@ func TestSubmitCLIRejectsUnsafeConfigBeforeSendingBearer(t *testing.T) {
 			}
 		})
 	}
-	if observed != 0 {
-		t.Fatalf("unsafe CLI inputs hit the network %d times", observed)
+	if observed.Load() != 0 {
+		t.Fatalf("unsafe CLI inputs hit the network %d times", observed.Load())
 	}
 	if err := os.Chmod(tokenFile, 0644); err != nil {
 		t.Fatal(err)
 	}
 	var out, diagnostic bytes.Buffer
 	if err := run([]string{"submit", "--file", "-", "--url", url, "--token-file", tokenFile, "--ca-file", caFile},
-		strings.NewReader(proposal), &out, &diagnostic); err == nil || out.Len() != 0 || observed != 0 {
+		strings.NewReader(proposal), &out, &diagnostic); err == nil || out.Len() != 0 || observed.Load() != 0 {
 		t.Fatal("world-readable token file was accepted")
 	}
 }
