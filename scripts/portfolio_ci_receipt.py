@@ -17,7 +17,7 @@ SHA = re.compile(r'^[0-9a-f]{40}$')
 RUN_URL = re.compile(r'^https://github\.com/avaargsh/agent-control-panel/actions/runs/([1-9][0-9]*)$')
 SCENARIOS = {
     'golden': (
-        'Same ACP Run to recovered Decision acceptance (non-production)',
+        'Same ACP Run real Guard Plan Step mTLS (non-production)',
         'e2e',
         'Execute live OAuth to same Run Temporal recovery and Decision acceptance',
     ),
