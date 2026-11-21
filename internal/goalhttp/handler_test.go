@@ -102,7 +102,11 @@ func TestSubmitCreatesOnlyPendingIntentAndReportsIdempotentReplay(t *testing.T) 
 	if err := json.Unmarshal(p, &prepared); err != nil {
 		t.Fatal(err)
 	}
-	svc := &fakeAdmitter{created: true, result: runintent.Intent{ID: "run-intent-1", TenantID: "tenant-a", RequestDigest: prepared.RequestDigest, Status: runintent.Pending}}
+	svc := &fakeAdmitter{created: true, result: runintent.Intent{
+		ID: "run-intent-1", TenantID: "tenant-a", PrincipalID: "principal-a", ProjectID: "project-a",
+		AgentID: "coding", ReleaseID: "release-v1", SessionID: "session-1", IdempotencyKey: "issue-1",
+		RequestDigest: prepared.RequestDigest, Version: 1, Status: runintent.Pending,
+	}}
 	calls := 0
 	handler, err := NewHandler(func(_ context.Context, token string) (GoalAdmitter, error) {
 		calls++
@@ -158,5 +162,51 @@ func TestSubmitClassifiesDenialsWithoutLeakingErrors(t *testing.T) {
 		if w.Code != tc.code || strings.Contains(w.Body.String(), "secret") {
 			t.Fatalf("unsafe rejection: %d %s", w.Code, w.Body.String())
 		}
+	}
+}
+
+func TestSubmitRejectsUnboundOrMalformedAdmissionReceipt(t *testing.T) {
+	p := validProposal(t)
+	var prepared issuegoal.Prepared
+	if err := json.Unmarshal(p, &prepared); err != nil {
+		t.Fatal(err)
+	}
+	good := runintent.Intent{
+		ID: "run-intent-1", TenantID: "tenant-a", PrincipalID: "principal-a", ProjectID: "project-a",
+		AgentID: "coding", ReleaseID: "release-v1", SessionID: "session-1", IdempotencyKey: "issue-1",
+		RequestDigest: prepared.RequestDigest, Version: 1, Status: runintent.Pending,
+	}
+	for _, tc := range []struct {
+		name   string
+		mutate func(*runintent.Intent)
+	}{
+		{"wrong_tenant", func(i *runintent.Intent) { i.TenantID = "tenant-b" }},
+		{"wrong_project", func(i *runintent.Intent) { i.ProjectID = "project-b" }},
+		{"wrong_agent", func(i *runintent.Intent) { i.AgentID = "other-agent" }},
+		{"wrong_release", func(i *runintent.Intent) { i.ReleaseID = "other-release" }},
+		{"wrong_session", func(i *runintent.Intent) { i.SessionID = "other-session" }},
+		{"wrong_idempotency_key", func(i *runintent.Intent) { i.IdempotencyKey = "other-key" }},
+		{"invalid_status", func(i *runintent.Intent) { i.Status = runintent.Status("COMPLETED") }},
+		{"invalid_version", func(i *runintent.Intent) { i.Version = 0 }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			intent := good
+			tc.mutate(&intent)
+			svc := &fakeAdmitter{created: true, result: intent}
+			h, err := NewHandler(func(context.Context, string) (GoalAdmitter, error) {
+				return svc, nil
+			}, &noopSource{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, request(p, "opaque", true))
+			if w.Code != http.StatusServiceUnavailable {
+				t.Fatalf("invalid receipt %s was accepted: HTTP %d, body %s", tc.name, w.Code, w.Body.String())
+			}
+			if strings.Contains(w.Body.String(), intent.ID) {
+				t.Fatalf("invalid receipt leaked RunIntent identifier: %s", w.Body.String())
+			}
+		})
 	}
 }
