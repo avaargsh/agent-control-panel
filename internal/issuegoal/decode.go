@@ -53,7 +53,7 @@ func DecodePrepared(wire []byte) (Prepared, Input, []byte, error) {
 	if _, err := inputDecoder.Token(); err != io.EOF {
 		return Prepared{}, Input{}, nil, ErrInvalidGoal
 	}
-	m := Manifest{SchemaVersion: ManifestVersion, Target: p.Target, IdempotencyKey: p.IdempotencyKey, IssueURL: input.IssueURL, TargetBranch: input.TargetBranch, ExperimentBaselineSHA: input.ExperimentBaselineSHA, IntegrationBaselineSHA: input.IntegrationBaselineSHA, AcceptanceRulesDigest: input.AcceptanceRulesDigest, Budget: input.Budget}
+	m := Manifest{SchemaVersion: ManifestVersion, Target: p.Target, IdempotencyKey: p.IdempotencyKey, IssueURL: input.IssueURL, IssueSnapshotDigest: input.IssueSnapshotDigest, TargetBranch: input.TargetBranch, ExperimentBaselineSHA: input.ExperimentBaselineSHA, IntegrationBaselineSHA: input.IntegrationBaselineSHA, AcceptanceRulesDigest: input.AcceptanceRulesDigest, Budget: input.Budget}
 	if input.Kind != InputKind || m.validate() != nil {
 		return Prepared{}, Input{}, nil, ErrInvalidGoal
 	}
