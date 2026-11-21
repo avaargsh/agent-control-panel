@@ -258,7 +258,7 @@ func TestRealGoalHTTPKeycloakGitHubPostgres(t *testing.T) {
 			DSN: dsn, Schema: schema, Issuer: issuer, IssuerCA: issuerCA,
 			ResourceSecret: clientSecret, Bearer: tokenReply.AccessToken,
 			GitHubReadToken: githubReadToken,
-			Manifest: manifest, Prepared: preparedJSON,
+			Manifest:        manifest, Prepared: preparedJSON,
 			RequestDigest: proposal.RequestDigest, Pool: pool,
 		})
 		return
