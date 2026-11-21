@@ -68,7 +68,7 @@ func fixtureRecoveryBundle(t *testing.T) (Bundle, map[string]ed25519.PublicKey, 
 				}
 			case "guard":
 				report.Guard = &GuardObservation{
-					PermitID: "permit-1", PermitEpoch: 8, Status: "VALID", PermitExpiresAt: now.Add(10*time.Minute),
+					PermitID: "permit-1", PermitEpoch: 8, Status: "VALID", PermitExpiresAt: now.Add(10 * time.Minute),
 					ActionDigest: "sha256:" + strings.Repeat("e", 64),
 					Revalidated:  phase == "after_recovery",
 				}
