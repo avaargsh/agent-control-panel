@@ -157,7 +157,7 @@ func (m Manifest) validate() error {
 func validGitHubIssueURL(value string) bool {
 	u, err := url.Parse(value)
 	if err != nil || u.Scheme != "https" || u.Host != "github.com" || u.User != nil ||
-		u.RawQuery != "" || u.Fragment != "" || u.RawFragment != "" ||
+		u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.RawFragment != "" ||
 		u.RawPath != "" || strings.Contains(value, "%") {
 		return false
 	}

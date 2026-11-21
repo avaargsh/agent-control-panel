@@ -96,3 +96,13 @@ func TestPrepareChangesDigestWhenPinnedInputOrScopeChanges(t *testing.T) {
 		}
 	}
 }
+
+func TestPrepareRejectsIssueURLWithEmptyQueryDelimiter(t *testing.T) {
+	// An empty '?' is still a query delimiter (url.URL.ForceQuery).
+	// Reject it at the immutable Goal boundary, not only in the
+	// later GitHub reader. This was already guarded on main.
+	raw := strings.Replace(validManifest, "/issues/123", "/issues/123?", 1)
+	if _, err := Prepare([]byte(raw)); err == nil {
+		t.Fatal("Goal manifest accepted noncanonical Issue URL with empty query delimiter")
+	}
+}
