@@ -38,6 +38,7 @@ type liveGoalProcessInput struct {
 	IssuerCA       string
 	ResourceSecret string
 	Bearer         string
+	GitHubReadToken string
 	Manifest       issuegoal.Manifest
 	Prepared       []byte
 	RequestDigest  string
@@ -98,6 +99,7 @@ func runLiveGoalProcessCLI(t *testing.T, ctx context.Context, in liveGoalProcess
 	keyFile := write("goal-server.key", pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}), 0600)
 	CAFile := write("goal-server-ca.pem", certPEM, 0600)
 	tokenFile := write("goal-token", []byte(in.Bearer+"\n"), 0600)
+	githubReadFile := write("github-read-token", []byte(in.GitHubReadToken+"\n"), 0600)
 	secretFile := write("introspection-secret", []byte(in.ResourceSecret+"\n"), 0600)
 	proposalFile := write("prepared-goal.json", in.Prepared, 0600)
 
@@ -138,6 +140,7 @@ func runLiveGoalProcessCLI(t *testing.T, ctx context.Context, in liveGoalProcess
 	command.Env = append(os.Environ(),
 		"ACP_GOAL_ENV=test",
 		"ACP_GOAL_ALLOW_UNPROTECTED_TEST_BRANCH=true",
+		"ACP_GOAL_GITHUB_READ_TOKEN_FILE="+githubReadFile,
 		"ACP_GOAL_LISTEN_ADDR="+address,
 		"ACP_GOAL_TLS_CERT_FILE="+certFile,
 		"ACP_GOAL_TLS_KEY_FILE="+keyFile,
@@ -216,7 +219,8 @@ func runLiveGoalProcessCLI(t *testing.T, ctx context.Context, in liveGoalProcess
 		var output, diagnostics bytes.Buffer
 		cli.Stdout, cli.Stderr = &output, &diagnostics
 		err := cli.Run()
-		if strings.Contains(output.String(), in.Bearer) || strings.Contains(diagnostics.String(), in.Bearer) {
+		if strings.Contains(output.String(), in.Bearer) || strings.Contains(diagnostics.String(), in.Bearer) ||
+			strings.Contains(output.String(), in.GitHubReadToken) || strings.Contains(diagnostics.String(), in.GitHubReadToken) {
 			t.Fatal("operator CLI leaked disposable OAuth bearer")
 		}
 		if err != nil {
