@@ -32,17 +32,17 @@ import (
 // invoking the HTTP handler/CLI inside the test runner. All authorities are
 // disposable except the read-only public GitHub source.
 type liveGoalProcessInput struct {
-	DSN            string
-	Schema         string
-	Issuer         string
-	IssuerCA       string
-	ResourceSecret string
-	Bearer         string
+	DSN             string
+	Schema          string
+	Issuer          string
+	IssuerCA        string
+	ResourceSecret  string
+	Bearer          string
 	GitHubReadToken string
-	Manifest       issuegoal.Manifest
-	Prepared       []byte
-	RequestDigest  string
-	Pool           *pgxpool.Pool
+	Manifest        issuegoal.Manifest
+	Prepared        []byte
+	RequestDigest   string
+	Pool            *pgxpool.Pool
 }
 
 func runLiveGoalProcessCLI(t *testing.T, ctx context.Context, in liveGoalProcessInput) {
