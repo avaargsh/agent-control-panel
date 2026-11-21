@@ -98,7 +98,9 @@ On `201` and `200`, the CLI checks the server's schema and request digest agains
 | HTTP 200 with a complete, matching and verified replay receipt | An existing same-key RunIntent was observed; **not a new execution** | Record the same ID and digest |
 | Connection/TLS failure or timeout before the reply | **UNKNOWN**: server might already have committed | Inspect authoritative ACP PostgreSQL/Outbox before deciding whether to retry |
 | HTTP 200/201 but missing `no-store`, wrong media type, truncated/oversized JSON or mismatched receipt | **UNKNOWN**: a success status is not a verifiable receipt | Inspect authoritative ACP PostgreSQL/Outbox; never assume a failed write or retry automatically |
-| Non-200/201 reply | No verified acceptance receipt; HTTP status is reported without untrusted body | Verify authoritative state if the operation might have committed; do not synthesize success |
+| HTTP 408 or any 5xx reply | **UNKNOWN**: the server may have committed RunIntent/Outbox before returning an error | Inspect authoritative ACP PostgreSQL/Outbox before deciding whether to retry; never assume rollback |
+| Explicit HTTP 400/401/403/409 denial | No verified acceptance receipt; rejected request classified by HTTP status without untrusted body | Correct input/auth/policy or conflict; do not fabricate success |
+| Other non-200/201 reply | No verified acceptance receipt; HTTP status is reported without untrusted body | Verify authoritative state before any retry when commit uncertainty remains |
 
 The CLI intentionally makes **one submission per explicit invocation**, never silently retries, and never prints provider response bodies or credentials in an UNKNOWN error. The current M0 surface does **not** provide an authoritative read-only status API; operator inspection requires trusted database access. This is a candidate behavior in [PR #90](https://github.com/avaargsh/agent-control-panel/pull/90) and must pass its own exact-HEAD tests before a release claim.
 
