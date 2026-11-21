@@ -65,6 +65,21 @@ type CapabilityRef struct {
 	TenantScoped    bool   `json:"tenant_scoped"`
 }
 
+// capabilityReference is the single canonical mapping from a Release
+// contract to its advertised digest and schema references. The Publisher and
+// Guard verifier must use identical serialization to prevent authority drift.
+func capabilityReference(cap CapabilityContract) (CapabilityRef, error) {
+	contract, err := json.Marshal(cap)
+	if err != nil {
+		return CapabilityRef{}, err
+	}
+	return CapabilityRef{
+		ID: cap.ID, Version: cap.Version, ContractSHA256: sha256Hex(contract),
+		InputSchemaRef: "sha256:" + sha256Hex(cap.InputSchema), OutputSchemaRef: "sha256:" + sha256Hex(cap.OutputSchema),
+		EffectClass: cap.EffectClass, Idempotency: cap.Idempotency, TenantScoped: cap.TenantScoped,
+	}, nil
+}
+
 type SnapshotRef struct {
 	ID             string    `json:"id"`
 	Version        string    `json:"version"`
@@ -284,15 +299,11 @@ func (p *Publisher) Publish(a Snapshot, input []byte, now time.Time) (SignedPubl
 	}
 	refs := make([]CapabilityRef, 0, len(c.Capabilities))
 	for _, cap := range c.Capabilities {
-		contract, err := json.Marshal(cap)
+		ref, err := capabilityReference(cap)
 		if err != nil {
 			return empty, ErrPublicationUnavailable
 		}
-		refs = append(refs, CapabilityRef{
-			ID: cap.ID, Version: cap.Version, ContractSHA256: sha256Hex(contract),
-			InputSchemaRef: "sha256:" + sha256Hex(cap.InputSchema), OutputSchemaRef: "sha256:" + sha256Hex(cap.OutputSchema),
-			EffectClass: cap.EffectClass, Idempotency: cap.Idempotency, TenantScoped: cap.TenantScoped,
-		})
+		refs = append(refs, ref)
 	}
 	contextBytes, err := json.Marshal(context)
 	if err != nil {

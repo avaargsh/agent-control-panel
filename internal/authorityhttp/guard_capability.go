@@ -58,6 +58,36 @@ func (q GuardCapabilityRequest) Validate() error {
 	return nil
 }
 
+// publishedGuardBindingsIntact re-derives all capability references from
+// the immutable release bytes and binds the context to its exact signed
+// bytes. This is defense in depth: the HTTP handler must still freshly read
+// ACP admission/catalog authority, publish, and authenticate the Guard peer.
+// It is NOT an independent grant, Permit or revocation-safe PEP check.
+func publishedGuardBindingsIntact(p Publication) bool {
+	contextBytes, err := json.Marshal(p.Context)
+	if err != nil || !bytes.Equal(contextBytes, p.ContextContent) ||
+		p.Authority.ConfigDigest != "sha256:"+sha256Hex(p.CapabilityContent) {
+		return false
+	}
+	config, err := decodeRelease(p.CapabilityContent)
+	if err != nil || config.SchemaVersion != "acp.release-publication.v1" ||
+		config.TenantID != p.Authority.TenantID ||
+		config.ProjectID != p.Authority.ProjectID ||
+		config.AgentID != p.Authority.AgentID ||
+		config.AgentReleaseID != p.Authority.AgentReleaseID ||
+		config.PolicyRevision != p.Authority.PolicyRevision ||
+		len(config.Capabilities) != len(p.Capabilities) {
+		return false
+	}
+	for i, contract := range config.Capabilities {
+		expected, err := capabilityReference(contract)
+		if err != nil || p.Capabilities[i] != expected {
+			return false
+		}
+	}
+	return true
+}
+
 // MatchGuardCapability only compares to ACP's *freshly constructed* signed
 // publication. The handler must first resolve the authentic original
 // admission and current release bytes; this pure helper is not authority.
@@ -70,7 +100,8 @@ func MatchGuardCapability(p Publication, q GuardCapabilityRequest) (GuardCapabil
 		a.SessionID != q.SessionID || a.PolicyRevision == "" ||
 		p.Context.Authority != a || p.Context.Service != q.ResourceRef ||
 		p.CapabilitySnapshot.SHA256 != sha256Hex(p.CapabilityContent) ||
-		p.ContextSnapshot.SHA256 != sha256Hex(p.ContextContent) {
+		p.ContextSnapshot.SHA256 != sha256Hex(p.ContextContent) ||
+		!publishedGuardBindingsIntact(p) {
 		return empty, ErrGuardCapabilityDenied
 	}
 	var matched *CapabilityRef
