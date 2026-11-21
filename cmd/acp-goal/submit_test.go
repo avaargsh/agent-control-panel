@@ -2,10 +2,10 @@ package main
 
 import (
 	"bytes"
-	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -46,7 +46,8 @@ func submitFixture(t *testing.T, handler http.Handler) (url, proposal, tokenFile
 func TestSubmitCLIOverTLSWithExactBoundReceipt(t *testing.T) {
 	observed := 0
 	created := true
-	url, proposal, tokenFile, caFile, closeServer := submitFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var proposal string
+	url, preparedJSON, tokenFile, caFile, closeServer := submitFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		observed++
 		if r.TLS == nil || r.URL.Path != "/api/v1/goals:submit" || r.Method != http.MethodPost ||
 			r.Header.Get("Authorization") != "Bearer opaque-test-token" ||
@@ -55,8 +56,8 @@ func TestSubmitCLIOverTLSWithExactBoundReceipt(t *testing.T) {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		body := make([]byte, len(proposal))
-		if _, err := r.Body.Read(body); err != nil && err.Error() != "EOF" {
+		body, err := io.ReadAll(io.LimitReader(r.Body, issuegoal.MaxPreparedBytes+1))
+		if err != nil {
 			t.Error(err)
 		}
 		if string(body) != proposal {
@@ -79,6 +80,7 @@ func TestSubmitCLIOverTLSWithExactBoundReceipt(t *testing.T) {
 			"created":        created,
 		})
 	}))
+	proposal = preparedJSON
 	defer closeServer()
 	for _, wantCreated := range []bool{true, false} {
 		created = wantCreated
@@ -196,5 +198,4 @@ func TestSubmitCLIRequiresTrustedTLS(t *testing.T) {
 		strings.NewReader(proposal), &out, &diagnostic); err == nil || out.Len() != 0 {
 		t.Fatal("untrusted TLS certificate accepted")
 	}
-	_ = x509.ExtKeyUsageServerAuth
 }
