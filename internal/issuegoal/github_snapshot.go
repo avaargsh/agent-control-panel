@@ -60,8 +60,8 @@ type PublicIssueReader struct {
 func NewPublicIssueReader() *PublicIssueReader {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	return &PublicIssueReader{client: &http.Client{
-		Timeout: 10 * time.Second,
-		Transport: transport,
+		Timeout:       10 * time.Second,
+		Transport:     transport,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}}
 }
