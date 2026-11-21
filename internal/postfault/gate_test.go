@@ -31,7 +31,7 @@ func fixtureRecoveryBundle(t *testing.T) (Bundle, map[string]ed25519.PublicKey, 
 		for _, phase := range []string{"before_fault", "after_recovery"} {
 			report := Observation{
 				Schema: ObservationVersion, Authority: authority, Phase: phase,
-				Subject: subject, ObservedAt: faultAt.Add(-time.Second),
+				Subject: subject, FaultID: bundle.Fault.ID, ObservedAt: faultAt.Add(-time.Second),
 			}
 			if phase == "after_recovery" { report.ObservedAt = faultAt.Add(time.Second) }
 			switch authority {
@@ -133,6 +133,9 @@ func TestPostfaultMissingOrForgedAuthorityCannotPass(t *testing.T) {
 		}},
 		{"future_observation", func(t *testing.T, b *Bundle, _ map[string]ed25519.PublicKey, signers map[string]ed25519.PrivateKey) {
 			mutateReport(t, b, signers, "guard", "after_recovery", func(o *Observation) { o.ObservedAt = o.ObservedAt.Add(10*time.Minute) })
+		}},
+		{"forged_fault_id", func(t *testing.T, b *Bundle, _ map[string]ed25519.PublicKey, signers map[string]ed25519.PrivateKey) {
+			mutateReport(t, b, signers, "guard", "after_recovery", func(o *Observation) { o.FaultID = "different-fault" })
 		}},
 		{"replayed_pre_fault_timestamp", func(t *testing.T, b *Bundle, _ map[string]ed25519.PublicKey, signers map[string]ed25519.PrivateKey) {
 			mutateReport(t, b, signers, "guard", "after_recovery", func(o *Observation) { o.ObservedAt = b.Fault.At.Add(-time.Second) })
