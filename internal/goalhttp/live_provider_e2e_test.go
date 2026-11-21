@@ -238,6 +238,15 @@ func TestRealGoalHTTPKeycloakGitHubPostgres(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	if os.Getenv("ACP_REAL_GOAL_PROCESS") == "1" {
+		runLiveGoalProcessCLI(t, ctx, liveGoalProcessInput{
+			DSN: dsn, Schema: schema, Issuer: issuer, IssuerCA: issuerCA,
+			ResourceSecret: clientSecret, Bearer: tokenReply.AccessToken,
+			Manifest: manifest, Prepared: preparedJSON,
+			RequestDigest: proposal.RequestDigest, Pool: pool,
+		})
+		return
+	}
 	factory, err := NewCatalogGoalServiceFactory(runpg.New(pool), auth)
 	if err != nil {
 		t.Fatal(err)
