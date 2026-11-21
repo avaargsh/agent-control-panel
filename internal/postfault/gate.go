@@ -84,6 +84,7 @@ type SandboxObservation struct {
 type CommandObservation struct {
 	CommandID         string `json:"command_id"`
 	AttemptID         string `json:"attempt_id"`
+	ProviderCommandUID string `json:"provider_command_uid"`
 	JournalVersion    uint64 `json:"journal_version"`
 	State             string `json:"state"`
 	DispatchCount     uint64 `json:"dispatch_count"`
@@ -95,8 +96,9 @@ type CommandObservation struct {
 
 type GuardObservation struct {
 	PermitID     string `json:"permit_id"`
-	PermitEpoch  uint64 `json:"permit_epoch"`
-	Status       string `json:"status"`
+	PermitEpoch  uint64    `json:"permit_epoch"`
+	PermitExpiresAt time.Time `json:"permit_expires_at"`
+	Status       string    `json:"status"`
 	ActionDigest string `json:"action_digest"`
 	Revalidated  bool   `json:"revalidated"`
 }
@@ -258,10 +260,10 @@ func Verify(b Bundle, keys map[string]ed25519.PublicKey, now time.Time) error {
 			return failure("missing post-fault authority")
 		}
 	}
-	return checkContinuity(observed)
+	return checkContinuity(observed, b.Fault.At, now)
 }
 
-func checkContinuity(observed map[string]Observation) error {
+func checkContinuity(observed map[string]Observation, faultAt, now time.Time) error {
 	rb := observed["runtime/before_fault"].Runtime
 	ra := observed["runtime/after_recovery"].Runtime
 	if rb.Status != "RUNNING" || ra.Status != "RUNNING" || !ra.Recovered ||
@@ -288,10 +290,11 @@ func checkContinuity(observed map[string]Observation) error {
 	}
 	cb := observed["agentd/before_fault"].Command
 	ca := observed["agentd/after_recovery"].Command
-	if !safeID(cb.CommandID) || !safeID(cb.AttemptID) ||
+	if !safeID(cb.CommandID) || !safeID(cb.AttemptID) || !safeID(cb.ProviderCommandUID) ||
 		cb.State != "UNKNOWN" || cb.DispatchCount != 1 || cb.JournalVersion == 0 ||
 		cb.Replayed || ca.Replayed || ca.CommandID != cb.CommandID ||
-		ca.AttemptID != cb.AttemptID || ca.DispatchCount != 1 ||
+		ca.AttemptID != cb.AttemptID || ca.ProviderCommandUID != cb.ProviderCommandUID ||
+		ca.DispatchCount != 1 ||
 		ca.JournalVersion <= cb.JournalVersion || ca.InspectCount == 0 ||
 		ca.Source != "agentd.inspect" || !validDigest(ca.ExitReceiptDigest) ||
 		(ca.State != "EXITED" && ca.State != "FAILED_CONFIRMED") {
@@ -300,6 +303,9 @@ func checkContinuity(observed map[string]Observation) error {
 	gb := observed["guard/before_fault"].Guard
 	ga := observed["guard/after_recovery"].Guard
 	if !safeID(gb.PermitID) || gb.PermitEpoch == 0 ||
+		gb.PermitExpiresAt.IsZero() || !gb.PermitExpiresAt.After(faultAt) ||
+		!ga.PermitExpiresAt.Equal(gb.PermitExpiresAt) ||
+		!ga.PermitExpiresAt.After(now) ||
 		!validDigest(gb.ActionDigest) ||
 		gb.Status != "VALID" || ga.Status != "VALID" ||
 		!ga.Revalidated || ga.PermitID != gb.PermitID ||
