@@ -130,10 +130,19 @@ func readConfig(getenv func(string) string) (config, error) {
 	if c.policy.MaxBudget.MaxSandboxSeconds > c.policy.MaxBudget.MaxRuntimeSeconds {
 		return config{}, errors.New("sandbox budget cannot exceed runtime budget")
 	}
+	environment := getenv("ACP_GOAL_ENV")
+	switch environment {
+	case "", "production", "development", "test":
+	default:
+		return config{}, errors.New("ACP_GOAL_ENV must be production, development or test")
+	}
 	switch getenv("ACP_GOAL_ALLOW_UNPROTECTED_TEST_BRANCH") {
 	case "":
 		c.policy.RequireProtectedBranch = true
 	case "true":
+		if environment != "development" && environment != "test" {
+			return config{}, errors.New("unprotected branch override is restricted to development or test")
+		}
 		c.policy.RequireProtectedBranch = false
 	default:
 		return config{}, errors.New("unprotected test branch requires an explicit true override")
@@ -142,9 +151,9 @@ func readConfig(getenv func(string) string) (config, error) {
 }
 
 // Read secret bytes only from owner-private regular files; never log the
-// content. This deliberately refuses convenient world-readable config files.
+// content. Lstat rejects symlinks, and SameFile closes the stat/open race.
 func readSecretFile(path string) (string, error) {
-	info, err := os.Stat(path)
+	info, err := os.Lstat(path)
 	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 ||
 		info.Size() == 0 || info.Size() > 1<<16 {
 		return "", errors.New("required private credential file is unavailable")
@@ -154,6 +163,11 @@ func readSecretFile(path string) (string, error) {
 		return "", errors.New("required private credential file is unavailable")
 	}
 	defer file.Close()
+	openedInfo, err := file.Stat()
+	if err != nil || !openedInfo.Mode().IsRegular() || !os.SameFile(info, openedInfo) ||
+		openedInfo.Mode().Perm()&0077 != 0 {
+		return "", errors.New("required private credential file is unavailable")
+	}
 	data, err := io.ReadAll(io.LimitReader(file, 1<<16+1))
 	if err != nil || len(data) == 0 || len(data) > 1<<16 {
 		return "", errors.New("required credential bytes are unavailable")
@@ -165,10 +179,45 @@ func readSecretFile(path string) (string, error) {
 	return value, nil
 }
 
+func loadServerCertificate(certFile, keyFile, host string, now time.Time) (tls.Certificate, error) {
+	certificate, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil || len(certificate.Certificate) == 0 {
+		return tls.Certificate{}, errors.New("Goal API TLS key pair unavailable")
+	}
+	leaf, err := x509.ParseCertificate(certificate.Certificate[0])
+	if err != nil || now.Before(leaf.NotBefore) || !now.Before(leaf.NotAfter) {
+		return tls.Certificate{}, errors.New("Goal API TLS certificate is outside its validity period")
+	}
+	if err := leaf.VerifyHostname(host); err != nil {
+		return tls.Certificate{}, errors.New("Goal API TLS certificate identity does not match listener")
+	}
+	if leaf.KeyUsage != 0 && leaf.KeyUsage&x509.KeyUsageDigitalSignature == 0 {
+		return tls.Certificate{}, errors.New("Goal API TLS certificate cannot sign handshake messages")
+	}
+	if len(leaf.ExtKeyUsage) > 0 {
+		serverAuth := false
+		for _, usage := range leaf.ExtKeyUsage {
+			if usage == x509.ExtKeyUsageServerAuth || usage == x509.ExtKeyUsageAny {
+				serverAuth = true
+				break
+			}
+		}
+		if !serverAuth {
+			return tls.Certificate{}, errors.New("Goal API TLS certificate is not valid for server authentication")
+		}
+	}
+	certificate.Leaf = leaf
+	return certificate, nil
+}
+
 func serve(ctx context.Context, c config) error {
-	certificate, err := tls.LoadX509KeyPair(c.certFile, c.keyFile)
+	host, _, err := net.SplitHostPort(c.listenAddress)
 	if err != nil {
-		return errors.New("Goal API TLS key pair unavailable")
+		return errors.New("Goal API listener address is invalid")
+	}
+	certificate, err := loadServerCertificate(c.certFile, c.keyFile, host, time.Now())
+	if err != nil {
+		return err
 	}
 	caPEM, err := os.ReadFile(c.oauthCAFile)
 	if err != nil {
