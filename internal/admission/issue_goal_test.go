@@ -121,9 +121,9 @@ func TestAdmitPreparedIssueGoalRejectsTypedNilDependencies(t *testing.T) {
 	var nilResolver resolverFunc
 	validSource := sourceVerifierFunc(func(context.Context, Target, issuegoal.Input) error { return nil })
 	cases := []struct {
-		name string
+		name    string
 		service *Service
-		source IssueGoalSourceVerifier
+		source  IssueGoalSourceVerifier
 	}{
 		{name: "typed nil source function", service: New(&inputCaptureStore{}, resolverFunc(func(context.Context, Request) (Grant, error) {
 			t.Fatal("nil source reached resolver")
