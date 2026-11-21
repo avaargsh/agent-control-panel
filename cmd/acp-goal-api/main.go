@@ -5,7 +5,9 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
 	"crypto/tls"
+	"crypto/sha256"
 	"crypto/x509"
 	"errors"
 	"fmt"
@@ -24,6 +26,7 @@ import (
 	"github.com/avaargsh/agent-control-panel/internal/admission"
 	"github.com/avaargsh/agent-control-panel/internal/goalhttp"
 	"github.com/avaargsh/agent-control-panel/internal/issuegoal"
+	"github.com/avaargsh/agent-control-panel/migrations"
 	runpg "github.com/avaargsh/agent-control-panel/internal/runintent/postgres"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -227,12 +230,41 @@ func verifyAuthoritySchema(ctx context.Context, pool *pgxpool.Pool) error {
 		to_regclass('admission_sessions') IS NOT NULL`).Scan(&relationsReady); err != nil || !relationsReady {
 		return errors.New("ACP authority schema missing")
 	}
-	var latestAdmissionMigration bool
-	if err := pool.QueryRow(ctx, `SELECT EXISTS (
-		SELECT 1 FROM schema_migrations
-		WHERE version = 12 AND name = '0012_run_intent_admission_origin.sql'
-	)`).Scan(&latestAdmissionMigration); err != nil || !latestAdmissionMigration {
+	entries, err := migrations.FS.ReadDir(".")
+	if err != nil {
+		return errors.New("ACP migration manifest unavailable")
+	}
+	expectedMigrations := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".sql") {
+			expectedMigrations = append(expectedMigrations, entry.Name())
+		}
+	}
+	var appliedCount int
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM schema_migrations").Scan(&appliedCount); err != nil ||
+		appliedCount != len(expectedMigrations) || len(expectedMigrations) == 0 {
 		return errors.New("ACP authority schema migration incomplete")
+	}
+	for _, name := range expectedMigrations {
+		prefix, _, ok := strings.Cut(name, "_")
+		if !ok {
+			return errors.New("ACP migration manifest invalid")
+		}
+		version, err := strconv.ParseInt(prefix, 10, 64)
+		if err != nil {
+			return errors.New("ACP migration manifest invalid")
+		}
+		sql, err := migrations.FS.ReadFile(name)
+		if err != nil {
+			return errors.New("ACP migration manifest unavailable")
+		}
+		sum := sha256.Sum256(sql)
+		expectedChecksum := hex.EncodeToString(sum[:])
+		var actualChecksum string
+		if err := pool.QueryRow(ctx, "SELECT checksum FROM schema_migrations WHERE version=$1 AND name=$2", version, name).Scan(&actualChecksum); err != nil ||
+			actualChecksum != expectedChecksum {
+			return errors.New("ACP authority schema migration checksum mismatch")
+		}
 	}
 	return nil
 }
