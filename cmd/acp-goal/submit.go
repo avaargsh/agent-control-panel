@@ -104,13 +104,16 @@ func submit(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		// A server-side failure or request timeout can be returned after
-		// PostgreSQL committed the intent/outbox. Do not call that a
-		// definite refusal or silently repeat the POST.
-		if resp.StatusCode == http.StatusRequestTimeout || resp.StatusCode >= http.StatusInternalServerError {
+		// Only documented, explicit client denials can be classified as
+		// rejected. Rate limits, redirects and unrecognized responses may
+		// arrive after an intermediary forwarded a committed POST. Never
+		// follow a redirect or automatically retry an uncertain request.
+		switch resp.StatusCode {
+		case http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusConflict:
+			return fmt.Errorf("GoalSubmit not accepted (HTTP %d); inspect ACP before retrying", resp.StatusCode)
+		default:
 			return fmt.Errorf("GoalSubmit returned HTTP %d; outcome unknown, inspect ACP before retrying", resp.StatusCode)
 		}
-		return fmt.Errorf("GoalSubmit not accepted (HTTP %d); inspect ACP before retrying", resp.StatusCode)
 	}
 	media, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
 	if err != nil || media != "application/json" || !strings.Contains(resp.Header.Get("Cache-Control"), "no-store") {
