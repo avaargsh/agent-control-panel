@@ -137,12 +137,13 @@ jobs:
         run: |
           set -euo pipefail
           bundle="$RUNNER_TEMP/acp-postfault/proof.json"
+          expected="$RUNNER_TEMP/acp-postfault/expected.json"
           trust="$RUNNER_TEMP/acp-postfault/trust"
-          if [ ! -s "$bundle" ] || [ ! -d "$trust" ]; then
+          if [ ! -s "$bundle" ] || [ ! -s "$expected" ] || [ ! -d "$trust" ]; then
             echo "::error::EXTENDED GOLDEN PATH BLOCKED: no real, independently signed Sandbox/AgentD/Guard/Runtime post-fault proof for this Run. Workflow/Decision recovery alone is not a complete release gate."
             exit 1
           fi
-          "$RUNNER_TEMP/acp-postfault-verify" --bundle "$bundle" --trust-dir "$trust"
+          "$RUNNER_TEMP/acp-postfault-verify" --bundle "$bundle" --expected "$expected" --trust-dir "$trust"
 
 
 # One pinned Runtime candidate provides v12 API and business driver.
