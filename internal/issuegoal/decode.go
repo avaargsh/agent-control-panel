@@ -25,6 +25,9 @@ func DecodePrepared(wire []byte) (Prepared, Input, []byte, error) {
 	if _, err := runintent.ExecutionInputDigest(probe, wire); err != nil {
 		return Prepared{}, Input{}, nil, fmt.Errorf("%w: ambiguous proposal JSON", ErrInvalidGoal)
 	}
+	if err := rejectCaseFoldKeyCollisions(wire); err != nil {
+		return Prepared{}, Input{}, nil, err
+	}
 	var p Prepared
 	dec := json.NewDecoder(bytes.NewReader(wire))
 	dec.DisallowUnknownFields()
