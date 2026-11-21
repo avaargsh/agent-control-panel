@@ -30,6 +30,7 @@ type pausingGitHubReader struct {
 	fixtureGitHubReader
 	arrived chan struct{}
 	release chan struct{}
+	failOnce atomic.Bool // simulated upstream deadline, not an actual GitHub response
 }
 
 func (r *pausingGitHubReader) Read(ctx context.Context, issueURL string) (issuegoal.GitHubIssueSnapshot, error) {
@@ -41,15 +42,18 @@ func (r *pausingGitHubReader) Read(ctx context.Context, issueURL string) (issueg
 	case <-ctx.Done():
 		return issuegoal.GitHubIssueSnapshot{}, ctx.Err()
 	case <-r.release:
+		if r.failOnce.Swap(false) {
+			return issuegoal.GitHubIssueSnapshot{}, context.DeadlineExceeded
+		}
 		return r.fixtureGitHubReader.Read(ctx, issueURL)
 	}
 }
 
-func TestGoalHTTPAuthorityRevokedDuringGitHubReadLeavesNoIntentOrOutbox(t *testing.T) {
+func TestGoalHTTPInFlightRevocationOrSourceDeadlinePreservesAtomicAdmission(t *testing.T) {
 	if os.Getenv("PGTEST_DSN") == "" {
 		t.Skip("requires real disposable PostgreSQL with PGTEST_DSN")
 	}
-	for _, mode := range []string{"catalog_role_revoked", "oauth_token_revoked"} {
+	for _, mode := range []string{"catalog_role_revoked", "oauth_token_revoked", "source_timeout_then_retry"} {
 		t.Run(mode, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 			defer cancel()
@@ -212,6 +216,8 @@ func TestGoalHTTPAuthorityRevokedDuringGitHubReadLeavesNoIntentOrOutbox(t *testi
 				}
 			case "oauth_token_revoked":
 				tokenActive.Store(false)
+			case "source_timeout_then_retry":
+				reader.failOnce.Store(true)
 			}
 			close(reader.release)
 			var actual response
@@ -226,11 +232,18 @@ func TestGoalHTTPAuthorityRevokedDuringGitHubReadLeavesNoIntentOrOutbox(t *testi
 			want := http.StatusForbidden
 			if mode == "oauth_token_revoked" {
 				want = http.StatusUnauthorized
+			} else if mode == "source_timeout_then_retry" {
+				want = http.StatusServiceUnavailable
 			}
 			if actual.status != want || !bytes.Contains(actual.body, []byte("goal_not_admitted")) {
 				t.Fatalf("revocation escaped second check: HTTP %d, body %s, want %d", actual.status, actual.body, want)
 			}
-			if introspections.Load() != 2 || reader.issueReads != 1 || reader.baselineReads != 1 {
+			if mode == "source_timeout_then_retry" {
+				if introspections.Load() != 1 || reader.issueReads != 0 || reader.baselineReads != 0 {
+					t.Fatalf("source timeout must stop before postflight and persist: introspections=%d issue=%d baseline=%d",
+						introspections.Load(), reader.issueReads, reader.baselineReads)
+				}
+			} else if introspections.Load() != 2 || reader.issueReads != 1 || reader.baselineReads != 1 {
 				t.Fatalf("expected preflight + post-read identity checks and one source read: introspections=%d issue=%d baselines=%d",
 					introspections.Load(), reader.issueReads, reader.baselineReads)
 			}
@@ -240,7 +253,51 @@ func TestGoalHTTPAuthorityRevokedDuringGitHubReadLeavesNoIntentOrOutbox(t *testi
 				t.Fatal(err)
 			}
 			if intents != 0 || outbox != 0 {
-				t.Fatalf("revoked in-flight request created effects: intents=%d outbox=%d", intents, outbox)
+				t.Fatalf("denied in-flight request created effects: intents=%d outbox=%d", intents, outbox)
+			}
+			if mode == "source_timeout_then_retry" {
+				// The upstream deadline was a failed source observation, NOT an
+				// accepted RunIntent. The very same immutable input and key may
+				// be explicitly retried once the source responds again.
+				send := func() (int, map[string]any) {
+					t.Helper()
+					req, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+SubmitPath, bytes.NewReader(preparedGoal))
+					if err != nil {
+						t.Fatal(err)
+					}
+					req.Header.Set("Content-Type", "application/json")
+					req.Header.Set("Authorization", "Bearer valid-bearer-for-test")
+					resp, err := server.Client().Do(req)
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer resp.Body.Close()
+					var receipt map[string]any
+					if err := json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&receipt); err != nil {
+						t.Fatal(err)
+					}
+					return resp.StatusCode, receipt
+				}
+				createdStatus, createdReceipt := send()
+				if createdStatus != http.StatusCreated || createdReceipt["status"] != "PENDING" || createdReceipt["created"] != true {
+					t.Fatalf("explicit recovery did not create a pending intent: HTTP %d %#v", createdStatus, createdReceipt)
+				}
+				id, ok := createdReceipt["run_intent_id"].(string)
+				if !ok || id == "" {
+					t.Fatalf("recovery missing RunIntent ID: %#v", createdReceipt)
+				}
+				replayStatus, replayReceipt := send()
+				if replayStatus != http.StatusOK || replayReceipt["created"] != false || replayReceipt["run_intent_id"] != id {
+					t.Fatalf("exact idempotent replay duplicated recovery: HTTP %d %#v", replayStatus, replayReceipt)
+				}
+				if err := pool.QueryRow(ctx,
+					"SELECT (SELECT count(*) FROM run_intents), (SELECT count(*) FROM outbox_events)").Scan(&intents, &outbox); err != nil {
+					t.Fatal(err)
+				}
+				if intents != 1 || outbox != 1 || introspections.Load() != 5 || reader.issueReads != 2 || reader.baselineReads != 2 {
+					t.Fatalf("retry/replay violated durable idempotency: intents=%d outbox=%d introspections=%d issue=%d baseline=%d",
+						intents, outbox, introspections.Load(), reader.issueReads, reader.baselineReads)
+				}
 			}
 		})
 	}
