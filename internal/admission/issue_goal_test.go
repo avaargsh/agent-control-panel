@@ -71,10 +71,10 @@ func TestAdmitPreparedIssueGoalFailsClosedBeforeWriting(t *testing.T) {
 	wire := preparedGoalWire(t)
 	denied := errors.New("github source unavailable")
 	for _, tc := range []struct {
-		name          string
-		wire          []byte
-		verify        sourceVerifierFunc
-		resolverError error
+		name             string
+		wire             []byte
+		verify           sourceVerifierFunc
+		resolverError    error
 		preflightAllowed bool
 	}{
 		{name: "no source verifier", wire: wire},
@@ -150,7 +150,6 @@ func TestAdmitPreparedIssueGoalRejectsTypedNilDependencies(t *testing.T) {
 		})
 	}
 }
-
 
 // No HTTP source lookup should occur until the originating OAuth identity and
 // catalog selector have been checked at least once. Otherwise unauthenticated
