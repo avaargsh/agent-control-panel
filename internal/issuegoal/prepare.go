@@ -92,6 +92,9 @@ func Prepare(raw []byte) (Prepared, error) {
 	if _, err := runintent.ExecutionInputDigest(probe, raw); err != nil {
 		return Prepared{}, fmt.Errorf("%w: invalid or ambiguous JSON", ErrInvalidGoal)
 	}
+	if err := rejectCaseFoldKeyCollisions(raw); err != nil {
+		return Prepared{}, err
+	}
 	var m Manifest
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
