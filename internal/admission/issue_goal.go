@@ -60,16 +60,38 @@ func (s *Service) AdmitPreparedIssueGoal(ctx context.Context, proposalJSON []byt
 		ReleaseID: proposal.Target.ReleaseID,
 		SessionID: proposal.Target.SessionID,
 	}
+	// Probe the trusted OAuth/CatalogPolicy boundary BEFORE allowing a
+	// caller-provided Issue URL to trigger outbound provider requests.
+	// DecodePrepared already recomputed and bound the exact input digest;
+	// only this internal package may assert inputBound after that check.
+	request := Request{
+		Target: target, IdempotencyKey: proposal.IdempotencyKey,
+		RequestDigest: proposal.RequestDigest, inputBound: true,
+	}
+	preflight, err := s.resolver.Resolve(ctx, request)
+	if err != nil {
+		return runintent.Intent{}, false, err
+	}
+	if preflight.Target != request.Target || preflight.RequestDigest != request.RequestDigest {
+		return runintent.Intent{}, false, ErrInvalidGrant
+	}
+	if err := preflight.Snapshot.ValidateForProject(target.ProjectID); err != nil {
+		return runintent.Intent{}, false, err
+	}
+	if err := ctx.Err(); err != nil {
+		return runintent.Intent{}, false, err
+	}
 	// The source verifier owns fresh external observations; the caller
 	// cannot inject a precomputed success or downgrade source failures.
 	if err := sources.VerifyIssueGoal(ctx, target, input); err != nil {
 		return runintent.Intent{}, false, fmt.Errorf("%w: %w", ErrIssueGoalSourceUnverified, err)
 	}
+	// AdmitWithInput intentionally repeats authentication and authorization
+	// after provider IO. The PostgreSQL CreateWithCatalog path still
+	// rechecks current catalog authority under row locks at write time.
+	// Never reuse a preflight Grant as persistent authority.
 	if err := ctx.Err(); err != nil {
 		return runintent.Intent{}, false, err
 	}
-	return s.AdmitWithInput(ctx, Request{
-		Target: target, IdempotencyKey: proposal.IdempotencyKey,
-		RequestDigest: proposal.RequestDigest,
-	}, exact)
+	return s.AdmitWithInput(ctx, request, exact)
 }
