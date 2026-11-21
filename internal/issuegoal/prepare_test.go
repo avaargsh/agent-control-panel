@@ -50,6 +50,7 @@ func TestPreparePinsExactInputForRunIntent(t *testing.T) {
 
 func TestPrepareRejectsUnsafeOrAmbiguousGoal(t *testing.T) {
 	cases := map[string]string{
+		"casefold duplicate manifest field": strings.Replace(validManifest, `"issue_url":`, `"Issue_URL":"https://github.com/example/repository/issues/99","issue_url":`, 1),
 		"unknown manifest field":   strings.Replace(validManifest, `"schema_version":`, `"unexpected":1,"schema_version":`, 1),
 		"duplicate manifest field": strings.Replace(validManifest, `"issue_url":`, `"issue_url":"https://github.com/example/repository/issues/99","issue_url":`, 1),
 		"unsupported version":      strings.Replace(validManifest, `acp.issue-goal/v1`, `acp.issue-goal/v2`, 1),
