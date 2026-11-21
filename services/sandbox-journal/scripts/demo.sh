@@ -22,7 +22,15 @@ fi
 # A unique Compose project and immediate down -v keep test data isolated.
 project="acp-sandbox-demo-$$"
 compose=(docker compose -f "$root/compose.demo.yaml" -p "$project")
-cleanup() { "${compose[@]}" down --volumes --remove-orphans >/dev/null 2>&1 || true; }
+cleanup() {
+  original=$?
+  trap - EXIT
+  if ! "${compose[@]}" down --volumes --remove-orphans >/dev/null 2>&1; then
+    echo "SANDBOX_DEMO_CLEANUP_FAILED: inspect disposable Compose resources for project $project" >&2
+    if (( original == 0 )); then original=4; fi
+  fi
+  exit "$original"
+}
 trap cleanup EXIT
 
 echo "Starting disposable, loopback-only PostgreSQL demo (never production)..."
