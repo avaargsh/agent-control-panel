@@ -117,7 +117,6 @@ func TestServerFailsBeforeBindingWithMissingTLSFiles(t *testing.T) {
 	}
 }
 
-
 func TestUnprotectedBranchOverrideRequiresDevelopmentEnvironment(t *testing.T) {
 	env := completeEnv()
 	env["ACP_GOAL_ALLOW_UNPROTECTED_TEST_BRANCH"] = "true"
@@ -159,13 +158,13 @@ func writeTestServerKeyPair(t *testing.T, directory string, notBefore, notAfter 
 	}
 	template := &x509.Certificate{
 		SerialNumber: big.NewInt(1),
-		Subject: pkix.Name{CommonName: "ACP test server"},
-		NotBefore: notBefore,
-		NotAfter: notAfter,
-		KeyUsage: x509.KeyUsageDigitalSignature,
-		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		DNSNames: dnsNames,
-		IPAddresses: ips,
+		Subject:      pkix.Name{CommonName: "ACP test server"},
+		NotBefore:    notBefore,
+		NotAfter:     notAfter,
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		DNSNames:     dnsNames,
+		IPAddresses:  ips,
 	}
 	der, err := x509.CreateCertificate(rand.Reader, template, template, &privateKey.PublicKey, privateKey)
 	if err != nil {
@@ -189,12 +188,12 @@ func writeTestServerKeyPair(t *testing.T, directory string, notBefore, notAfter 
 func TestLoadServerCertificateRequiresCurrentMatchingSAN(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	tests := []struct {
-		name string
+		name      string
 		notBefore time.Time
-		notAfter time.Time
-		dnsNames []string
-		ips []net.IP
-		wantErr bool
+		notAfter  time.Time
+		dnsNames  []string
+		ips       []net.IP
+		wantErr   bool
 	}{
 		{name: "matching loopback IP", notBefore: now.Add(-time.Hour), notAfter: now.Add(time.Hour), ips: []net.IP{net.ParseIP("127.0.0.1")}},
 		{name: "wrong DNS identity", notBefore: now.Add(-time.Hour), notAfter: now.Add(time.Hour), dnsNames: []string{"localhost"}, wantErr: true},
