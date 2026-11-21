@@ -87,6 +87,22 @@ gh run view "$RUN_ID" --log
 
 `scripts/test-real-oidc-admission.sh` 支持 `oidc`，但**不是不依赖环境的一键安装器**：调用前必须有本地 Docker daemon、OpenSSL、Python3、curl、Go 1.27.4、专用的临时 PostgreSQL 和 `PGTEST_DSN`，本地 `127.0.0.1:8443` 端口不可冲突。脚本会启动/清理临时 Keycloak，不应指向任何现有或生产 issuer。完整跨服务 golden-path 还需要 workflow 指定的多个已编译二进制、隔离数据库及不可变源码 pins；优先使用上面的 Actions 入口，不跳过这些条件。
 
+
+### 复现后进行 CI 元数据一致性检查
+
+从实际已完成的非生产 `workflow_dispatch` Run 导出 GitHub CLI 元数据，然后由本仓库的 fail-closed 检查器核验。它会拒绝错误 SHA、伪造仓库 URL、不属于 main 的 Run、缺少真实测试步骤、FAILED 或 SKIPPED 的步骤；**它不验证 JSON 文件的签名，不是独立的业务结果证明，也不授予受保护操作权限**。
+
+```bash
+# 从前面的 gh run list 中选择本次真实 Run；不要使用示例 ID。
+RUN_ID=123456789  # 替换为真实 GitHub Actions run ID
+EXPECTED_SHA="$(git rev-parse main)"  # 全长 SHA；必须与该 Run 的 headSha 完全一致
+gh run view "$RUN_ID" --json databaseId,url,workflowName,headSha,headBranch,event,status,conclusion,attempt,jobs > /tmp/acp-run.json
+python3 scripts/portfolio_ci_receipt.py --run-json /tmp/acp-run.json --expected-sha "$EXPECTED_SHA" --scenario golden
+# 如果核查的是 Live OIDC workflow，请将 --scenario 改为 oidc。
+```
+
+本地回归：`python3 -m unittest discover -s tests -p 'test_portfolio_ci_receipt.py' -v`。请同时查看该 Run 的原始日志、外部源代码固定 SHA、正负例断言和需要独立复核的授权边界；不要把 `CI_METADATA_CHECK_ONLY` 写成 `production accepted`。
+
 ## 面试回答（约 90 秒）
 
 > 我做的不是一个新的 LangGraph，而是企业 Agent 的控制与运行治理平台。ACP 负责 Agent 发布、Tenant/Project/Session、授权准入和 RunIntent，Temporal 所在的 Runtime 负责真正的 Run/Attempt/恢复，Decision 独立保存决策权威，受保护的写入必须经过 EngageGuard。设计重点是避免跨服务重复拥有状态，以及长任务超时后重复产生副作用。  
