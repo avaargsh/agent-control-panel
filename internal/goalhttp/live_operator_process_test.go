@@ -32,16 +32,16 @@ import (
 // invoking the HTTP handler/CLI inside the test runner. All authorities are
 // disposable except the read-only public GitHub source.
 type liveGoalProcessInput struct {
-	DSN string
-	Schema string
-	Issuer string
-	IssuerCA string
+	DSN            string
+	Schema         string
+	Issuer         string
+	IssuerCA       string
 	ResourceSecret string
-	Bearer string
-	Manifest issuegoal.Manifest
-	Prepared []byte
-	RequestDigest string
-	Pool *pgxpool.Pool
+	Bearer         string
+	Manifest       issuegoal.Manifest
+	Prepared       []byte
+	RequestDigest  string
+	Pool           *pgxpool.Pool
 }
 
 func runLiveGoalProcessCLI(t *testing.T, ctx context.Context, in liveGoalProcessInput) {
@@ -70,23 +70,29 @@ func runLiveGoalProcessCLI(t *testing.T, ctx context.Context, in liveGoalProcess
 	// Self-signed, ephemeral, serverAuth-only TLS identity with the *numeric*
 	// listener SAN. Both binaries must verify this certificate normally.
 	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	now := time.Now()
 	template := &x509.Certificate{
-		SerialNumber: big.NewInt(9801),
-		Subject: pkix.Name{CommonName: "disposable ACP Goal API"},
-		NotBefore: now.Add(-time.Minute),
-		NotAfter: now.Add(time.Hour),
-		KeyUsage: x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
-		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		IsCA: true,
+		SerialNumber:          big.NewInt(9801),
+		Subject:               pkix.Name{CommonName: "disposable ACP Goal API"},
+		NotBefore:             now.Add(-time.Minute),
+		NotAfter:              now.Add(time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		IsCA:                  true,
 		BasicConstraintsValid: true,
-		IPAddresses: []net.IP{net.ParseIP("127.0.0.1")},
+		IPAddresses:           []net.IP{net.ParseIP("127.0.0.1")},
 	}
 	der, err := x509.CreateCertificate(rand.Reader, template, template, &privateKey.PublicKey, privateKey)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	keyDER, err := x509.MarshalPKCS8PrivateKey(privateKey)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 	certFile := write("goal-server.pem", certPEM, 0600)
 	keyFile := write("goal-server.key", pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}), 0600)
@@ -98,7 +104,9 @@ func runLiveGoalProcessCLI(t *testing.T, ctx context.Context, in liveGoalProcess
 	// Each live test already migrated and owns exactly this disposable schema.
 	// The service process must connect to the same authority, not public.
 	parsed, err := url.Parse(in.DSN)
-	if err != nil { t.Fatal("disposable PostgreSQL DSN invalid") }
+	if err != nil {
+		t.Fatal("disposable PostgreSQL DSN invalid")
+	}
 	query := parsed.Query()
 	query.Set("search_path", in.Schema)
 	parsed.RawQuery = query.Encode()
@@ -110,12 +118,18 @@ func runLiveGoalProcessCLI(t *testing.T, ctx context.Context, in liveGoalProcess
 	dsnFile := write("postgres-dsn", []byte(processDSN+"\n"), 0600)
 
 	reserved, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	address := reserved.Addr().String()
-	if err := reserved.Close(); err != nil { t.Fatal(err) }
-	endpoint := "https://"+address+SubmitPath
+	if err := reserved.Close(); err != nil {
+		t.Fatal(err)
+	}
+	endpoint := "https://" + address + SubmitPath
 	roots := x509.NewCertPool()
-	if !roots.AppendCertsFromPEM(certPEM) { t.Fatal("disposable Goal API TLS CA unusable") }
+	if !roots.AppendCertsFromPEM(certPEM) {
+		t.Fatal("disposable Goal API TLS CA unusable")
+	}
 
 	command := exec.CommandContext(ctx, apiBin)
 	var apiStdout, apiStderr bytes.Buffer
@@ -142,11 +156,13 @@ func runLiveGoalProcessCLI(t *testing.T, ctx context.Context, in liveGoalProcess
 		"ACP_GOAL_GITHUB_REPOSITORY=avaargsh/agent-control-panel",
 		"ACP_GOAL_TARGET_BRANCH="+in.Manifest.TargetBranch,
 		"ACP_GOAL_RULES_DIGEST="+in.Manifest.AcceptanceRulesDigest,
-		"ACP_GOAL_MAX_TOKENS="+strconv.FormatInt(in.Manifest.Budget.MaxTokens,10),
-		"ACP_GOAL_MAX_RUNTIME_SECONDS="+strconv.FormatInt(in.Manifest.Budget.MaxRuntimeSeconds,10),
-		"ACP_GOAL_MAX_SANDBOX_SECONDS="+strconv.FormatInt(in.Manifest.Budget.MaxSandboxSeconds,10),
+		"ACP_GOAL_MAX_TOKENS="+strconv.FormatInt(in.Manifest.Budget.MaxTokens, 10),
+		"ACP_GOAL_MAX_RUNTIME_SECONDS="+strconv.FormatInt(in.Manifest.Budget.MaxRuntimeSeconds, 10),
+		"ACP_GOAL_MAX_SANDBOX_SECONDS="+strconv.FormatInt(in.Manifest.Budget.MaxSandboxSeconds, 10),
 	)
-	if err := command.Start(); err != nil { t.Fatalf("Goal API subprocess did not start: %v", err) }
+	if err := command.Start(); err != nil {
+		t.Fatalf("Goal API subprocess did not start: %v", err)
+	}
 	processExit := make(chan error, 1)
 	go func() { processExit <- command.Wait() }()
 	defer func() {
@@ -155,20 +171,24 @@ func runLiveGoalProcessCLI(t *testing.T, ctx context.Context, in liveGoalProcess
 		}
 		select {
 		case err := <-processExit:
-			if err != nil && ctx.Err() == nil { t.Errorf("Goal API process did not shut down cleanly: %v", err) }
-		case <-time.After(5*time.Second):
-			if command.Process != nil { _ = command.Process.Kill() }
+			if err != nil && ctx.Err() == nil {
+				t.Errorf("Goal API process did not shut down cleanly: %v", err)
+			}
+		case <-time.After(5 * time.Second):
+			if command.Process != nil {
+				_ = command.Process.Kill()
+			}
 			<-processExit
 			t.Error("Goal API process did not terminate within shutdown window")
 		}
 	}()
-	readyDeadline := time.NewTimer(10*time.Second)
+	readyDeadline := time.NewTimer(10 * time.Second)
 	defer readyDeadline.Stop()
-	poll := time.NewTicker(100*time.Millisecond)
+	poll := time.NewTicker(100 * time.Millisecond)
 	defer poll.Stop()
 	ready := false
 	for !ready {
-		conn, err := tls.DialWithDialer(&net.Dialer{Timeout: 300*time.Millisecond},
+		conn, err := tls.DialWithDialer(&net.Dialer{Timeout: 300 * time.Millisecond},
 			"tcp", address, &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: roots})
 		if err == nil {
 			_ = conn.Close()
@@ -199,7 +219,9 @@ func runLiveGoalProcessCLI(t *testing.T, ctx context.Context, in liveGoalProcess
 		if strings.Contains(output.String(), in.Bearer) || strings.Contains(diagnostics.String(), in.Bearer) {
 			t.Fatal("operator CLI leaked disposable OAuth bearer")
 		}
-		if err != nil { return nil, err, output.String() }
+		if err != nil {
+			return nil, err, output.String()
+		}
 		var receipt map[string]any
 		if json.Unmarshal(output.Bytes(), &receipt) != nil {
 			t.Fatal("operator CLI returned a malformed JSON acceptance receipt")
@@ -213,7 +235,9 @@ func runLiveGoalProcessCLI(t *testing.T, ctx context.Context, in liveGoalProcess
 		t.Fatalf("independent Goal API process + CLI did not create verified admission (CLI exit=%v)", err)
 	}
 	intentID, ok := first["run_intent_id"].(string)
-	if !ok || intentID == "" { t.Fatal("independent CLI acceptance missing RunIntent ID") }
+	if !ok || intentID == "" {
+		t.Fatal("independent CLI acceptance missing RunIntent ID")
+	}
 	var intents, outbox int64
 	counts := func(want int64) {
 		t.Helper()
@@ -227,7 +251,9 @@ func runLiveGoalProcessCLI(t *testing.T, ctx context.Context, in liveGoalProcess
 	}
 	counts(1)
 	_, _, exactInput, err := issuegoal.DecodePrepared(in.Prepared)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	stored, err := runpg.New(in.Pool).GetExecutionInput(ctx, in.Manifest.Target.TenantID, intentID)
 	if err != nil || !bytes.Equal(stored, exactInput) {
 		t.Fatal("independent Goal API process did not durably store the exact authorized execution input")
