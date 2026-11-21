@@ -17,11 +17,11 @@ Client POST /api/v1/goals:submit (direct TLS; local loopback only)
     → HTTP 201/200 (run_intent_id, NOT runtime_run_id)
 ```
 
-The host fails closed on missing config, wildcard/non-loopback listeners, absent TLS key/cert, missing or overly permissive secret files, untrusted IdP CA, incorrect source selector and absent migrated DB tables. The outbound GitHub hostname is fixed by `issuegoal.PublicIssueReader`; no caller-provided GitHub token, private repo or redirect is supported.
+The host fails closed on missing config, wildcard/non-loopback listeners, absent TLS key/cert, a certificate whose validity window, SAN, key usage or EKU does not match the listener, missing/overly permissive/symlinked secret files, untrusted IdP CA, incorrect source selector and absent migrated DB tables. The TLS certificate must be valid for the exact numeric loopback address (normally `127.0.0.1`) used by `ACP_GOAL_LISTEN_ADDR`. The outbound GitHub hostname is fixed by `issuegoal.PublicIssueReader`; no caller-provided GitHub token, private repo or redirect is supported.
 
 ## Run in an isolated development environment
 
-Prerequisites: Go pinned by `go.mod`, PostgreSQL 16 with all ACP migrations applied by a **separate migration job**, a catalog containing authorized tenant/project/release/session/principal/membership, an OAuth introspection issuer with a trusted CA and client credentials, and a direct TLS server certificate for `127.0.0.1`. The server itself **will not create a database schema, bootstrap users or mint OAuth tokens**.
+Prerequisites: Go pinned by `go.mod`, PostgreSQL 16 with all ACP migrations applied by a **separate migration job**, a catalog containing authorized tenant/project/release/session/principal/membership, an OAuth introspection issuer with a trusted CA and client credentials, and a direct TLS server certificate for `127.0.0.1`. The server itself **will not create a database schema, bootstrap users or mint OAuth tokens**. `ACP_GOAL_ENV` defaults to production semantics; `ACP_GOAL_ALLOW_UNPROTECTED_TEST_BRANCH=true` is accepted only when `ACP_GOAL_ENV=development` or `test`, and must never be used in production.
 
 Keep database DSN and OAuth introspection secret in private local files. The host requires the files be regular, nonempty, at most 64 KiB and not readable by group/others (for example `chmod 0600`). Do not commit either file. For a remote PostgreSQL host, the DSN must enable verified TLS. Local PostgreSQL can use Unix sockets or loopback in the isolated test environment.
 
