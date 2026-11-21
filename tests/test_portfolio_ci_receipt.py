@@ -1,6 +1,10 @@
 """Regression tests for a fail-closed exported GitHub Actions run receipt."""
 import copy
 import importlib.util
+import json
+import io
+import contextlib
+import tempfile
 from pathlib import Path
 import unittest
 
@@ -99,6 +103,38 @@ class ReceiptTest(unittest.TestCase):
         for bad in (None, [], {'jobs':'fake'}, {'databaseId': True}):
             with self.subTest(bad=bad), self.assertRaises(module.ReceiptError):
                 module.verify_run(bad,SHA,'golden')
+
+    def test_ambiguous_duplicate_json_keys_fail_closed_at_cli_boundary(self):
+        original = json.dumps(fixture())
+        ambiguous = (
+            original.replace(
+                '"headSha": "' + SHA + '"',
+                '"headSha": "' + ('b' * 40) + '", "headSha": "' + SHA + '"',
+                1,
+            ),
+            original.replace(
+                '"name": "e2e"',
+                '"name": "not-the-acceptance-job", "name": "e2e"',
+                1,
+            ),
+            original.replace(
+                '"name": "' + GOLDEN_STEP + '"',
+                '"conclusion": "failure", "name": "' + GOLDEN_STEP + '"',
+                1,
+            ),
+        )
+        for payload in ambiguous:
+            with self.subTest(payload=payload[:130]), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / 'run.json'
+                path.write_text(payload, encoding='utf-8')
+                out, err = io.StringIO(), io.StringIO()
+                with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                    code = module.main([
+                        '--run-json', str(path), '--expected-sha', SHA, '--scenario', 'golden',
+                    ])
+                self.assertEqual(code, 1, 'ambiguous evidence must be rejected')
+                self.assertIn('"ok": false', err.getvalue().lower())
+                self.assertEqual(out.getvalue(), '')
 
     def test_sha_validation(self):
         with self.assertRaises(module.ReceiptError): module.verify_run(fixture(), 'main','golden')
