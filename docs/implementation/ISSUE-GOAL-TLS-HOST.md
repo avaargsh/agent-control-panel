@@ -21,7 +21,7 @@ The host fails closed on missing config, wildcard/non-loopback listeners, absent
 
 ## Run in an isolated development environment
 
-Prerequisites: Go pinned by `go.mod`, PostgreSQL 16 with all ACP migrations applied by a **separate migration job**, a catalog containing authorized tenant/project/release/session/principal/membership, an OAuth introspection issuer with a trusted CA and client credentials, and a direct TLS server certificate for `127.0.0.1`. The server itself **will not create a database schema, bootstrap users or mint OAuth tokens**. `ACP_GOAL_ENV` defaults to production semantics; `ACP_GOAL_ALLOW_UNPROTECTED_TEST_BRANCH=true` is accepted only when `ACP_GOAL_ENV=development` or `test`, and must never be used in production.
+Prerequisites: Go pinned by `go.mod`, PostgreSQL 16 with all ACP migrations applied by a **separate migration job**, a catalog containing authorized tenant/project/release/session/principal/membership, an OAuth introspection issuer with a trusted CA and client credentials, and a direct TLS server certificate for `127.0.0.1`. The server itself **will not create a database schema, bootstrap users or mint OAuth tokens**. Before binding, it checks the complete RunIntent/Outbox/admission catalog relation set and requires the migration-ledger entry `version=12, name=0012_run_intent_admission_origin.sql`; a partially migrated or older schema is rejected. `ACP_GOAL_ENV` defaults to production semantics; `ACP_GOAL_ALLOW_UNPROTECTED_TEST_BRANCH=true` is accepted only when `ACP_GOAL_ENV=development` or `test`, and must never be used in production.
 
 Keep database DSN and OAuth introspection secret in private local files. The host requires the files be regular, nonempty, at most 64 KiB and not readable by group/others (for example `chmod 0600`). Do not commit either file. For a remote PostgreSQL host, the DSN must enable verified TLS. Local PostgreSQL can use Unix sockets or loopback in the isolated test environment.
 
@@ -80,7 +80,9 @@ Expected: HTTP `201` for the first authorized request and `200` for an exact sam
 
 ### Evidence and known limitations
 
-- Non-network config rejection tests: `go test ./cmd/acp-goal-api`. Exact-head Go/PG workflow must also pass all race-enabled tests.
+- Non-network config rejection tests cover invalid TLS identity, expired/not-yet-valid certificate, symlinked secret, unsafe branch override and invalid host configuration: `go test ./cmd/acp-goal-api`.
+- With `PGTEST_DSN`, a disposable-schema integration test runs the real repository migrations and verifies the startup gate rejects a missing v12 admission-origin migration: `go test -run TestVerifyAuthoritySchemaRequiresLatestAdmissionMigration ./cmd/acp-goal-api`.
+- Exact-head Go/PG workflow must also pass all race-enabled tests.
 - `TestCatalogGoalHTTPRealTLSIntrospectionAndPostgres` runs a real TLS HTTP listener, test TLS issuer, existing CatalogPolicy and real PostgreSQL/Outbox when `PGTEST_DSN` is present. The GitHub reader in this test is **a fixture**, not a real GitHub attestation.
 - This command wires an actual read-only GitHub source reader, but **no hosted live-GitHub + actual OAuth issuer + real ACP database acceptance run has been confirmed yet**. There is no signed ruleset authority, budget consumption accounting, live GitHub PR creation, Sandbox/Verifier/Guard effect or fully vetted production deployment.
 - Public GitHub Issues can change or be closed; their snapshot and pinned branch HEAD must be freshly re-observed on each authorized submission, including replay.
