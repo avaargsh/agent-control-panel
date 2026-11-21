@@ -75,9 +75,10 @@ func TestAdmitPreparedIssueGoalFailsClosedBeforeWriting(t *testing.T) {
 		wire          []byte
 		verify        sourceVerifierFunc
 		resolverError error
+		preflightAllowed bool
 	}{
 		{name: "no source verifier", wire: wire},
-		{name: "source unavailable", wire: wire, verify: sourceVerifierFunc(func(context.Context, Target, issuegoal.Input) error { return denied })},
+		{name: "source unavailable", wire: wire, verify: sourceVerifierFunc(func(context.Context, Target, issuegoal.Input) error { return denied }), preflightAllowed: true},
 		{name: "source verified but identity revoked", wire: wire, verify: sourceVerifierFunc(func(context.Context, Target, issuegoal.Input) error { return nil }), resolverError: ErrPolicyDenied},
 		{name: "tampered digest", wire: []byte(strings.Replace(string(wire), "sha256:", "sha256:dead", 1)), verify: sourceVerifierFunc(func(context.Context, Target, issuegoal.Input) error {
 			t.Fatal("tampered source reached verifier")
@@ -95,6 +96,12 @@ func TestAdmitPreparedIssueGoalFailsClosedBeforeWriting(t *testing.T) {
 				resolverCalled = true
 				if tc.resolverError != nil {
 					return Grant{}, tc.resolverError
+				}
+				if tc.preflightAllowed {
+					_, grant := fixture()
+					grant.Target = req.Target
+					grant.RequestDigest = req.RequestDigest
+					return grant, nil
 				}
 				t.Fatal("unverified proposal reached resolver")
 				return Grant{}, nil
@@ -141,5 +148,63 @@ func TestAdmitPreparedIssueGoalRejectsTypedNilDependencies(t *testing.T) {
 				t.Fatalf("typed nil dependency was not rejected: created=%v err=%v", created, err)
 			}
 		})
+	}
+}
+
+
+// No HTTP source lookup should occur until the originating OAuth identity and
+// catalog selector have been checked at least once. Otherwise unauthenticated
+// callers can trigger outbound GitHub API reads and learn source existence.
+func TestAdmitPreparedIssueGoalDeniesBeforeExternalSourceRead(t *testing.T) {
+	wire := preparedGoalWire(t)
+	sourceCalls := 0
+	resolverCalls := 0
+	store := &inputCaptureStore{}
+	svc := New(store, resolverFunc(func(context.Context, Request) (Grant, error) {
+		resolverCalls++
+		return Grant{}, ErrPolicyDenied
+	}))
+	source := sourceVerifierFunc(func(context.Context, Target, issuegoal.Input) error {
+		sourceCalls++
+		return nil
+	})
+	_, created, err := svc.AdmitPreparedIssueGoal(context.Background(), wire, source)
+	if !errors.Is(err, ErrPolicyDenied) || created || sourceCalls != 0 ||
+		resolverCalls != 1 || store.calls != 0 {
+		t.Fatalf("unauthorized input reached source: err=%v created=%v source=%d resolver=%d writes=%d",
+			err, created, sourceCalls, resolverCalls, store.calls)
+	}
+}
+
+// A preliminary read is not sufficient authorization to persist a RunIntent.
+// Identity and catalog must be re-evaluated after source IO to close revocation
+// during the (bounded) external network call.
+func TestAdmitPreparedIssueGoalRechecksPolicyAfterSourceRead(t *testing.T) {
+	wire := preparedGoalWire(t)
+	resolverCalls := 0
+	sourceCalls := 0
+	store := &inputCaptureStore{}
+	svc := New(store, resolverFunc(func(_ context.Context, req Request) (Grant, error) {
+		resolverCalls++
+		if resolverCalls == 2 {
+			return Grant{}, ErrPolicyDenied
+		}
+		_, grant := fixture()
+		grant.Target = req.Target
+		grant.RequestDigest = req.RequestDigest
+		return grant, nil
+	}))
+	source := sourceVerifierFunc(func(context.Context, Target, issuegoal.Input) error {
+		sourceCalls++
+		if resolverCalls != 1 {
+			t.Fatal("external read preceded preliminary identity verification")
+		}
+		return nil
+	})
+	_, created, err := svc.AdmitPreparedIssueGoal(context.Background(), wire, source)
+	if !errors.Is(err, ErrPolicyDenied) || created || sourceCalls != 1 ||
+		resolverCalls != 2 || store.calls != 0 {
+		t.Fatalf("revocation during source IO allowed persistence: err=%v created=%v source=%d resolver=%d writes=%d",
+			err, created, sourceCalls, resolverCalls, store.calls)
 	}
 }
