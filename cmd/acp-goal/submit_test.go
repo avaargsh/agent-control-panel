@@ -72,11 +72,11 @@ func TestSubmitCLIOverTLSWithExactBoundReceipt(t *testing.T) {
 			w.WriteHeader(http.StatusCreated)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"schema": "acp.issue-goal-acceptance/v1",
-			"run_intent_id": "00000000-0000-4000-8000-000000000001",
+			"schema":         "acp.issue-goal-acceptance/v1",
+			"run_intent_id":  "00000000-0000-4000-8000-000000000001",
 			"request_digest": p.RequestDigest,
-			"status": "PENDING",
-			"created": created,
+			"status":         "PENDING",
+			"created":        created,
 		})
 	}))
 	defer closeServer()
