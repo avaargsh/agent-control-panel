@@ -483,6 +483,13 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 			"RUNTIME_EXTERNAL_POLICY="+intent.PrincipalSnapshot.PolicyRevision,
 		)
 		temporal.Env = append(temporal.Env, liveEnv...)
+		if os.Getenv("ACP_LIVE_GUARD_CLIENT") == "1" {
+			guardBin := os.Getenv("ACP_GUARD_TEST_BIN")
+			if guardBin == "" {
+				t.Fatal("missing independently compiled EngageGuard client binary")
+			}
+			temporal.Env = append(temporal.Env, "DECISION_LIVE_GUARD_BIN="+guardBin)
+		}
 		if os.Getenv("ACP_LIVE_CONTINUATION") == "1" {
 			temporal.Env = append(temporal.Env, "RUNTIME_EXTERNAL_LIVE_CONTINUATION=1")
 		}
@@ -499,6 +506,15 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 			(!bytes.Contains(out, []byte("actual Runtime continuation SIGKILL recovered Run "+runID)) ||
 				!bytes.Contains(out, []byte("DECISION_ACCEPTED; live source revocation denied"))) {
 			t.Fatal("missing actual post-acceptance Worker SIGKILL and source revocation evidence")
+		}
+		if os.Getenv("ACP_LIVE_GUARD_STEP") == "1" &&
+			!bytes.Contains(out, []byte("real Guard Plan Step mTLS verified same-Run "+runID+" and source revocation denied")) {
+			t.Fatal("missing same-Run independently authenticated Guard Plan/Step and post-revocation evidence")
+		}
+		if os.Getenv("ACP_LIVE_GUARD_CLIENT") == "1" &&
+			(!bytes.Contains(out, []byte("real EngageGuard DecisionPlanClient verified same-Run "+runID)) ||
+				!bytes.Contains(out, []byte("real EngageGuard DecisionPlanClient denied revoked same-Run "+runID))) {
+			t.Fatal("missing independently compiled EngageGuard client positive and revoked negative evidence")
 		}
 		t.Logf("same-Run Temporal evidence:\n%s", out)
 		if id := assertOne(); id != runID {

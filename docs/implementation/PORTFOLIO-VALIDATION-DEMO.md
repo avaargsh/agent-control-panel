@@ -2,7 +2,7 @@
 
 > 作品定位：**Enterprise Agent Infrastructure / Agent Control Plane**。本页用于招聘面试、开源读者和评审者，演示的是**受控环境中的跨服务可靠执行证据**，不是生产交付声明。
 >
-> 基准：2026-11-21；`main` = [`28e6ec23a03309bd759e865f5402d029cfdf280c`](https://github.com/avaargsh/agent-control-panel/commit/28e6ec23a03309bd759e865f5402d029cfdf280c)。仓库持续演进；展示任何新运行结果前须重新记录实际 HEAD、GitHub Actions run ID、源码依赖 SHA 与结论。
+> 基准：2026-11-21；`main` = [`4b2d6949ff2ea8996082e0e47650f2eeb1db6a6a`](https://github.com/avaargsh/agent-control-panel/commit/4b2d6949ff2ea8996082e0e47650f2eeb1db6a6a)（本次核查时）。仓库持续演进；展示任何新运行结果前须重新记录实际 HEAD、GitHub Actions run ID、源码依赖 SHA 与结论。
 
 ## 一句话说明
 
@@ -41,6 +41,22 @@ flowchart LR
 | 独立 Verifier、签名 Evidence/Trace、GitHub Issue→修复 PR→资源回收 | [Issue #72](https://github.com/avaargsh/agent-control-panel/issues/72) | **待实现/联合验收** |
 
 **特别注意**：CI 绿色只证明该 run 的精确 commit、依赖版本、fixture 和断言。业务 Run 的持久化恢复 ≠ 受保护操作的 Exactly Once；不宣称 Guard Permit、真实工具副作用、生产 IAM/密钥、生产 K8s/MicroVM 资源回收或跨服务统一上线已获验收。
+
+## M0 Issue Goal 输入与非派发受理：候选 PR，不属于 main 的演示结论
+
+2026-11-21 核查时，Issue Goal 入门链已拆成三层独立、尚未合并的候选改动：
+
+| PR | 新增的候选能力 | 本阶段不可宣称 |
+|---|---|---|
+| [#82](https://github.com/avaargsh/agent-control-panel/pull/82) | 严格校验 Issue Goal 输入、计算固定摘要、复用现有可信 RunIntent 准入 | 无自动 GitHub Issue→PR，非真实执行 |
+| [#85](https://github.com/avaargsh/agent-control-panel/pull/85) | 核查公共 GitHub Issue 快照、固定基线 Commit 和来源约束 | 规则签名/授权的完整权威闭环未实现 |
+| [#86](https://github.com/avaargsh/agent-control-panel/pull/86) | 内部 `POST /api/v1/goals:submit` handler 与**独立可选的 loopback-only TLS Goal API Host**；请求级 OAuth/CatalogPolicy/PostgreSQL 组合、GitHub Issue 来源读取；仅受理，不派发 | 已有 Host 候选源码和测试夹具，但无真实外部 OAuth + GitHub + PostgreSQL 部署联合验收、无运行时任务执行或受保护写操作 |
+
+依赖顺序为 **#82 → #85 → #86**。这些 PR 上的 Go/PG、OIDC 或模拟 HTTP 测试只证明各自的精确源码范围，不是把三层放到同一个真实 HTTP→OAuth→GitHub→PostgreSQL 部署中验证，也不代表 Workflow 已启动。
+
+面试时如果展示候选 API，必须同时口述：`run_intent_id` 是 ACP 受理标识，不是 Runtime 的 `run_id`；**201/200 仅表示首次受理/幂等重放，并非任务完成**。默认 ACP 服务仍未启用该处理器；独立 TLS Host 仅为显式配置的候选入口，尚无已部署并验收的产品 API。
+
+下一步应复用 #86 已提交的独立 TLS Host，在隔离真实环境中连接外部 OAuth/CatalogPolicy、公共 GitHub Issue 来源核验和现有 PostgreSQL RunIntent Authority，记录首次受理、同键重放、变更输入冲突、授权撤销及 Outbox 观察；现有测试 issuer 和模拟 GitHub reader 不可冒充这项联合验收。所有错误路径记录是否存在持久化写入；失败或不确定的步骤不得发出 Runtime Dispatch。完成此门禁前，后续 Sandbox、Guard、Verifier 和 GitHub PR 的交付链仍按 [#70–#72](https://github.com/avaargsh/agent-control-panel/issues/72) 标记为未交付。
 
 ## 5–10 分钟面试现场演示
 
@@ -86,6 +102,22 @@ gh run view "$RUN_ID" --log
 ### 本地复现范围（仅准入测试）
 
 `scripts/test-real-oidc-admission.sh` 支持 `oidc`，但**不是不依赖环境的一键安装器**：调用前必须有本地 Docker daemon、OpenSSL、Python3、curl、Go 1.27.4、专用的临时 PostgreSQL 和 `PGTEST_DSN`，本地 `127.0.0.1:8443` 端口不可冲突。脚本会启动/清理临时 Keycloak，不应指向任何现有或生产 issuer。完整跨服务 golden-path 还需要 workflow 指定的多个已编译二进制、隔离数据库及不可变源码 pins；优先使用上面的 Actions 入口，不跳过这些条件。
+
+
+### 复现后进行 CI 元数据一致性检查
+
+从实际已完成的非生产 `workflow_dispatch` Run 导出 GitHub CLI 元数据，然后由本仓库的 fail-closed 检查器核验。它会拒绝错误 SHA、伪造仓库 URL、不属于 main 的 Run、缺少真实测试步骤、FAILED 或 SKIPPED 的步骤；**它不验证 JSON 文件的签名，不是独立的业务结果证明，也不授予受保护操作权限**。
+
+```bash
+# 从前面的 gh run list 中选择本次真实 Run；不要使用示例 ID。
+RUN_ID=123456789  # 替换为真实 GitHub Actions run ID
+EXPECTED_SHA="$(git rev-parse main)"  # 全长 SHA；必须与该 Run 的 headSha 完全一致
+gh run view "$RUN_ID" --json databaseId,url,workflowName,headSha,headBranch,event,status,conclusion,attempt,jobs > /tmp/acp-run.json
+python3 scripts/portfolio_ci_receipt.py --run-json /tmp/acp-run.json --expected-sha "$EXPECTED_SHA" --scenario golden
+# 如果核查的是 Live OIDC workflow，请将 --scenario 改为 oidc。
+```
+
+本地回归：`python3 -m unittest discover -s tests -p 'test_portfolio_ci_receipt.py' -v`。请同时查看该 Run 的原始日志、外部源代码固定 SHA、正负例断言和需要独立复核的授权边界；不要把 `CI_METADATA_CHECK_ONLY` 写成 `production accepted`。
 
 ## 面试回答（约 90 秒）
 
