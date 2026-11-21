@@ -66,3 +66,20 @@ At the time of this change the pinned workflow does not build SandboxService/Age
 - All external repositories and images must be pinned to exact SHA/digest, and a separate reviewer must validate the trust roots, fault transcript and complete negative matrix before any main or production promotion.
 
 **Claim boundary:** A Green contract unit suite means the *checker* works. Only externally signed real Sandbox/AgentD/Guard evidence for the same Run can turn the **full** Golden Path GREEN.
+
+
+## Local physical workspace crash precursor (PR #92)
+
+Draft [#92](https://github.com/avaargsh/agent-control-panel/pull/92) adds a **real Linux OS-process SIGKILL experiment** inside the disposable Go test binary. It is a necessary lower-level storage/process continuity check, **not** the full SandboxService integration required above.
+
+The first fresh process opens an owner-private workspace directory using Linux `openat` and `O_NOFOLLOW`, creates a sentinel file and a durable workspace-binding JSON record with exclusive creation, flushes file contents and directory metadata to disk, then emits its observation. The parent process sends actual SIGKILL and verifies the OS termination signal. A second independent process opens the same directory, verifies the original device/inode, re-reads the durable metadata and physical sentinel bytes, and compares SHA256 plus Tenant/Run/Lease/SandboxUID/Workspace/generation bindings against the original observation.
+
+The negative matrix deliberately modifies the real filesystem or expected authority binding between processes: changed sentinel bytes, replacing the directory while copying identical files, replacing a sentinel with a symlink, wrong RunID, stale generation and wrong SandboxUID must all fail. No mock provider response or in-memory replay can satisfy these assertions.
+
+Reproduce this **local-only** precursor using:
+
+```sh
+go test -race -count=1 -v -run '^TestPhysicalWorkspace(SurvivesWorkerSIGKILL|RecoveryRejectsCorruptionAndStaleBinding)$' ./internal/postfault
+```
+
+The existing ACP Temporal Golden Path CI now also invokes this specific test explicitly **before** the mandatory source-signed full recovery gate. A local PASS does **not** create Sandbox/AgentD/Guard authority receipts, attest a KVM/Pod mount, prove UID lease renewal, reconcile a real externally executed command, or revalidate a genuine Guard Permit. The final step must still report **BLOCKED** until #70/#71/#72 deliver those real producers.
