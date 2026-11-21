@@ -24,9 +24,9 @@ import (
 )
 
 const (
-	maxGoalReplyBytes = 4096
-	maxCABytes        = 64 << 10
-	maxBearerBytes    = 8192
+	maxGoalReplyBytes  = 4096
+	maxCABytes         = 64 << 10
+	maxBearerBytes     = 8192
 	unknownGoalReceipt = "GoalSubmit acceptance receipt unverifiable; outcome unknown, inspect ACP before retrying"
 )
 
