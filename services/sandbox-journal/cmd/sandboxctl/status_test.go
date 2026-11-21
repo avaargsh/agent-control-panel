@@ -16,6 +16,7 @@ type fakeLease struct {
 	err    error
 	calls  int
 }
+
 func (f *fakeLease) Get(_ context.Context, _, _ string) (lease.Record, error) {
 	f.calls++
 	return f.record, f.err
@@ -26,6 +27,7 @@ type fakeCommand struct {
 	err    error
 	calls  int
 }
+
 func (f *fakeCommand) Get(_ context.Context, _, _, _ string) (journal.Record, error) {
 	f.calls++
 	return f.record, f.err
