@@ -258,6 +258,12 @@ func TestVerifyAuthoritySchemaRequiresLatestAdmissionMigration(t *testing.T) {
 	if err := verifyAuthoritySchema(ctx, pool); err != nil {
 		t.Fatalf("fully migrated ACP authority schema rejected: %v", err)
 	}
+	if _, err := pool.Exec(ctx, "UPDATE schema_migrations SET checksum=repeat('0',64) WHERE version=12"); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyAuthoritySchema(ctx, pool); err == nil {
+		t.Fatal("schema with a modified migration checksum was accepted")
+	}
 	if _, err := pool.Exec(ctx, "DELETE FROM schema_migrations WHERE version=12"); err != nil {
 		t.Fatal(err)
 	}
