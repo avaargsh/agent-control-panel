@@ -16,8 +16,8 @@ import (
 )
 
 var (
-	ErrAttemptUnconfigured = errors.New("trusted optimization attempt journal unavailable")
-	ErrAttemptUnavailable  = errors.New("optimization attempt expired, mismatched or already consumed")
+	ErrAttemptUnconfigured  = errors.New("trusted optimization attempt journal unavailable")
+	ErrAttemptUnavailable   = errors.New("optimization attempt expired, mismatched or already consumed")
 	ErrAttemptCommitUnknown = errors.New("optimization attempt commit outcome unknown: read-only reconciliation required")
 )
 
