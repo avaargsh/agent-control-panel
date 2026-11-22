@@ -40,7 +40,8 @@ func TestCommandJournalReaderCannotReadOtherTenantWithOwnLogin(t *testing.T) {
 		"0006_lease_commit_integrity.sql",
 		"0007_tenant_login_rls.sql",
 		"0008_tenant_login_oid_fence.sql",
-		"0009_command_tenant_login_rls.sql",
+		"0009_tenant_login_revoke_evict.sql",
+		"0010_command_tenant_login_rls.sql",
 	} {
 		sql, err := os.ReadFile("../migrations/" + name)
 		if err != nil {
