@@ -2,10 +2,9 @@ package agentd
 
 import (
 	"context"
-	"errors"
 	"crypto/rand"
 	"encoding/hex"
-	"os"
+	"errors"
 	"fmt"
 	"os"
 	"testing"
@@ -78,6 +77,16 @@ func TestEvidenceReaderLoginIsTenantScopedAndReadOnly(t *testing.T) {
 	other.AttemptID = "attempt-b"
 	other.ProviderCommandUID = "provider-command-b"
 	seedAlreadyAuthorizedAttempt(t, owner, other)
+
+	ownerTx, err := owner.BeginTx(context.Background(), pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyEvidenceReaderLogin(context.Background(), ownerTx); err == nil {
+		_ = ownerTx.Rollback(context.Background())
+		t.Fatal("owner connection was accepted as the least-privilege evidence reader")
+	}
+	_ = ownerTx.Rollback(context.Background())
 
 	reader := newEvidenceReaderPool(t, owner)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
