@@ -30,6 +30,26 @@ func TestCommandJournalReaderCannotReadOtherTenantWithOwnLogin(t *testing.T) {
 			t.Fatalf("seed source-owned immutable command: created=%t err=%v", created, err)
 		}
 	}
+	// Apply real owner-only migrations in order against the SAME committed
+	// command and Outbox facts. This package runs before lease tests in CI,
+	// so it cannot assume another test initialized the tenant registry.
+	for _, name := range []string{
+		"0002_lease_intents.sql",
+		"0003_lease_outbox_immutable.sql",
+		"0004_lease_runtime_roles.sql",
+		"0006_lease_commit_integrity.sql",
+		"0007_tenant_login_rls.sql",
+		"0008_tenant_login_oid_fence.sql",
+		"0009_command_tenant_login_rls.sql",
+	} {
+		sql, err := os.ReadFile("../migrations/" + name)
+		if err != nil {
+			t.Fatalf("read source-owned migration %s: %v", name, err)
+		}
+		if _, err := owner.pool.Exec(ctx, string(sql)); err != nil {
+			t.Fatalf("apply source-owned migration %s: %v", name, err)
+		}
+	}
 
 	const login = "sandbox_ci_command_tenant_a"
 	const password = "command-rls-disposable-ci-only"
@@ -41,11 +61,15 @@ func TestCommandJournalReaderCannotReadOtherTenantWithOwnLogin(t *testing.T) {
 		"CREATE ROLE " + login + " LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD '" + password + "'",
 		"GRANT CONNECT ON DATABASE sandbox_journal_ci TO " + login,
 		"GRANT USAGE ON SCHEMA public TO " + login,
-		"GRANT SELECT ON public.sandbox_journal_commands,public.sandbox_journal_outbox TO " + login,
+		"GRANT acp_sandbox_command_reader TO " + login,
 	} {
 		if _, err := owner.pool.Exec(ctx, sql); err != nil {
 			t.Fatalf("setup isolated non-owner login: %v", err)
 		}
+	}
+	if _, err := owner.pool.Exec(ctx, `INSERT INTO public.sandbox_lease_db_principals
+		(login_name,tenant_id) VALUES ($1,$2)`, login, inA.TenantID); err != nil {
+		t.Fatalf("DBA bind independent LOGIN to Command tenant: %v", err)
 	}
 	cfg, err := pgxpool.ParseConfig(os.Getenv("SANDBOX_JOURNAL_TEST_DSN"))
 	if err != nil {
