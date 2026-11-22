@@ -132,7 +132,7 @@ func (s *AttemptStore) ConsumeReviewEvidence(
 		return EvaluationReceipt{}, ErrAttemptUnavailable
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return EvaluationReceipt{}, fmt.Errorf("%w: commit consumption: %v", ErrAttemptCommitUnknown, err)
+		return EvaluationReceipt{}, fmt.Errorf("%w: commit consumption: %w", ErrAttemptCommitUnknown, err)
 	}
 	return receipt, nil
 }
