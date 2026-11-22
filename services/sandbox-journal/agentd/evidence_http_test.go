@@ -154,7 +154,7 @@ func TestEvidenceMTLSReadOnlyUnknownHoldRequiresPinnedHeadAndSameRun(t *testing.
 		}
 		return pinned, nil
 	}
-	server, ca := newAuthenticTLSFixture(t, db, public, lookup)
+	server, ca := newAuthenticTLSFixture(t, newEvidenceReaderPool(t, db), public, lookup)
 	client := clientWithRunIdentity(t, server, ca, ref.TenantID, ref.RunID)
 	status, response := fetchOriginalEvidence(t, client, server, ref)
 	if status != 200 || response.Schema != EvidenceReadSchema || response.State != Unknown ||
@@ -194,7 +194,7 @@ func TestEvidenceMTLSRejectsCrossTenantCrossRunAndMissingPeer(t *testing.T) {
 		t.Fatal(err)
 	}
 	head := InspectHead{InspectCount: 1, JournalVersion: 1, Digest: ev.Digest}
-	server, ca := newAuthenticTLSFixture(t, db, public, func(_ context.Context, _ Ref) (InspectHead, error) { return head, nil })
+	server, ca := newAuthenticTLSFixture(t, newEvidenceReaderPool(t, db), public, func(_ context.Context, _ Ref) (InspectHead, error) { return head, nil })
 	for _, tc := range []struct{ name, tenant, run string }{
 		{"wrong_tenant", "agentd-tenant-b", ref.RunID},
 		{"wrong_run", ref.TenantID, "22222222-2222-4222-8222-222222222222"},
@@ -257,7 +257,7 @@ func TestEvidenceMTLSTerminalOnlyFromCommittedWaitAndFreshSourceInspect(t *testi
 		t.Fatal(err)
 	}
 	head := InspectHead{InspectCount: 1, JournalVersion: 1, Digest: ev.Digest}
-	server, ca := newAuthenticTLSFixture(t, db, pub, func(_ context.Context, _ Ref) (InspectHead, error) { return head, nil })
+	server, ca := newAuthenticTLSFixture(t, newEvidenceReaderPool(t, db), pub, func(_ context.Context, _ Ref) (InspectHead, error) { return head, nil })
 	client := clientWithRunIdentity(t, server, ca, ref.TenantID, ref.RunID)
 	status, response := fetchOriginalEvidence(t, client, server, ref)
 	if status != 200 || response.State != FailedConfirmed || response.NextAction != Hold ||
@@ -290,7 +290,7 @@ func TestEvidenceMTLSRejectsStaleTrustedHeadWrongSignerAndUnknownAttempt(t *test
 		t.Fatal(err)
 	}
 	stale := InspectHead{InspectCount: 1, JournalVersion: 1, Digest: first.Digest}
-	server, ca := newAuthenticTLSFixture(t, db, pub, func(_ context.Context, _ Ref) (InspectHead, error) { return stale, nil })
+	server, ca := newAuthenticTLSFixture(t, newEvidenceReaderPool(t, db), pub, func(_ context.Context, _ Ref) (InspectHead, error) { return stale, nil })
 	client := clientWithRunIdentity(t, server, ca, ref.TenantID, ref.RunID)
 	status, _ := fetchOriginalEvidence(t, client, server, ref)
 	if status == 200 {
@@ -300,7 +300,7 @@ func TestEvidenceMTLSRejectsStaleTrustedHeadWrongSignerAndUnknownAttempt(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	wrongSigner, ca2 := newAuthenticTLSFixture(t, db, foreign, func(_ context.Context, _ Ref) (InspectHead, error) { return stale, nil })
+	wrongSigner, ca2 := newAuthenticTLSFixture(t, newEvidenceReaderPool(t, db), foreign, func(_ context.Context, _ Ref) (InspectHead, error) { return stale, nil })
 	client2 := clientWithRunIdentity(t, wrongSigner, ca2, ref.TenantID, ref.RunID)
 	status, _ = fetchOriginalEvidence(t, client2, wrongSigner, ref)
 	if status == 200 {
@@ -323,7 +323,7 @@ func TestEvidenceMTLSFailClosedWithoutIndependentTrustedHead(t *testing.T) {
 	if _, err := InspectAndJournal(context.Background(), db, ref, pub, private); err != nil {
 		t.Fatal(err)
 	}
-	server, ca := newAuthenticTLSFixture(t, db, pub, nil)
+	server, ca := newAuthenticTLSFixture(t, newEvidenceReaderPool(t, db), pub, nil)
 	client := clientWithRunIdentity(t, server, ca, ref.TenantID, ref.RunID)
 	status, _ := fetchOriginalEvidence(t, client, server, ref)
 	if status == 200 {
@@ -341,7 +341,7 @@ func TestEvidenceMTLSRejectsNonCanonicalAndOversizedRequests(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server, ca := newAuthenticTLSFixture(t, db, pub, func(_ context.Context, _ Ref) (InspectHead, error) {
+	server, ca := newAuthenticTLSFixture(t, newEvidenceReaderPool(t, db), pub, func(_ context.Context, _ Ref) (InspectHead, error) {
 		return InspectHead{InspectCount: 1, JournalVersion: 1, Digest: ev.Digest}, nil
 	})
 	client := clientWithRunIdentity(t, server, ca, ref.TenantID, ref.RunID)
