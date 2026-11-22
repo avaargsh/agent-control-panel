@@ -100,14 +100,14 @@ func TestAuthorityDatabaseRoleFailClosed(t *testing.T) {
 	if currentUser != role || sessionUser != role {
 		t.Fatalf("expected independently authenticated role, current=%q session=%q", currentUser, sessionUser)
 	}
-	check := func(wantAllowed bool) {
+	check := func(t *testing.T, wantAllowed bool) {
 		t.Helper()
 		err := verifyAuthorityDatabaseRole(ctx, reader)
 		if (err == nil) != wantAllowed {
 			t.Fatalf("authority database guard: allowed=%v want=%v err=%v", err == nil, wantAllowed, err)
 		}
 	}
-	check(true)
+	check(t, true)
 
 	// Any grant beyond the exact seven authority relations must fail startup.
 	for _, tc := range []struct {
@@ -134,15 +134,15 @@ func TestAuthorityDatabaseRoleFailClosed(t *testing.T) {
 			if _, err := admin.Exec(ctx, tc.grant); err != nil {
 				t.Fatal(err)
 			}
-			check(false)
+			check(t, false)
 			if _, err := admin.Exec(ctx, tc.revoke); err != nil {
 				t.Fatal(err)
 			}
-			check(true)
+			check(t, true)
 		})
 	}
 	if _, err := admin.Exec(ctx, "REVOKE SELECT ON "+schema+".admission_sessions FROM "+role); err != nil {
 		t.Fatal(err)
 	}
-	check(false) // incomplete catalog reader privilege is also unavailable
+	check(t, false) // incomplete catalog reader privilege is also unavailable
 }
