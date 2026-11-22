@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 )
@@ -64,5 +65,25 @@ func TestOperatorRejectsUnsafeFlagsAndNeverPrintsDatabaseDSN(t *testing.T) {
 	exit := run([]string{"inspect", "--tenant", "tenant-a", "--lease-intent", "lease-1"}, &stdout, &stderr)
 	if exit != 3 || stdout.Len() != 0 || !strings.Contains(stderr.String(), "READ_SOURCE_UNAVAILABLE") {
 		t.Fatalf("missing DB was accepted: %d %q", exit, stderr.String())
+	}
+}
+
+func TestSandboxctlRejectsPrivilegedDatabaseIdentityBeforeReading(t *testing.T) {
+	dsn := os.Getenv("SANDBOX_JOURNAL_TEST_DSN")
+	if dsn == "" {
+		t.Skip("real independent Sandbox PostgreSQL role gate requires CI database")
+	}
+	// The CI migration owner is also a writable PostgreSQL principal.
+	// A session default_transaction_read_only=on must NOT turn that
+	// credential into acceptable read-only diagnostic authority.
+	t.Setenv("SANDBOX_JOURNAL_READ_DSN", dsn)
+	var stdout, stderr bytes.Buffer
+	exit := run([]string{"inspect", "--tenant", "tenant-scope-a",
+		"--lease-intent", "missing-lease"}, &stdout, &stderr)
+	if exit != 3 || stdout.Len() != 0 ||
+		!strings.Contains(stderr.String(), "READ_SOURCE_UNAVAILABLE") ||
+		strings.Contains(stderr.String(), "UNVERIFIED") ||
+		strings.Contains(stderr.String(), "sandbox-test-only") {
+		t.Fatalf("writable DB credential was treated as read-only: exit=%d stdout=%q stderr=%q", exit, stdout.String(), stderr.String())
 	}
 }
