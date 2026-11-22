@@ -259,6 +259,7 @@ func TestLeaseRuntimeDatabaseRolesDenyEscalationAndPreserveCAS(t *testing.T) {
 		{"read_other_service_journal", "SELECT count(*) FROM public.sandbox_journal_commands"},
 		{"read_dba_tenant_bindings", "SELECT count(*) FROM public.sandbox_lease_db_principals"},
 		{"call_dba_tenant_revoke", "SELECT public.sandbox_revoke_lease_login('sandbox_lease_ci_writer_login'::name, 0::oid)"},
+		{"call_dba_revocation_verify", "SELECT public.sandbox_verify_lease_login_revocation('sandbox_lease_ci_writer_login'::name, 0::oid)"},
 		{"read_dba_revoke_history", "SELECT count(*) FROM public.sandbox_lease_login_revocations"},
 		{"rewrite_dba_tenant_binding", "UPDATE public.sandbox_lease_db_principals SET tenant_id='tenant-b' WHERE login_name='sandbox_lease_ci_writer_login'"},
 		{"create_table", "CREATE TABLE public.sandbox_lease_ci_escalation (id integer)"},

@@ -38,6 +38,19 @@ echo "Starting disposable, loopback-only PostgreSQL demo (never production)..."
 
 dsn="postgres://sandbox_demo_reader:demo-reader-only@127.0.0.1:${port}/sandbox_demo?sslmode=disable"
 cd "$root"
+# Source-owned migration 0010 must be installed in this disposable DB,
+# but the untrusted read-only LOGIN cannot execute its DBA verifier.
+# This is a migration/ACL smoke check, NOT actual revocation attestation.
+proof_present="$("${compose[@]}" exec -T -e PGPASSWORD=sandbox-demo-only db \
+  psql -h 127.0.0.1 -U sandbox_demo -d sandbox_demo -v ON_ERROR_STOP=1 -tAc \
+  "SELECT to_regprocedure('public.sandbox_verify_lease_login_revocation(name,oid)') IS NOT NULL
+      AND NOT has_function_privilege('sandbox_demo_reader',
+        'public.sandbox_verify_lease_login_revocation(name,oid)'::regprocedure, 'EXECUTE')")"
+if [[ "${proof_present//[[:space:]]/}" != "t" ]]; then
+  echo "DEMO_ASSERTION_FAILED: migration 0010 missing or revocation verifier exposed to reader" >&2
+  exit 1
+fi
+
 # The demo reader must be unable to perform even a harmless-looking UPDATE.
 # This checks PostgreSQL grants, not just the CLI's read-only query shape.
 if "${compose[@]}" exec -T -e PGPASSWORD=demo-reader-only db \
