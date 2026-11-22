@@ -66,15 +66,15 @@ func TestPostfaultCLIRejectsDuplicateBundleAndExpectedKeys(t *testing.T) {
 		name, bundleJSON, expectedJSON, wantError string
 	}{
 		{
-			name: "duplicate_bundle_schema",
-			bundleJSON: `{"schema":"untrusted","schema":"acp.postfault-bundle/v1","subject":{},"fault":{"id":"worker-fault-1","kind":"worker_sigkill","at":"2026-11-22T04:00:00Z"},"receipts":[]}`,
+			name:         "duplicate_bundle_schema",
+			bundleJSON:   `{"schema":"untrusted","schema":"acp.postfault-bundle/v1","subject":{},"fault":{"id":"worker-fault-1","kind":"worker_sigkill","at":"2026-11-22T04:00:00Z"},"receipts":[]}`,
 			expectedJSON: expectedOK, wantError: "postfault bundle is invalid",
 		},
 		{
-			name: "escaped_duplicate_expected_schema",
-			bundleJSON: bundleOK,
+			name:         "escaped_duplicate_expected_schema",
+			bundleJSON:   bundleOK,
 			expectedJSON: `{"\u0073chema":"untrusted","schema":"acp.postfault-expected/v1","subject":{},"fault_id":"worker-fault-1","fault_at":"2026-11-22T04:00:00Z"}`,
-			wantError: "independent authoritative Run/fault binding is invalid",
+			wantError:    "independent authoritative Run/fault binding is invalid",
 		},
 	}
 	for _, tc := range cases {
