@@ -72,6 +72,16 @@ At the time of this change the pinned workflow does not build SandboxService/Age
 **Claim boundary:** A Green contract unit suite means the *checker* works. Only externally signed real Sandbox/AgentD/Guard evidence for the same Run can turn the **full** Golden Path GREEN.
 
 
+## Pinned Sandbox PostgreSQL source boundary (PR #91 ↔ Draft #102)
+
+The `sandbox-db-boundary` job in [the local postfault CI](../../.github/workflows/postfault-local-precursor.yml) checks out **two distinct exact source commits**: its own current #91 HEAD and the standalone Sandbox Journal from Draft #102 at `7abe480007692e370c790957baf12acf923b36c6`. The checkout action is also SHA-pinned. It verifies both source HEADs and Go module checksums, runs #102's real disposable **PostgreSQL 16** migrations/least-privileged `sandboxctl inspect` demo, and securely tears down the one-off Docker database. This is **cross-source execution with actual SQL and authenticated reader**, not an in-memory or source-signature fixture.
+
+The test parses the read-only JSON from PostgreSQL and asserts that the Lease and Command have exactly the same fixture Tenant, Run and Runtime Attempt, the lease state is `WAITING_FOR_PERMIT`, the command is `PERMIT_UNAVAILABLE`, the source label is `UNATTESTED_DB_SNAPSHOT` and all dispatch, retry, success and release authority fields remain false. It then passes the actual raw snapshot to `acp-postfault-verify` as a proposed signed bundle and **requires explicit rejection** as an invalid recovery bundle. This prevents a successful local database inspection from being silently promoted into an AgentD exit or workspace persistence receipt. CI prints `SANDBOX_SOURCE_BOUNDARY=PASS; REAL_SIGNED_RUNTIME_SANDBOX_AGENTD_GUARD_PROOF=NOT_VERIFIED` only when the negative boundary holds.
+
+**Critical scope limits:** This exercises a *separate synthetic pre-Permit Run* from #102, not the canonical live Run in the Temporal Golden Path. It creates no SandboxLease, Guard Permit, AgentD side effect, live `UNKNOWN` inspection, terminal receipt or physical release. Source pinning fixes the repository tree but the demo's `postgres:16-alpine` image is still tag-based, so exact image digest provenance must be established before treating the experiment as fully reproducible production evidence. The current #102 branch is Draft. **The full Golden Path's missing independently signed, same-Run Sandbox/AgentD/Guard/Runtime producers remains mandatory BLOCKED.**
+
+The next authority-producing integration must use owner-controlled service credentials and an independently provisioned trust root to bind an actual Sandbox UID/generation/workspace readback and an **original, durable `UNKNOWN` CommandID/AttemptID** to a new authenticated `InspectCommand` result without repeating dispatch. AgentD must durably own the terminal receipt/journal revision; no ACP test fixture, `sandboxctl` snapshot, model decision or client-provided signature may substitute.
+
 ## Local physical workspace crash precursor (PR #92)
 
 Draft [#92](https://github.com/avaargsh/agent-control-panel/pull/92) adds a **real Linux OS-process SIGKILL experiment** inside the disposable Go test binary. It is a necessary lower-level storage/process continuity check, **not** the full SandboxService integration required above.
