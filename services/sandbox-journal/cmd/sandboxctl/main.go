@@ -128,6 +128,27 @@ func verifySandboxReadRole(ctx context.Context, pool *pgxpool.Pool) error {
 		               THEN has_sequence_privilege(current_user, c.oid, 'SELECT,USAGE,UPDATE')
 		               ELSE false END
 		  )
+		  -- A function created by the DB owner may carry SECURITY
+		  -- DEFINER + default PUBLIC EXECUTE. An otherwise SELECT-only
+		  -- LOGIN with schema USAGE can invoke it to read/write data under
+		  -- the owner's privilege. Fail closed on effective callable
+		  -- routines in any non-system schema, not only journal tables.
+		  -- PostgreSQL trigger-only functions cannot be called directly
+		  -- via SELECT/CALL; excluding their return type preserves the
+		  -- verified commit-history constraint triggers in migration 0006.
+		  AND NOT EXISTS (
+		    SELECT 1
+		      FROM pg_catalog.pg_proc f
+		      JOIN pg_catalog.pg_namespace n ON n.oid = f.pronamespace
+		     WHERE f.prosecdef
+		       AND f.prorettype <> 'pg_catalog.trigger'::regtype
+		       AND f.prorettype <> 'pg_catalog.event_trigger'::regtype
+		       AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+		       AND n.nspname NOT LIKE 'pg_toast%'
+		       AND n.nspname NOT LIKE 'pg_temp_%'
+		       AND has_schema_privilege(current_user, n.oid, 'USAGE')
+		       AND has_function_privilege(current_user, f.oid, 'EXECUTE')
+		  )
 		  AND NOT EXISTS (
 		    SELECT 1 FROM pg_roles AS r
 		    WHERE (r.rolname = session_user OR pg_has_role(session_user, r.oid, 'MEMBER'))
