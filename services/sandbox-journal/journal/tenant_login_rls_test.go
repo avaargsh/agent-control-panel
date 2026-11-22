@@ -139,6 +139,20 @@ func TestCommandJournalReaderCannotReadOtherTenantWithOwnLogin(t *testing.T) {
 	if _, created, err := New(writer).RecordPermitUnavailable(ctx, ownB); err != nil || created {
 		t.Fatalf("tenant-B idempotent retry failed: created=%t err=%v", created, err)
 	}
+	// This is a real independently authenticated non-owner LOGIN with
+	// Command INSERT privilege and tenant-B RLS. The DB must reject a direct
+	// source-only COMMIT, not merely the Go repository's ordinary dual-write.
+	directOrphan := inB
+	directOrphan.CommandID = "tenant-b-direct-sql-orphan"
+	_, directErr := writer.Exec(ctx, `INSERT INTO public.sandbox_journal_commands
+		(tenant_id,sandbox_uid,command_id,run_id,runtime_attempt_id,request_digest)
+		VALUES($1,$2,$3,$4,$5,$6)`,
+		directOrphan.TenantID, directOrphan.SandboxUID, directOrphan.CommandID,
+		directOrphan.RunID, directOrphan.RuntimeAttemptID, directOrphan.RequestDigest)
+	assertCommandCommitDenied(t, directErr)
+	if _, err := New(writer).Get(ctx, directOrphan.TenantID, directOrphan.SandboxUID, directOrphan.CommandID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("non-owner SQL writer committed a source-only command: %v", err)
+	}
 	forgedA := inA
 	forgedA.CommandID = "forged-a-command"
 	if _, created, err := New(writer).RecordPermitUnavailable(ctx, forgedA); err == nil || created {
