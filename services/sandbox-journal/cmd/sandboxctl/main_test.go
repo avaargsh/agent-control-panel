@@ -311,4 +311,44 @@ func TestSandboxctlRejectsShadowSchemaReadRoleBypass(t *testing.T) {
 	if err := verifySandboxReadRole(ctx, pool); err != nil {
 		t.Fatalf("non-callable SECURITY DEFINER trigger blocked safe reader: %v", err)
 	}
+
+	// The four Sandbox-owned tables are the *entire* diagnostic reader's
+	// allowed data surface. In particular, table ACLs for a foreign schema
+	// can grant writable side effects without any CREATE, journal DML,
+	// Sequence privilege or SECURITY DEFINER routine.
+	const externalTable = schema + ".foreign_effect_probe"
+	if _, err := owner.Exec(ctx, "CREATE TABLE "+externalTable+" (payload text NOT NULL)"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := owner.Exec(ctx, "GRANT INSERT ON "+externalTable+" TO "+username); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := probe.Exec(ctx, "INSERT INTO "+externalTable+" VALUES ('foreign-insert-verified')"); err != nil {
+		t.Fatalf("actual independent LOGIN could not exercise foreign table INSERT: %v", err)
+	}
+	if err := verifySandboxReadRole(ctx, pool); err == nil {
+		t.Fatal("foreign table INSERT privilege bypassed exact-four-table reader fence")
+	}
+	if _, err := owner.Exec(ctx, "REVOKE INSERT ON "+externalTable+" FROM "+username); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifySandboxReadRole(ctx, pool); err != nil {
+		t.Fatalf("revoking foreign INSERT did not restore dedicated read role: %v", err)
+	}
+	if _, err := owner.Exec(ctx, "GRANT SELECT ON "+externalTable+" TO "+username); err != nil {
+		t.Fatal(err)
+	}
+	var payload string
+	if err := probe.QueryRow(ctx, "SELECT payload FROM "+externalTable).Scan(&payload); err != nil || payload != "foreign-insert-verified" {
+		t.Fatalf("actual foreign table SELECT not exercised: payload=%q err=%v", payload, err)
+	}
+	if err := verifySandboxReadRole(ctx, pool); err == nil {
+		t.Fatal("unrelated foreign table SELECT privilege bypassed exact-four-table reader fence")
+	}
+	if _, err := owner.Exec(ctx, "REVOKE SELECT ON "+externalTable+" FROM "+username); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifySandboxReadRole(ctx, pool); err != nil {
+		t.Fatalf("revoking foreign SELECT did not restore dedicated read role: %v", err)
+	}
 }
