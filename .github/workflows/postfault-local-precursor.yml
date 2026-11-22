@@ -1,4 +1,4 @@
-name: Local postfault SIGKILL and UNKNOWN precursor (non-production)
+name: Local postfault and signed evidence precursor (non-production)
 
 on:
   pull_request:
@@ -41,6 +41,12 @@ jobs:
           set -euo pipefail
           test "$(go env GOVERSION)" = "go1.27.4"
           go mod verify
+      - name: Reject ambiguous signed JSON field aliases (strict decoder)
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -race -count=1 -v -run '^TestStrictDecodeRejectsCaseFoldedDuplicateKeys$' ./internal/postfault | tee "$RUNNER_TEMP/postfault-strict-json.log"
+          grep -Fq -- '--- PASS: TestStrictDecodeRejectsCaseFoldedDuplicateKeys ' "$RUNNER_TEMP/postfault-strict-json.log"
       - name: Compile and run real local process SIGKILL, UNKNOWN and negative matrix
         shell: bash
         run: |
