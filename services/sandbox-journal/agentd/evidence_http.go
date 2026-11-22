@@ -6,7 +6,6 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"io"
 	"mime"
 	"net/http"
@@ -207,9 +206,8 @@ func NewReadOnlyEvidenceHandler(db *pgxpool.Pool, sourcePublicKey ed25519.Public
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(response); err != nil {
-			// A partial output cannot be promoted by the consuming verifier.
-			_ = errors.New("source response stream interrupted")
-		}
+		// A truncated HTTP response cannot validate as a complete signed
+		// evidence envelope on the independently verifying client.
+		_ = json.NewEncoder(w).Encode(response)
 	})
 }
