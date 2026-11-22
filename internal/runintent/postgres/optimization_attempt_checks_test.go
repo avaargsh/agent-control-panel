@@ -110,3 +110,47 @@ func TestOptimizationAttemptMigrationRejectsOwnershipDrift(t *testing.T) {
 		})
 	}
 }
+// The schema_migrations owner is a catalog entry, not an independent trust
+// root. A privileged out-of-band change can transfer the ledger, protected
+// table and trigger function together, preserving pairwise owner equality.
+// A fresh trusted migration login must still refuse that coordinated drift.
+func TestOptimizationAttemptMigrationRejectsCoordinatedOwnerTransfer(t *testing.T) {
+	_, pool := testRepository(t)
+	ctx := context.Background()
+	var migrator, session string
+	if err := pool.QueryRow(ctx, "SELECT current_user, session_user").Scan(&migrator, &session); err != nil {
+		t.Fatal(err)
+	}
+	if migrator != session {
+		t.Fatalf("fixture must have a stable authenticated migrator: current=%q session=%q", migrator, session)
+	}
+	role := fmt.Sprintf("opt_coordinated_owner_%d", time.Now().UnixNano())
+	roleID := pgx.Identifier{role}.Sanitize()
+	migratorID := pgx.Identifier{migrator}.Sanitize()
+	if _, err := pool.Exec(ctx, "CREATE ROLE "+roleID+" NOLOGIN NOBYPASSRLS"); err != nil {
+		t.Fatal(err)
+	}
+	objects := []string{
+		"TABLE schema_migrations",
+		"TABLE optimization_verification_attempts",
+		"FUNCTION reject_optimization_attempt_mutation()",
+	}
+	t.Cleanup(func() {
+		for i := len(objects) - 1; i >= 0; i-- {
+			if _, err := pool.Exec(context.Background(), "ALTER "+objects[i]+" OWNER TO "+migratorID); err != nil {
+				t.Errorf("restore trusted %s owner: %v", objects[i], err)
+			}
+		}
+		if _, err := pool.Exec(context.Background(), "DROP ROLE "+roleID); err != nil {
+			t.Errorf("drop disposable coordinated-owner role: %v", err)
+		}
+	})
+	for _, object := range objects {
+		if _, err := pool.Exec(ctx, "ALTER "+object+" OWNER TO "+roleID); err != nil {
+			t.Fatalf("inject coordinated owner drift on %s: %v", object, err)
+		}
+	}
+	if err := Migrate(ctx, pool); !errors.Is(err, ErrSchemaDrift) {
+		t.Fatalf("untrusted coordinated ledger/table/function ownership was accepted: %v", err)
+	}
+}
