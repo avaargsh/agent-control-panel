@@ -5,11 +5,14 @@ package main
 
 import (
 	"crypto/ed25519"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,15 +23,24 @@ import (
 
 const maxBundleBytes = 128 << 10
 
-const expectedBindingVersion = "acp.postfault-expected/v1"
+const expectedBindingVersion = "acp.postfault-expected/v2"
 
 // The expected binding must be read independently from the actual ACP/Runtime
 // authority and fault injector, not copied from the submitted bundle.
+type agentDHeadBinding struct {
+	InspectCount   uint64 `json:"inspect_count"`
+	JournalVersion uint64 `json:"journal_version"`
+	Digest         string `json:"digest"`
+}
+
 type expectedBinding struct {
-	Schema  string            `json:"schema"`
-	Subject postfault.Subject `json:"subject"`
-	FaultID string            `json:"fault_id"`
-	FaultAt time.Time         `json:"fault_at"`
+	Schema                 string                 `json:"schema"`
+	Subject                postfault.Subject      `json:"subject"`
+	FaultID                string                 `json:"fault_id"`
+	FaultAt                time.Time              `json:"fault_at"`
+	AgentDRef              *postfault.AgentDWaitRef `json:"agentd_ref"`
+	AgentDGuardOperationID string                 `json:"agentd_guard_operation_id"`
+	AgentDHead             *agentDHeadBinding     `json:"agentd_trusted_head"`
 }
 
 func matchesExpected(bundle postfault.Bundle, expected expectedBinding) error {
@@ -45,18 +57,25 @@ func main() {
 		fmt.Fprintln(os.Stderr, "POSTFAULT RECOVERY BLOCKED:", err)
 		os.Exit(1)
 	}
-	fmt.Println("POSTFAULT RECOVERY VERIFIED: signed cross-authority continuity contract satisfied")
+	fmt.Println("POSTFAULT RECOVERY VERIFIED: signed cross-authority continuity and original AgentD source chain satisfied")
 }
 
 func run(args []string) error {
 	flags := flag.NewFlagSet("acp-postfault-verify", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	bundlePath := flags.String("bundle", "", "externally signed recovery bundle")
-	expectedPath := flags.String("expected", "", "independent ACP/Runtime same-Run and injected-fault binding")
+	expectedPath := flags.String("expected", "", "independent ACP/Runtime/AgentD same-Run binding and trusted Inspect Head")
 	trustDir := flags.String("trust-dir", "", "out-of-band trusted authority public keys")
+	agentDEndpoint := flags.String("agentd-evidence-endpoint", "", "trusted HTTPS AgentD evidence endpoint")
+	agentDClientCert := flags.String("agentd-client-cert", "", "per-tenant mTLS client certificate PEM")
+	agentDClientKey := flags.String("agentd-client-key", "", "per-tenant mTLS client private key PEM (0600)")
+	agentDServerCA := flags.String("agentd-server-ca", "", "trusted AgentD HTTPS server CA PEM")
+	agentDServerName := flags.String("agentd-server-name", "", "expected AgentD HTTPS server certificate name")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 ||
-		*bundlePath == "" || *expectedPath == "" || *trustDir == "" {
-		return errors.New("requires --bundle, --expected and --trust-dir; absence is not a PASS")
+		*bundlePath == "" || *expectedPath == "" || *trustDir == "" ||
+		*agentDEndpoint == "" || *agentDClientCert == "" || *agentDClientKey == "" ||
+		*agentDServerCA == "" || *agentDServerName == "" {
+		return errors.New("requires bundle, expected binding, trust keys and AgentD mTLS endpoint/certificate/CA/server-name; absence is not a PASS")
 	}
 	data, err := privateBoundedInput(*bundlePath)
 	if err != nil || len(data) > maxBundleBytes {
@@ -72,8 +91,15 @@ func run(args []string) error {
 	}
 	var expected expectedBinding
 	if !postfault.StrictDecode(bindingBytes, &expected) ||
-		expected.Schema != expectedBindingVersion || expected.FaultID == "" || expected.FaultAt.IsZero() {
-		return errors.New("independent authoritative Run/fault binding is invalid")
+		expected.Schema != expectedBindingVersion || expected.FaultID == "" || expected.FaultAt.IsZero() ||
+		expected.AgentDRef == nil || expected.AgentDGuardOperationID == "" ||
+		expected.AgentDHead == nil || expected.AgentDHead.InspectCount == 0 ||
+		expected.AgentDHead.JournalVersion != expected.AgentDHead.InspectCount ||
+		expected.AgentDHead.Digest == "" ||
+		expected.AgentDRef.TenantID != expected.Subject.TenantID ||
+		expected.AgentDRef.RunID != expected.Subject.RunID ||
+		expected.AgentDGuardOperationID != expected.Subject.GuardOperationID {
+		return errors.New("independent authoritative Run/fault/AgentD source binding is invalid")
 	}
 	if err := matchesExpected(bundle, expected); err != nil {
 		return err
@@ -91,10 +117,79 @@ func run(args []string) error {
 		}
 		keys[authority] = ed25519.PublicKey(raw)
 	}
-	if err := postfault.Verify(bundle, keys, time.Now().UTC()); err != nil {
+	now := time.Now().UTC()
+	if err := postfault.Verify(bundle, keys, now); err != nil {
+		return err
+	}
+	httpClient, err := newAgentDEvidenceHTTPClient(*agentDClientCert, *agentDClientKey,
+		*agentDServerCA, *agentDServerName)
+	if err != nil {
+		return errors.New("per-tenant AgentD mTLS client configuration unavailable")
+	}
+	defer httpClient.CloseIdleConnections()
+	sourceClient := postfault.AgentDEvidenceClient{
+		Endpoint: *agentDEndpoint, HTTPClient: httpClient,
+	}
+	expectedWait := postfault.ExpectedAgentDWait{
+		Ref: *expected.AgentDRef, GuardOperationID: expected.AgentDGuardOperationID,
+	}
+	trustedHead := postfault.TrustedAgentDInspectHead{
+		InspectCount: expected.AgentDHead.InspectCount,
+		JournalVersion: expected.AgentDHead.JournalVersion,
+		Digest: expected.AgentDHead.Digest,
+	}
+	if err := sourceClient.Verify(context.Background(), bundle, keys, expectedWait, trustedHead, now); err != nil {
 		return err
 	}
 	return nil
+}
+
+
+func newAgentDEvidenceHTTPClient(certPath, keyPath, caPath, serverName string) (*http.Client, error) {
+	if strings.TrimSpace(serverName) == "" || strings.TrimSpace(serverName) != serverName {
+		return nil, errors.New("invalid AgentD TLS server name")
+	}
+	certPEM, err := privateBoundedInput(certPath)
+	if err != nil {
+		return nil, errors.New("AgentD client certificate unavailable")
+	}
+	keyPEM, err := privateSecretInput(keyPath)
+	if err != nil {
+		return nil, errors.New("AgentD client private key unavailable")
+	}
+	certificate, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		return nil, errors.New("AgentD mTLS client certificate/key invalid")
+	}
+	caPEM, err := privateBoundedInput(caPath)
+	if err != nil {
+		return nil, errors.New("AgentD server CA unavailable")
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(caPEM) {
+		return nil, errors.New("AgentD server CA invalid")
+	}
+	transport := &http.Transport{
+		Proxy: nil,
+		TLSClientConfig: &tls.Config{
+			MinVersion: tls.VersionTLS13,
+			RootCAs: roots,
+			Certificates: []tls.Certificate{certificate},
+			ServerName: serverName,
+		},
+		MaxIdleConns: 4,
+		MaxIdleConnsPerHost: 2,
+	}
+	return &http.Client{Transport: transport, Timeout: 10 * time.Second}, nil
+}
+
+func privateSecretInput(path string) ([]byte, error) {
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 ||
+		info.Size() <= 0 || info.Size() > maxBundleBytes {
+		return nil, errors.New("private key file unavailable or permissions too broad")
+	}
+	return privateBoundedInput(path)
 }
 
 func privateBoundedInput(path string) ([]byte, error) {
