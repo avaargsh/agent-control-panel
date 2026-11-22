@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -149,6 +150,23 @@ func NewReadOnlyEvidenceHandler(db *pgxpool.Pool, sourcePublicKey ed25519.Public
 			http.Error(w, "source evidence unavailable", http.StatusServiceUnavailable)
 			return
 		}
+		tx, err := db.BeginTx(r.Context(), pgx.TxOptions{
+			IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly,
+		})
+		if err != nil {
+			http.Error(w, "source evidence unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		defer func() { _ = tx.Rollback(context.Background()) }()
+		if err := verifyEvidenceReaderLogin(r.Context(), tx); err != nil {
+			http.Error(w, "source evidence reader identity denied", http.StatusServiceUnavailable)
+			return
+		}
+		if _, err := tx.Exec(r.Context(),
+			"SELECT set_config('app.tenant_id',$1,true)", req.Ref.TenantID); err != nil {
+			http.Error(w, "source tenant scope unavailable", http.StatusServiceUnavailable)
+			return
+		}
 		trustedHead, err := lookup(r.Context(), req.Ref)
 		if err != nil || trustedHead.InspectCount == 0 ||
 			trustedHead.JournalVersion != trustedHead.InspectCount ||
@@ -156,20 +174,29 @@ func NewReadOnlyEvidenceHandler(db *pgxpool.Pool, sourcePublicKey ed25519.Public
 			http.Error(w, "independent source head unavailable", http.StatusServiceUnavailable)
 			return
 		}
-		history, err := LoadInspectChain(r.Context(), db, req.Ref,
-			sourcePublicKey, time.Now().UTC())
+		now := time.Now().UTC()
+		history, err := loadInspectChainTx(r.Context(), tx, req.Ref,
+			sourcePublicKey, now)
 		if err != nil || len(history) == 0 {
 			http.Error(w, "original source history unavailable", http.StatusConflict)
 			return
 		}
 		if len(history) > maxExportedEvents || VerifyInspectAtHead(
-			history, req.Ref, sourcePublicKey, time.Now().UTC(), trustedHead) != nil {
+			history, req.Ref, sourcePublicKey, now, trustedHead) != nil {
 			// No pagination proof exists yet. A valid but too-long stream is
 			// not an excuse to export an incomplete prefix as authoritative.
 			http.Error(w, "source head mismatch or export bound reached", http.StatusConflict)
 			return
 		}
 		last := history[len(history)-1]
+		terminal, err := inspectCommandTx(r.Context(), tx, req.Ref, sourcePublicKey)
+		if err != nil || terminal.State != last.Event.State ||
+			terminal.ExitReceiptDigest != last.Event.ExitReceiptDigest ||
+			terminal.NextAction != Hold || terminal.CanRetry ||
+			terminal.CanDeclareReleased {
+			http.Error(w, "original Wait source proof unavailable", http.StatusConflict)
+			return
+		}
 		response := EvidenceReadResponse{
 			Schema: EvidenceReadSchema, Ref: req.Ref,
 			State: last.Event.State, NextAction: Hold,
@@ -182,19 +209,12 @@ func NewReadOnlyEvidenceHandler(db *pgxpool.Pool, sourcePublicKey ed25519.Public
 		}
 		switch last.Event.State {
 		case Unknown:
-			if last.Event.ExitReceiptDigest != "" {
+			if last.Event.ExitReceiptDigest != "" || len(terminal.ReceiptPayload) != 0 {
 				http.Error(w, "unresolved source state", http.StatusConflict)
 				return
 			}
 		case Exited, FailedConfirmed:
-			// The source Inspect state has to agree with the committed,
-			// separately domain-signed original OS Wait receipt.
-			terminal, err := InspectCommand(r.Context(), db, req.Ref, sourcePublicKey)
-			if err != nil || terminal.State != last.Event.State ||
-				terminal.NextAction != Hold || terminal.CanRetry ||
-				terminal.CanDeclareReleased ||
-				terminal.ExitReceiptDigest != last.Event.ExitReceiptDigest ||
-				len(terminal.ReceiptPayload) == 0 {
+			if len(terminal.ReceiptPayload) == 0 {
 				http.Error(w, "original Wait source proof unavailable", http.StatusConflict)
 				return
 			}
@@ -203,6 +223,10 @@ func NewReadOnlyEvidenceHandler(db *pgxpool.Pool, sourcePublicKey ed25519.Public
 			response.Terminal = &proof
 		default:
 			http.Error(w, "unknown original source inspection state", http.StatusConflict)
+			return
+		}
+		if err := tx.Commit(r.Context()); err != nil {
+			http.Error(w, "source evidence snapshot unavailable", http.StatusServiceUnavailable)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
