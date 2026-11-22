@@ -68,7 +68,7 @@ func injectPreexistingJournalCorruption(t *testing.T, repo *Repository, sql stri
 
 func TestJournalOutboxMigrationRefusesInconsistentHistoricalFacts(t *testing.T) {
 	for _, tc := range []struct {
-		name string
+		name   string
 		tamper string
 	}{
 		{"deleted_original", "DELETE FROM sandbox_journal_outbox WHERE generation=1"},
