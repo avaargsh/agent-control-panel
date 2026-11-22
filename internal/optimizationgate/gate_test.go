@@ -64,9 +64,9 @@ func TestValidIndependentEvidenceIsEligibleForReviewOnly(t *testing.T) {
 func TestRejectsInvalidIndependentResults(t *testing.T) {
 	cases := map[string]func(*EvaluationReceipt){
 		"wrong tenant":                  func(r *EvaluationReceipt) { r.TenantID = "tenant-other" },
-		"different verification nonce": func(r *EvaluationReceipt) { r.VerificationNonce = strings.Repeat("2", 64) },
-		"missing baseline evidence": func(r *EvaluationReceipt) { r.BaselineEvidenceDigest = "" },
-		"malformed candidate evidence": func(r *EvaluationReceipt) { r.CandidateEvidenceDigest = "sha256:bad" },
+		"different verification nonce":  func(r *EvaluationReceipt) { r.VerificationNonce = strings.Repeat("2", 64) },
+		"missing baseline evidence":     func(r *EvaluationReceipt) { r.BaselineEvidenceDigest = "" },
+		"malformed candidate evidence":  func(r *EvaluationReceipt) { r.CandidateEvidenceDigest = "sha256:bad" },
 		"changed candidate sha":         func(r *EvaluationReceipt) { r.CandidateSHA = strings.Repeat("1", 40) },
 		"changed experiment baseline":   func(r *EvaluationReceipt) { r.ExperimentBaselineSHA = strings.Repeat("2", 40) },
 		"changed integration baseline":  func(r *EvaluationReceipt) { r.IntegrationBaselineSHA = strings.Repeat("3", 40) },
@@ -158,7 +158,6 @@ func TestRejectsUnsafeVerifierRunIdentity(t *testing.T) {
 		})
 	}
 }
-
 
 func TestRejectsReplayAcrossDistinctVerificationAttempts(t *testing.T) {
 	policy, receipt, key, keys := fixture()
