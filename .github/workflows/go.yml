@@ -68,10 +68,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          output="$(go test -count=1 -v -run TestAuthorityDatabaseRoleFailClosed ./cmd/acp-authority-api)"
-          printf '%s\n' "$output"
-          grep -F -- '--- PASS: TestAuthorityDatabaseRoleFailClosed' <<< "$output"
-          if grep -F -- '--- SKIP: TestAuthorityDatabaseRoleFailClosed' <<< "$output"; then
+          go test -count=1 -v -run TestAuthorityDatabaseRoleFailClosed ./cmd/acp-authority-api | tee role-test.log
+          grep -F -- '--- PASS: TestAuthorityDatabaseRoleFailClosed' role-test.log
+          if grep -F -- '--- SKIP: TestAuthorityDatabaseRoleFailClosed' role-test.log; then
             echo 'PGTEST_DSN role test was skipped: refuse security receipt' >&2
             exit 1
           fi
@@ -79,10 +78,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          output="$(go test -count=1 -v -run TestTwoTenantCatalogScopesRealPostgres ./internal/admission)"
-          printf '%s\n' "$output"
-          grep -F -- '--- PASS: TestTwoTenantCatalogScopesRealPostgres' <<< "$output"
-          if grep -F -- '--- SKIP: TestTwoTenantCatalogScopesRealPostgres' <<< "$output"; then
+          go test -count=1 -v -run TestTwoTenantCatalogScopesRealPostgres ./internal/admission | tee tenant-test.log
+          grep -F -- '--- PASS: TestTwoTenantCatalogScopesRealPostgres' tenant-test.log
+          if grep -F -- '--- SKIP: TestTwoTenantCatalogScopesRealPostgres' tenant-test.log; then
             echo 'two-tenant PostgreSQL isolation test was skipped' >&2
             exit 1
           fi
