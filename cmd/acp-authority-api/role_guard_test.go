@@ -73,6 +73,12 @@ func TestAuthorityDatabaseRoleFailClosed(t *testing.T) {
 	if _, err := admin.Exec(ctx, "INSERT INTO "+foreignSchema+".secret VALUES (1, 'foreign-schema-canary')"); err != nil {
 		t.Fatal(err)
 	}
+	// A sequence is not a table/view. USAGE and UPDATE can both grant
+	// nextval() mutation without any table DML privilege.
+	foreignSequence := pgx.Identifier{foreignSchema, "privilege_probe_seq"}.Sanitize()
+	if _, err := admin.Exec(ctx, "CREATE SEQUENCE "+foreignSequence); err != nil {
+		t.Fatal(err)
+	}
 
 	passwordBytes := make([]byte, 24)
 	if _, err := rand.Read(passwordBytes); err != nil {
@@ -161,6 +167,46 @@ func TestAuthorityDatabaseRoleFailClosed(t *testing.T) {
 			t.Fatal(err)
 		}
 		check(t, true)
+	})
+	check(t, true)
+	t.Run("foreign sequence grants bypass table-only reader guard", func(t *testing.T) {
+		for _, right := range []string{"USAGE", "UPDATE", "SELECT"} {
+			t.Run(right, func(t *testing.T) {
+				if _, err := admin.Exec(ctx, "GRANT "+right+" ON SEQUENCE "+foreignSequence+" TO "+role); err != nil {
+					t.Fatal(err)
+				}
+				query := "SELECT nextval($1::regclass)"
+				if right == "SELECT" {
+					query = "SELECT last_value FROM " + foreignSequence
+				}
+				var value int64
+				var err error
+				if right == "SELECT" {
+					err = reader.QueryRow(ctx, query).Scan(&value)
+				} else {
+					err = reader.QueryRow(ctx, query, foreignSequence).Scan(&value)
+				}
+				if err != nil || value < 1 {
+					t.Fatalf("actual independently authenticated reader cannot exercise %s sequence privilege: value=%d err=%v", right, value, err)
+				}
+				// Any effective foreign sequence right is outside the
+				// seven-table authority reader's read-only contract.
+				check(t, false)
+				if _, err := admin.Exec(ctx, "REVOKE "+right+" ON SEQUENCE "+foreignSequence+" FROM "+role); err != nil {
+					t.Fatal(err)
+				}
+				check(t, true)
+				if right == "SELECT" {
+					err = reader.QueryRow(ctx, query).Scan(&value)
+				} else {
+					err = reader.QueryRow(ctx, query, foreignSequence).Scan(&value)
+				}
+				var pgErr *pgconn.PgError
+				if !errors.As(err, &pgErr) || pgErr.Code != "42501" {
+					t.Fatalf("sequence %s must fail with SQLSTATE 42501 after revoke: err=%v", right, err)
+				}
+			})
+		}
 	})
 	check(t, true)
 	var databaseName string
