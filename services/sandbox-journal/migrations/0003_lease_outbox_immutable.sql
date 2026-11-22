@@ -3,6 +3,10 @@
 -- append-only safety barrier, not a Guard Permit or a signed evidence ledger.
 BEGIN;
 
+-- Block concurrent source writes while verifying history and installing the
+-- trigger barrier. Otherwise a write could race between the audit and DDL.
+LOCK TABLE sandbox_lease_intents, sandbox_lease_intent_events IN SHARE ROW EXCLUSIVE MODE;
+
 -- Refuse to seal already inconsistent events. A migration must not make
 -- corrupted historical rows look authoritative by installing triggers.
 DO $$
