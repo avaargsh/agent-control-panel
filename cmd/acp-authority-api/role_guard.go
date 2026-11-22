@@ -125,11 +125,12 @@ SELECT COALESCE((
               AND s.nspname NOT IN ('pg_catalog', 'information_schema')
               AND s.nspname NOT LIKE 'pg_toast%'
               AND s.nspname NOT LIKE 'pg_temp_%'
-              AND (
-                  has_sequence_privilege(c.oid, 'USAGE')
-                  OR has_sequence_privilege(c.oid, 'SELECT')
-                  OR has_sequence_privilege(c.oid, 'UPDATE')
-              )
+              -- PostgreSQL may reorder AND predicates during planning;
+              -- never evaluate sequence-only ACL functions on a table,
+              -- view or other non-sequence pg_class entry.
+              AND CASE WHEN c.relkind = 'S'
+                       THEN has_sequence_privilege(c.oid, 'SELECT,USAGE,UPDATE')
+                       ELSE false END
        )
        AND NOT EXISTS (
            SELECT 1 FROM pg_catalog.pg_class c
