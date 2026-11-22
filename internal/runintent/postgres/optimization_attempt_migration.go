@@ -122,6 +122,9 @@ func verifyOptimizationAttemptSchema(ctx context.Context, tx pgx.Tx, source []by
 	if !keys {
 		return ErrSchemaDrift
 	}
+	if err := verifyOptimizationAttemptChecks(ctx, tx, source); err != nil {
+		return err
+	}
 	// Compile the reviewed RLS scope in the same PostgreSQL instance to
 	// compare its normalized expression, rather than checking only names.
 	if _, err := tx.Exec(ctx, `
