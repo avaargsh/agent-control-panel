@@ -257,6 +257,30 @@ func TestSandboxctlRejectsShadowSchemaReadRoleBypass(t *testing.T) {
 		t.Fatal("reader could still advance sequence after USAGE privilege revoked")
 	}
 
+	// A principal can create persistent objects in another schema WITHOUT
+	// CREATE on the database or public schema, table DML, or a sequence
+	// grant. Demonstrate a real independent LOGIN side effect; default
+	// client read-only mode is not a safe credential privilege boundary.
+	if _, err := owner.Exec(ctx, "GRANT CREATE ON SCHEMA "+schema+" TO "+username); err != nil {
+		t.Fatal(err)
+	}
+	const createdTable = schema + ".direct_schema_create_effect"
+	if _, err := probe.Exec(ctx, "CREATE TABLE "+createdTable+" (payload text)"); err != nil {
+		t.Fatalf("real independent LOGIN could not use foreign schema CREATE: %v", err)
+	}
+	if _, err := owner.Exec(ctx, "DROP TABLE "+createdTable); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifySandboxReadRole(ctx, pool); err == nil {
+		t.Fatal("foreign schema CREATE capability bypassed read-only diagnostic credential fence")
+	}
+	if _, err := owner.Exec(ctx, "REVOKE CREATE ON SCHEMA "+schema+" FROM "+username); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifySandboxReadRole(ctx, pool); err != nil {
+		t.Fatalf("revoking foreign schema CREATE did not restore SELECT-only reader: %v", err)
+	}
+
 	// PostgreSQL grants EXECUTE on newly created functions to PUBLIC.
 	// SECURITY DEFINER runs under the owner's table privileges; a read-only
 	// LOGIN with schema USAGE can therefore read data it has no table SELECT
@@ -421,6 +445,40 @@ func TestSandboxctlRejectsShadowSchemaReadRoleBypass(t *testing.T) {
 	if err := verifySandboxReadRole(ctx, pool); err != nil {
 		t.Fatalf("revoking delegated foreign INSERT did not restore reader: %v", err)
 	}
+
+	// SET ROLE to a NOINHERIT helper can also CREATE in a foreign schema,
+	// even though the original LOGIN inherits no ordinary table rights.
+	if _, err := owner.Exec(ctx, "GRANT CREATE ON SCHEMA "+schema+" TO "+delegated); err != nil {
+		t.Fatal(err)
+	}
+	creator, err := probe.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := creator.Exec(ctx, "SET ROLE "+delegated); err != nil {
+		creator.Release()
+		t.Fatalf("real LOGIN cannot switch to delegated schema creator: %v", err)
+	}
+	const delegatedTable = schema + ".delegated_schema_create_effect"
+	_, createdErr := creator.Exec(ctx, "CREATE TABLE "+delegatedTable+" (payload text)")
+	_, roleResetErr := creator.Exec(ctx, "RESET ROLE")
+	creator.Release()
+	if createdErr != nil || roleResetErr != nil {
+		t.Fatalf("delegated schema CREATE fixture failed: create=%v reset=%v", createdErr, roleResetErr)
+	}
+	if _, err := owner.Exec(ctx, "DROP TABLE "+delegatedTable); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifySandboxReadRole(ctx, pool); err == nil {
+		t.Fatal("NOINHERIT SET ROLE delegated foreign schema CREATE bypassed read-only fence")
+	}
+	if _, err := owner.Exec(ctx, "REVOKE CREATE ON SCHEMA "+schema+" FROM "+delegated); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifySandboxReadRole(ctx, pool); err != nil {
+		t.Fatalf("revoking delegated foreign schema CREATE did not restore reader: %v", err)
+	}
+
 	if _, err := owner.Exec(ctx, "GRANT USAGE ON SEQUENCE "+seq+" TO "+delegated); err != nil {
 		t.Fatal(err)
 	}
