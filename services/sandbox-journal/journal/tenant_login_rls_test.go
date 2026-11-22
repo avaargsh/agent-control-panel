@@ -91,4 +91,68 @@ func TestCommandJournalReaderCannotReadOtherTenantWithOwnLogin(t *testing.T) {
 	if err := reader.QueryRow(ctx, "SELECT count(*) FROM public.sandbox_journal_outbox WHERE tenant_id=$1", inB.TenantID).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("foreign immutable Outbox readable without tenant authority: count=%d err=%v", count, err)
 	}
+
+	// Exercise the write path using a distinct independently authenticated
+	// tenant-B LOGIN. The writer is not the table owner and can only INSERT
+	// immutable PERMIT_UNAVAILABLE facts for its DBA-bound tenant.
+	const writerLogin = "sandbox_ci_command_tenant_b"
+	const writerPassword = "command-rls-b-writer-ci-only"
+	defer func() {
+		_, _ = owner.pool.Exec(context.Background(), "DROP OWNED BY "+writerLogin)
+		_, _ = owner.pool.Exec(context.Background(), "DROP ROLE IF EXISTS "+writerLogin)
+	}()
+	for _, sql := range []string{
+		"CREATE ROLE " + writerLogin + " LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD '" + writerPassword + "'",
+		"GRANT CONNECT ON DATABASE sandbox_journal_ci TO " + writerLogin,
+		"GRANT acp_sandbox_command_writer TO " + writerLogin,
+	} {
+		if _, err := owner.pool.Exec(ctx, sql); err != nil {
+			t.Fatalf("create tenant-B command writer role: %v", err)
+		}
+	}
+	if _, err := owner.pool.Exec(ctx, `INSERT INTO public.sandbox_lease_db_principals
+		(login_name,tenant_id) VALUES ($1,$2)`, writerLogin, inB.TenantID); err != nil {
+		t.Fatalf("DBA tenant-B command writer binding: %v", err)
+	}
+	writerCfg := cfg.Copy()
+	writerCfg.ConnConfig.User, writerCfg.ConnConfig.Password = writerLogin, writerPassword
+	writer, err := pgxpool.NewWithConfig(ctx, writerCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	if got, err := New(writer).Get(ctx, inB.TenantID, inB.SandboxUID, inB.CommandID); err != nil || got.Identity != inB {
+		t.Fatalf("authorized tenant-B command+Outbox unreadable: %+v %v", got, err)
+	}
+	if _, err := New(writer).Get(ctx, inA.TenantID, inA.SandboxUID, inA.CommandID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("tenant-B writer read tenant-A journal despite RLS: %v", err)
+	}
+	ownB := inB
+	ownB.CommandID = "tenant-b-new-command"
+	if got, created, err := New(writer).RecordPermitUnavailable(ctx, ownB); err != nil || !created || got.Identity != ownB {
+		t.Fatalf("tenant-B writer cannot insert own immutable command: got=%+v created=%t err=%v", got, created, err)
+	}
+	if _, created, err := New(writer).RecordPermitUnavailable(ctx, ownB); err != nil || created {
+		t.Fatalf("tenant-B idempotent retry failed: created=%t err=%v", created, err)
+	}
+	forgedA := inA
+	forgedA.CommandID = "forged-a-command"
+	if _, created, err := New(writer).RecordPermitUnavailable(ctx, forgedA); err == nil || created {
+		t.Fatalf("tenant-B writer inserted foreign tenant-A command: created=%t err=%v", created, err)
+	}
+	// A client-controlled custom GUC must not substitute for session_user.
+	tx, err := writer.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	if _, err := tx.Exec(ctx, "SET LOCAL app.tenant_id='tenant-a'"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.QueryRow(ctx, "SELECT count(*) FROM public.sandbox_journal_commands WHERE tenant_id='tenant-a'").Scan(&count); err != nil || count != 0 {
+		t.Fatalf("spoofed app.tenant_id bypassed authenticated LOGIN boundary: count=%d err=%v", count, err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
 }
