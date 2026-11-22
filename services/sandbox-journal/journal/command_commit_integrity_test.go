@@ -3,6 +3,7 @@ package journal
 import (
 	"context"
 	"errors"
+	"os"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -23,6 +24,15 @@ func assertCommandCommitDenied(t *testing.T, err error) {
 func TestCommandCommitRejectsOrphanAndForgedOutbox(t *testing.T) {
 	repo := setup(t)
 	ctx := context.Background()
+	// The real DB migration is applied against the existing committed
+	// Journal history, not replaced with a mocked repository check.
+	migration, err := os.ReadFile("../migrations/0011_command_commit_integrity.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.pool.Exec(ctx, string(migration)); err != nil {
+		t.Fatalf("install owner-only deferred command barrier: %v", err)
+	}
 	orphan := sample()
 	orphan.CommandID = "direct-sql-orphan"
 	_, err := repo.pool.Exec(ctx, `INSERT INTO public.sandbox_journal_commands
