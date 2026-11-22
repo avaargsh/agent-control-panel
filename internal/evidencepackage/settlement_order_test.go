@@ -112,3 +112,28 @@ func TestEvidencePackageAcceptsSourceProofBeforeRecoveredRunAndSettlement(t *tes
 		t.Fatalf("valid signed recovery -> recovered Run -> settlement ordering rejected: %v", err)
 	}
 }
+
+
+func TestEvidencePackageRejectsSignedLifecycleStagesOutOfOrder(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		stage string
+	}{
+		{"decision_precedes_accepted_run", "decision"},
+		{"permit_precedes_accepted_decision", "permit"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := fixturePackage(t)
+			// All three owner receipts are normally fault-10s. Moving a
+			// source-signed Decision/Permit backward preserves signatures,
+			// source revisions, and pre-fault validity, but breaks the
+			// necessary Run -> Decision -> Permit dependency order.
+			mutate(t, &f, tc.stage, func(s *Statement) {
+				s.ObservedAt = f.e.Fault.At.Add(-15 * time.Second)
+			})
+			if err := Verify(f.p, f.e, f.pub, f.now); err == nil {
+				t.Fatal("G01/G03 accepted signed pre-fault lifecycle causal inversion")
+			}
+		})
+	}
+}
