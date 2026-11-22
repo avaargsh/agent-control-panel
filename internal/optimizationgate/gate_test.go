@@ -140,6 +140,19 @@ func TestRejectsCrossScopeVerifierKeyEvenWhenGloballyTrusted(t *testing.T) {
 	}
 }
 
+
+func TestRejectsUnsafeVerifierRunIdentity(t *testing.T) {
+	for _, runID := range []string{"../run", "other/run", "run\nspoof", "run\u200bhidden", strings.Repeat("r", 129)} {
+		t.Run(strings.ReplaceAll(runID, "\n", "-newline-"), func(t *testing.T) {
+			policy, receipt, key, keys := fixture()
+			receipt.VerifierRunID = runID
+			if _, err := VerifyReviewEvidence(policy, signed(receipt, key), keys); !errors.Is(err, ErrEvaluationFailed) {
+				t.Fatalf("unsafe verifier Run ID should fail closed: %q err=%v", runID, err)
+			}
+		})
+	}
+}
+
 func TestRejectsUnpinnedBaselinePolicy(t *testing.T) {
 	p, r, k, keys := fixture()
 	p.EvaluationDigest = "main"
