@@ -43,7 +43,14 @@ func verifyOptimizationAttemptSchema(ctx context.Context, tx pgx.Tx, source []by
 		WHERE c.oid=to_regclass('optimization_verification_attempts')
 		  AND c.relnamespace=current_schema()::regnamespace
 		  AND c.relkind='r' AND c.relpersistence='p'
-		  AND c.relrowsecurity AND c.relforcerowsecurity`).Scan(&relation); err != nil {
+		  AND c.relrowsecurity AND c.relforcerowsecurity
+		  -- Table and trigger-function owner must match the durable migration
+		  -- ledger owner. Non-owner ACL checks alone ignore current owners;
+		  -- a mistaken transfer could let an Agent change RLS or trigger code.
+		  AND c.relowner=(SELECT owner.relowner FROM pg_class owner
+		                  WHERE owner.oid=to_regclass('schema_migrations'))
+		  AND c.relowner=(SELECT owner.proowner FROM pg_proc owner
+		                  WHERE owner.oid=to_regprocedure('reject_optimization_attempt_mutation()'))`).Scan(&relation); err != nil {
 		return err
 	}
 	if !relation {
