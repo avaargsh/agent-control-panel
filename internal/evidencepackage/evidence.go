@@ -8,10 +8,8 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"strings"
 	"time"
 
@@ -132,62 +130,14 @@ func digest(s string) bool {
 	return true
 }
 
-// StrictDecode rejects duplicate JSON object keys in addition to unknown
-// fields and trailing data. Different service parsers must not disagree on
-// an owner-signed field because of duplicate keys.
+// StrictDecode uses the same case-folded, duplicate-key rejecting parser
+// as postfault. Having a separate lifecycle parser silently allowed a
+// differently cased, re-signed status alias to override an original status.
+// The source signature authenticates bytes, NOT their unambiguous decoding.
 func StrictDecode(data []byte, target any) bool {
-	tokenDecoder := json.NewDecoder(bytes.NewReader(data))
-	var walk func() error
-	walk = func() error {
-		token, err := tokenDecoder.Token()
-		if err != nil {
-			return err
-		}
-		delim, ok := token.(json.Delim)
-		if !ok {
-			return nil
-		}
-		switch delim {
-		case '{':
-			seen := make(map[string]bool)
-			for tokenDecoder.More() {
-				keyToken, err := tokenDecoder.Token()
-				if err != nil {
-					return err
-				}
-				key, ok := keyToken.(string)
-				if !ok || seen[key] {
-					return errors.New("duplicate or invalid JSON key")
-				}
-				seen[key] = true
-				if err := walk(); err != nil {
-					return err
-				}
-			}
-			_, err = tokenDecoder.Token()
-			return err
-		case '[':
-			for tokenDecoder.More() {
-				if err := walk(); err != nil {
-					return err
-				}
-			}
-			_, err := tokenDecoder.Token()
-			return err
-		default:
-			return errors.New("unexpected JSON delimiter")
-		}
-	}
-	if walk() != nil || tokenDecoder.Decode(new(any)) != io.EOF {
-		return false
-	}
-	d := json.NewDecoder(bytes.NewReader(data))
-	d.DisallowUnknownFields()
-	if d.Decode(target) != nil {
-		return false
-	}
-	return d.Decode(new(any)) == io.EOF
+	return postfault.StrictDecode(data, target)
 }
+
 func expectedValid(e Expected) bool {
 	if len(e.SourceRevisions) != len(stages) {
 		return false
