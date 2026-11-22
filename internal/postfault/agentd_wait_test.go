@@ -78,7 +78,7 @@ func TestG05RejectsForeignSourceSignedWaitAndForgedJournalLink(t *testing.T) {
 		{"other_permit", func(s *AgentDWaitStatement, _ *ExpectedAgentDWait, _ *Bundle) { s.Ref.GuardPermitID = "other-permit" }},
 		{"stale_permit_epoch", func(s *AgentDWaitStatement, _ *ExpectedAgentDWait, _ *Bundle) { s.Ref.PermitEpoch-- }},
 		{"other_process_start", func(s *AgentDWaitStatement, _ *ExpectedAgentDWait, _ *Bundle) { s.Ref.ProcessStartTicks++ }},
-		{"wrong_request_digest", func(s *AgentDWaitStatement, _ *ExpectedAgentDWait, _ *Bundle) { s.Ref.RequestDigest = "sha256:"+strings.Repeat("b",64) }},
+		{"wrong_request_digest", func(s *AgentDWaitStatement, _ *ExpectedAgentDWait, _ *Bundle) { s.Ref.RequestDigest = "sha256:"+strings.Repeat("b", 64) }},
 		{"unbound_guard_operation", func(_ *AgentDWaitStatement, e *ExpectedAgentDWait, _ *Bundle) { e.GuardOperationID = "other-guard-op" }},
 		{"invalid_terminal_source", func(s *AgentDWaitStatement, _ *ExpectedAgentDWait, _ *Bundle) { s.Source = "worker.report" }},
 		{"not_an_os_terminal", func(s *AgentDWaitStatement, _ *ExpectedAgentDWait, _ *Bundle) { s.Status = "UNKNOWN" }},
@@ -115,7 +115,7 @@ func TestG05RejectsMissingTamperedOrMismatchedTerminalDigest(t *testing.T) {
 		{"unbound_digest", raw, sig, keys["agentd"], false},
 		{"bad_signature", raw, make([]byte, ed25519.SignatureSize), keys["agentd"], true},
 		{"wrong_owner_key", raw, sig, keys["guard"], true},
-		{"altered_payload", append(append([]byte(nil),raw...), ' '), sig, keys["agentd"], true},
+		{"altered_payload", append(append([]byte(nil), raw...), ' '), sig, keys["agentd"], true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			copyBundle := b
