@@ -110,6 +110,7 @@ func TestOptimizationAttemptMigrationRejectsOwnershipDrift(t *testing.T) {
 		})
 	}
 }
+
 // The schema_migrations owner is a catalog entry, not an independent trust
 // root. A privileged out-of-band change can transfer the ledger, protected
 // table and trigger function together, preserving pairwise owner equality.
