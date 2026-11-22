@@ -35,3 +35,30 @@ func TestOptimizationAttemptMigrationRejectsWeakenedCheckPredicates(t *testing.T
 		})
 	}
 }
+
+// NOT NULL and defaults are just as security-relevant as CHECK expressions.
+// A nullable expiry bypasses SQL CHECK via UNKNOWN, and a changed default
+// can cause issued/consumed records to be rejected or forged unexpectedly.
+func TestOptimizationAttemptMigrationRejectsColumnMetadataDrift(t *testing.T) {
+	cases := []struct {
+		name string
+		sql  string
+	}{
+		{"nullable expiry", "ALTER TABLE optimization_verification_attempts ALTER COLUMN expires_at DROP NOT NULL"},
+		{"nullable tenant", "ALTER TABLE optimization_verification_attempts ALTER COLUMN tenant_id DROP NOT NULL"},
+		{"missing issue-time default", "ALTER TABLE optimization_verification_attempts ALTER COLUMN issued_at DROP DEFAULT"},
+		{"forged consume-time default", "ALTER TABLE optimization_verification_attempts ALTER COLUMN consumed_at SET DEFAULT clock_timestamp()"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, pool := testRepository(t)
+			ctx := context.Background()
+			if _, err := pool.Exec(ctx, tc.sql); err != nil {
+				t.Fatalf("inject v13 column drift: %v", err)
+			}
+			if err := Migrate(ctx, pool); !errors.Is(err, ErrSchemaDrift) {
+				t.Fatalf("weak v13 column metadata accepted: case=%q err=%v", tc.name, err)
+			}
+		})
+	}
+}
