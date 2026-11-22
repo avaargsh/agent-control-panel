@@ -1,0 +1,44 @@
+name: G05 source-owned AgentD Inspect journal (non-production)
+
+on:
+  pull_request:
+    paths:
+      - 'internal/postfault/agentd_inspect_source*'
+      - '.github/workflows/g05-agentd-inspect-source.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GOTOOLCHAIN: local
+
+jobs:
+  source-inspect-chain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Check exact source HEAD
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version: '1.27.4'
+          cache: false
+      - name: Verify toolchain, formatting and module authenticity
+        run: |
+          test "$(go env GOVERSION)" = "go1.27.4"
+          go mod verify
+          dirty="$(gofmt -l internal/postfault/agentd_inspect_source.go internal/postfault/agentd_inspect_source_test.go)"
+          if [ -n "$dirty" ]; then
+            printf '%s\n' "$dirty"
+            gofmt -d internal/postfault/agentd_inspect_source.go internal/postfault/agentd_inspect_source_test.go
+            exit 1
+          fi
+      - name: Real cryptographic G05 source Inspector chain boundary tests
+        run: go test -race -count=1 -run '^TestG05Source' ./internal/postfault
