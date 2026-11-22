@@ -22,10 +22,10 @@ This demo uses a fixed public test password. Never use it with production data o
 
 GitHub Actions `Sandbox-owned Command Journal (non-dispatch)` provisions an isolated `sandbox_journal_ci` PostgreSQL 16 database and executes:
 
-```bash
+````
 cd services/sandbox-journal
 go mod verify
-go test -p 1 -race -count=1 ./...
+go test -race -count=1 ./...
 go vet ./...
 ```
 
@@ -70,6 +70,13 @@ The script withdraws any broader table grants from these group roles before appl
 The hosted PostgreSQL 16 regression opens **separate authenticated LOGIN connections** and proves the writer can create/replay/cancel and the reader can inspect, while attempting direct event UPDATE/DELETE/TRUNCATE, identity rewrite, cross-module journal inspection, table creation, trigger disable and role escalation. A reader's write attempts must fail. This is **not** an authentication or authorization boundary for tenant identifiers: the Sandbox API must independently authenticate the caller, bind tenant/Run to trusted identity, and prevent cross-tenant SQL access. A compromised authorized writer still has narrowly scoped INSERT/UPDATE rights; these grants and append-only triggers alone do **not** make source facts cryptographically immutable or prove Permit/PEP authority.
 
 Operational constraints: never run migrations with a runtime LOGIN; never share a table-owner or superuser credential with the app. Review existing role memberships and `PUBLIC`/default privileges separately before deploying. This is a candidate privilege contract in a disposable CI database, not evidence of a production service principal or real AgentD commands.
+
+
+## Lease transaction commit barrier (candidate migration 0006)
+
+`migrations/0006_lease_commit_integrity.sql` follows **0005** in the independent Sandbox DB migration order. It locks lease tables while auditing existing state/event history; a missing original event, premature cancellation event, forged Run/digest, or extra event fields abort the migration. It installs two **DEFERRABLE INITIALLY DEFERRED constraint triggers**, covering state INSERT/UPDATE and Outbox INSERT. At COMMIT, the database requires exactly one bound event for `WAITING_FOR_PERMIT / generation=1` or exactly the two original creation/cancellation events for `CANCELLED_BEFORE_PROVISION / generation=2`. This preserves the repository's atomic `Create` and generation-fenced `CancelBeforeProvision` transactions while rejecting direct SQL that writes only one side of the aggregate.
+
+The independent PostgreSQL CI includes negative commit tests for orphaned state, cancellation without an Outbox, future event, wrong Run and unexpected sensitive payload fields, plus positive complete-history replay, CAS and SIGKILL-after-commit non-dispatch checks. This is **database integrity of pre-Permit lease intents only**. It does not authenticate callers or prove cross-tenant RLS: the shared Sandbox Writer credential must not be exposed to tenants or untrusted clients. Owner/DBA accounts can still alter triggers or history. No real sandbox provisioning, protected dispatch, AgentD provider receipt, Guard Permit, external UNKNOWN reconciliation or physical cleanup is enabled. A production roll-out requires independent owner review, controlled migration credentials, complete role grants and source-authenticated tenant binding.
 
 ## Read-only operator CLI (candidate): `sandboxctl inspect`
 

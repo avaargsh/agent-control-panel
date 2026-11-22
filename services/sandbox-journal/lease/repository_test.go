@@ -69,6 +69,16 @@ func testRepository(t *testing.T) *Repository {
 	if _, err := pool.Exec(ctx, string(immutable)); err != nil {
 		t.Fatal("lease Outbox append-only migration:", err)
 	}
+	// The independent CI database also installs the post-0005 deferrable
+	// COMMIT constraint. Each test's owner-only reset remains disposable;
+	// production runtime principals never execute migration SQL.
+	commitGuard, err := os.ReadFile(filepath.Join("..", "migrations", "0006_lease_commit_integrity.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, string(commitGuard)); err != nil {
+		t.Fatal("lease commit-integrity migration:", err)
+	}
 	return New(pool)
 }
 
