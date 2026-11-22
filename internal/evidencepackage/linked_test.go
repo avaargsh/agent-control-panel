@@ -61,6 +61,9 @@ func TestLinkedEvidenceRejectsSignedButReboundParentGraph(t *testing.T) {
 	}
 	for _, stage := range stagesToAlter {
 		for _, corruption := range []string{"missing", "wrong_digest"} {
+			if stage == "run" && corruption == "missing" {
+				continue // The root must have no predecessor.
+			}
 			t.Run(fmt.Sprintf("%s/%s", stage, corruption), func(t *testing.T) {
 				f := linkedFixture(t)
 				mutate(t, &f, stage, func(s *Statement) {
