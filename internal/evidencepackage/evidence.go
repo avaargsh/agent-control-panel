@@ -242,9 +242,6 @@ func Verify(p Package, e Expected, keys map[string]ed25519.PublicKey, now time.T
 	}
 	postfaultAfter := make(map[string]postfault.Observation)
 	for _, r := range recovery.Receipts {
-		if r.Phase != "after_recovery" {
-			continue
-		}
 		raw, err := base64.StdEncoding.Strict().DecodeString(r.PayloadB64)
 		if err != nil {
 			return reject("invalid postfault observation bytes")
@@ -253,7 +250,9 @@ func Verify(p Package, e Expected, keys map[string]ed25519.PublicKey, now time.T
 		if !StrictDecode(raw, &o) {
 			return reject("invalid postfault observation")
 		}
-		postfaultAfter[r.Authority] = o
+		if r.Phase == "after_recovery" {
+			postfaultAfter[r.Authority] = o
+		}
 	}
 
 	if len(p.Receipts) != len(stages) {
