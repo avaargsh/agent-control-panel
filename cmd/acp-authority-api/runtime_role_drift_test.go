@@ -5,8 +5,8 @@ import (
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
-	"crypto/sha256"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -340,91 +340,120 @@ func TestAuthorityHTTPRejectsRuntimeRoleDrift(t *testing.T) {
 		rawInput := []byte(`{"objective":"sre_incident_triage","service":"payments","signal":"latency"}`)
 		conf := authorityhttp.ReleaseConfig{
 			SchemaVersion: "acp.release-publication.v1",
-			TenantID: tenant, ProjectID: "project-drift",
+			TenantID:      tenant, ProjectID: "project-drift",
 			AgentID: "agent-drift", AgentReleaseID: "release-drift",
 			PolicyRevision: "policy-drift", CatalogVersion: "1.0.0",
-			IssuedAt: time.Now().UTC().Add(-time.Minute).Truncate(time.Second),
-			ExpiresAt: time.Now().UTC().Add(time.Hour).Truncate(time.Second),
-			Services: []string{"payments"},
+			IssuedAt:     time.Now().UTC().Add(-time.Minute).Truncate(time.Second),
+			ExpiresAt:    time.Now().UTC().Add(time.Hour).Truncate(time.Second),
+			Services:     []string{"payments"},
 			Capabilities: []authorityhttp.CapabilityContract{},
 		}
 		configJSON, err := json.Marshal(conf)
-		if err != nil { t.Fatal(err) }
+		if err != nil {
+			t.Fatal(err)
+		}
 		configSum := sha256.Sum256(configJSON)
 		configDigest := fmt.Sprintf("sha256:%x", configSum)
-		if err := os.WriteFile(filepath.Join(releaseDirectory, fmt.Sprintf("%x.json", configSum)), configJSON, 0600); err != nil { t.Fatal(err) }
+		if err := os.WriteFile(filepath.Join(releaseDirectory, fmt.Sprintf("%x.json", configSum)), configJSON, 0600); err != nil {
+			t.Fatal(err)
+		}
 		intent := runintent.Intent{
-			ID:id, TenantID:tenant, PrincipalID:"principal-drift",
-			ProjectID:"project-drift", AgentID:"agent-drift",
-			ReleaseID:"release-drift", SessionID:"session-drift",
-			IdempotencyKey:"accepted-fixture", Version:1, Status:runintent.Accepted,
-			RunID:runID, WorkflowID:"agent-run/v1/"+runID,
+			ID: id, TenantID: tenant, PrincipalID: "principal-drift",
+			ProjectID: "project-drift", AgentID: "agent-drift",
+			ReleaseID: "release-drift", SessionID: "session-drift",
+			IdempotencyKey: "accepted-fixture", Version: 1, Status: runintent.Accepted,
+			RunID: runID, WorkflowID: "agent-run/v1/" + runID,
 			PrincipalSnapshot: runintent.PrincipalSnapshot{
-				Version:runintent.PrincipalSnapshotVersion, ProjectID:"project-drift",
-				SubjectID:"subject-drift", ActorID:"subject-drift",
-				PolicyRevision:"policy-drift", ConfigDigest:configDigest,
+				Version: runintent.PrincipalSnapshotVersion, ProjectID: "project-drift",
+				SubjectID: "subject-drift", ActorID: "subject-drift",
+				PolicyRevision: "policy-drift", ConfigDigest: configDigest,
 			},
 		}
 		intent.RequestDigest, err = runintent.ExecutionInputDigest(intent, rawInput)
-		if err != nil { t.Fatal(err) }
-		if err := intent.Validate(); err != nil { t.Fatalf("bad accepted fixture: %v",err) }
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := intent.Validate(); err != nil {
+			t.Fatalf("bad accepted fixture: %v", err)
+		}
 		for _, statement := range []string{
-			"INSERT INTO "+schema+".admission_tenants VALUES ('tenant-drift',true)",
-			"INSERT INTO "+schema+".admission_projects VALUES ('tenant-drift','project-drift',true,'policy-drift')",
-			"INSERT INTO "+schema+".admission_principals VALUES ('tenant-drift','https://issuer.test','alice','principal-drift','subject-drift',true)",
-			"INSERT INTO "+schema+".admission_memberships VALUES ('tenant-drift','project-drift','principal-drift','client-drift','RUNNER',true)",
-			"INSERT INTO "+schema+".admission_releases VALUES ('tenant-drift','project-drift','agent-drift','release-drift','"+configDigest+"',true)",
-			"INSERT INTO "+schema+".admission_sessions VALUES ('tenant-drift','project-drift','session-drift','agent-drift','release-drift','principal-drift',true)",
+			"INSERT INTO " + schema + ".admission_tenants VALUES ('tenant-drift',true)",
+			"INSERT INTO " + schema + ".admission_projects VALUES ('tenant-drift','project-drift',true,'policy-drift')",
+			"INSERT INTO " + schema + ".admission_principals VALUES ('tenant-drift','https://issuer.test','alice','principal-drift','subject-drift',true)",
+			"INSERT INTO " + schema + ".admission_memberships VALUES ('tenant-drift','project-drift','principal-drift','client-drift','RUNNER',true)",
+			"INSERT INTO " + schema + ".admission_releases VALUES ('tenant-drift','project-drift','agent-drift','release-drift','" + configDigest + "',true)",
+			"INSERT INTO " + schema + ".admission_sessions VALUES ('tenant-drift','project-drift','session-drift','agent-drift','release-drift','principal-drift',true)",
 		} {
-			if _,err:=admin.Exec(ctx,statement);err!=nil{t.Fatal(err)}
+			if _, err := admin.Exec(ctx, statement); err != nil {
+				t.Fatal(err)
+			}
 		}
-		insert := "INSERT INTO "+schema+".run_intents ("+
-			"id,tenant_id,principal_id,project_id,agent_id,release_id,session_id,"+
-			"idempotency_key,request_digest,status,version,runtime_run_id,workflow_id,"+
-			"principal_snapshot_version,principal_subject_id,principal_actor_id,"+
-			"principal_policy_revision,principal_config_digest,execution_input,"+
-			"admission_issuer,admission_external_subject,admission_client_id) VALUES ("+
-			"'11111111-1111-4111-8111-111111111111','tenant-drift','principal-drift',"+
-			"'project-drift','agent-drift','release-drift','session-drift',"+
-			"'accepted-fixture',$1,'ACCEPTED',1,"+
-			"'22222222-2222-4222-8222-222222222222','agent-run/v1/22222222-2222-4222-8222-222222222222',"+
-			"'acp-principal/v1','subject-drift','subject-drift','policy-drift',$2,$3,"+
+		insert := "INSERT INTO " + schema + ".run_intents (" +
+			"id,tenant_id,principal_id,project_id,agent_id,release_id,session_id," +
+			"idempotency_key,request_digest,status,version,runtime_run_id,workflow_id," +
+			"principal_snapshot_version,principal_subject_id,principal_actor_id," +
+			"principal_policy_revision,principal_config_digest,execution_input," +
+			"admission_issuer,admission_external_subject,admission_client_id) VALUES (" +
+			"'11111111-1111-4111-8111-111111111111','tenant-drift','principal-drift'," +
+			"'project-drift','agent-drift','release-drift','session-drift'," +
+			"'accepted-fixture',$1,'ACCEPTED',1," +
+			"'22222222-2222-4222-8222-222222222222','agent-run/v1/22222222-2222-4222-8222-222222222222'," +
+			"'acp-principal/v1','subject-drift','subject-drift','policy-drift',$2,$3," +
 			"'https://issuer.test','alice','client-drift')"
-		if _,err:=admin.Exec(ctx,insert,intent.RequestDigest,configDigest,rawInput);err!=nil { t.Fatal(err) }
-		readerConfig,err:=pgxpool.ParseConfig(roleURL.String())
-		if err!=nil{t.Fatal(err)}
-		reader,err:=pgxpool.NewWithConfig(ctx,readerConfig)
-		if err!=nil{t.Fatal(err)}
-		defer reader.Close()
-		if err:=verifyAuthorityDatabaseRole(ctx,reader);err!=nil{t.Fatalf("reader positive control: %v",err)}
-		repo:=runpg.New(reader)
-		ref:=runpg.ExecutionAuthorityRef{TenantID:tenant,RunIntentID:id,RunID:runID,RequestDigest:intent.RequestDigest}
-		current,err:=repo.GetExecutionAuthority(ctx,ref)
-		if err!=nil || current.Ref!=ref || current.PrincipalID!=intent.PrincipalID {
-			t.Fatalf("actual accepted Run absent: authority=%+v err=%v",current,err)
+		if _, err := admin.Exec(ctx, insert, intent.RequestDigest, configDigest, rawInput); err != nil {
+			t.Fatal(err)
 		}
-		publisher,err:=authorityhttp.NewPublisher(releaseDirectory,ed25519.NewKeyFromSeed(seed))
-		if err!=nil{t.Fatal(err)}
+		readerConfig, err := pgxpool.ParseConfig(roleURL.String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		reader, err := pgxpool.NewWithConfig(ctx, readerConfig)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer reader.Close()
+		if err := verifyAuthorityDatabaseRole(ctx, reader); err != nil {
+			t.Fatalf("reader positive control: %v", err)
+		}
+		repo := runpg.New(reader)
+		ref := runpg.ExecutionAuthorityRef{TenantID: tenant, RunIntentID: id, RunID: runID, RequestDigest: intent.RequestDigest}
+		current, err := repo.GetExecutionAuthority(ctx, ref)
+		if err != nil || current.Ref != ref || current.PrincipalID != intent.PrincipalID {
+			t.Fatalf("actual accepted Run absent: authority=%+v err=%v", current, err)
+		}
+		publisher, err := authorityhttp.NewPublisher(releaseDirectory, ed25519.NewKeyFromSeed(seed))
+		if err != nil {
+			t.Fatal(err)
+		}
 		defer publisher.Close()
-		trust:=x509.NewCertPool()
-		if !trust.AppendCertsFromPEM(pemCA){t.Fatal("bad test CA")}
-		certificate,err:=tls.X509KeyPair(serverPEM,serverKey)
-		if err!=nil{t.Fatal(err)}
-		for _,publication:=range []bool{false,true}{
-			name:="run-authority"
-			pathPrefix:="/internal/v1/run-authority/"
-			if publication{name="decision-publication";pathPrefix="/internal/v1/decision-publication/"}
-			t.Run(name,func(t *testing.T){
-				defer func(){
-					if _,err:=admin.Exec(context.Background(),"REVOKE SELECT ON "+schema+".outbox_events FROM "+role);err!=nil{
-						t.Errorf("revoke injected grant: %v",err)
+		trust := x509.NewCertPool()
+		if !trust.AppendCertsFromPEM(pemCA) {
+			t.Fatal("bad test CA")
+		}
+		certificate, err := tls.X509KeyPair(serverPEM, serverKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, publication := range []bool{false, true} {
+			name := "run-authority"
+			pathPrefix := "/internal/v1/run-authority/"
+			if publication {
+				name = "decision-publication"
+				pathPrefix = "/internal/v1/decision-publication/"
+			}
+			t.Run(name, func(t *testing.T) {
+				defer func() {
+					if _, err := admin.Exec(context.Background(), "REVOKE SELECT ON "+schema+".outbox_events FROM "+role); err != nil {
+						t.Errorf("revoke injected grant: %v", err)
 					}
 				}()
-				var armed,triggered atomic.Bool
-				guard:=func(requestCtx context.Context) error {
-					if err:=verifyAuthorityDatabaseRole(requestCtx,reader);err!=nil{return err}
-					if armed.Load() && triggered.CompareAndSwap(false,true){
-						_,err:=admin.Exec(requestCtx,"GRANT SELECT ON "+schema+".outbox_events TO "+role)
+				var armed, triggered atomic.Bool
+				guard := func(requestCtx context.Context) error {
+					if err := verifyAuthorityDatabaseRole(requestCtx, reader); err != nil {
+						return err
+					}
+					if armed.Load() && triggered.CompareAndSwap(false, true) {
+						_, err := admin.Exec(requestCtx, "GRANT SELECT ON "+schema+".outbox_events TO "+role)
 						return err
 					}
 					return nil
@@ -432,36 +461,44 @@ func TestAuthorityHTTPRejectsRuntimeRoleDrift(t *testing.T) {
 				var handler http.Handler
 				var handlerErr error
 				if publication {
-					handler,handlerErr=authorityhttp.NewGuardedPublicationHandler(repo,publisher,peer,tenant,guard)
-				}else{
-					handler,handlerErr=authorityhttp.NewGuardedHandler(repo,peer,tenant,guard)
+					handler, handlerErr = authorityhttp.NewGuardedPublicationHandler(repo, publisher, peer, tenant, guard)
+				} else {
+					handler, handlerErr = authorityhttp.NewGuardedHandler(repo, peer, tenant, guard)
 				}
-				if handlerErr!=nil{t.Fatal(handlerErr)}
-				server:=httptest.NewUnstartedServer(handler)
-				server.TLS=&tls.Config{
-					MinVersion:tls.VersionTLS13,ClientAuth:tls.RequireAndVerifyClientCert,
-					ClientCAs:trust,Certificates:[]tls.Certificate{certificate},
+				if handlerErr != nil {
+					t.Fatal(handlerErr)
+				}
+				server := httptest.NewUnstartedServer(handler)
+				server.TLS = &tls.Config{
+					MinVersion: tls.VersionTLS13, ClientAuth: tls.RequireAndVerifyClientCert,
+					ClientCAs: trust, Certificates: []tls.Certificate{certificate},
 				}
 				server.StartTLS()
 				defer server.Close()
-				url:=server.URL+pathPrefix+id+"?run_id="+runID+"&request_digest="+intent.RequestDigest
-				request:=func()(int,[]byte){
+				url := server.URL + pathPrefix + id + "?run_id=" + runID + "&request_digest=" + intent.RequestDigest
+				request := func() (int, []byte) {
 					t.Helper()
-					response,err:=client.Get(url)
-					if err!=nil{t.Fatal(err)}
+					response, err := client.Get(url)
+					if err != nil {
+						t.Fatal(err)
+					}
 					defer response.Body.Close()
-					body,err:=io.ReadAll(io.LimitReader(response.Body,1<<20))
-					if err!=nil{t.Fatal(err)}
-					return response.StatusCode,body
+					body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+					if err != nil {
+						t.Fatal(err)
+					}
+					return response.StatusCode, body
 				}
-				if status,body:=request();status!=http.StatusOK || len(body)<30{
-					t.Fatalf("valid accepted Run %s baseline: HTTP %d body=%s",name,status,body)
+				if status, body := request(); status != http.StatusOK || len(body) < 30 {
+					t.Fatalf("valid accepted Run %s baseline: HTTP %d body=%s", name, status, body)
 				}
 				armed.Store(true)
-				status,body:=request()
-				if !triggered.Load(){t.Fatal("DCL race never injected")}
-				if status!=http.StatusServiceUnavailable{
-					t.Fatalf("P0 TOCTOU %s: expected 503, got HTTP %d with %d response bytes after committed GRANT between attestation and read",name,status,len(body))
+				status, body := request()
+				if !triggered.Load() {
+					t.Fatal("DCL race never injected")
+				}
+				if status != http.StatusServiceUnavailable {
+					t.Fatalf("P0 TOCTOU %s: expected 503, got HTTP %d with %d response bytes after committed GRANT between attestation and read", name, status, len(body))
 				}
 			})
 		}
