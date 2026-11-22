@@ -148,6 +148,33 @@ func verifySandboxReadRole(ctx context.Context, pool *pgxpool.Pool) error {
 		       AND n.nspname NOT LIKE 'pg_temp_%'
 		       AND has_schema_privilege(current_user, n.oid, 'USAGE')
 		       AND has_function_privilege(current_user, f.oid, 'EXECUTE')
+		       -- Migration 0007 intentionally uses exactly this DBA-owned
+		       -- stable SQL helper to bind the authenticated session LOGIN
+		       -- to its lease tenant. Do not broadly allow a function name:
+		       -- require its signature, language, owner of the private
+		       -- binding table and pinned search_path to agree. Table owner
+		       -- compromise remains outside the operator reader trust model.
+		       AND NOT (
+		         n.nspname = 'public'
+		         AND f.proname = 'sandbox_bound_lease_tenant'
+		         AND f.pronargs = 0
+		         AND f.prorettype = 'pg_catalog.text'::regtype
+		         AND f.provolatile = 's'
+		         AND f.prolang = (
+		           SELECT l.oid FROM pg_catalog.pg_language l
+		            WHERE l.lanname = 'sql'
+		         )
+		         AND 'search_path=pg_catalog, public' = ANY(f.proconfig)
+		         AND EXISTS (
+		           SELECT 1
+		             FROM pg_catalog.pg_class binding
+		             JOIN pg_catalog.pg_namespace bn ON bn.oid = binding.relnamespace
+		            WHERE bn.nspname = 'public'
+		              AND binding.relname = 'sandbox_lease_db_principals'
+		              AND binding.relkind = 'r'
+		              AND binding.relowner = f.proowner
+		         )
+		       )
 		  )
 		  AND NOT EXISTS (
 		    SELECT 1 FROM pg_roles AS r
