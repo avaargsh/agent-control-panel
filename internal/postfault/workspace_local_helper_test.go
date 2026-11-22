@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"syscall"
 )
 
@@ -101,12 +102,30 @@ func inspectLocalWorkspace(root string, expected localWorkspaceSnapshot) (localW
 
 func openLocalWorkspaceRoot(root string) (int, syscall.Stat_t, error) {
 	var info syscall.Stat_t
-	if root == "" || root[0] != '/' {
+	if root == "" || root[0] != '/' || root == "/" {
 		return -1, info, errors.New("absolute disposable root required")
 	}
-	fd, err := syscall.Open(root, syscall.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW, 0)
+	// O_NOFOLLOW on the full pathname protects only its final component.
+	// Walk from a root directory handle so untrusted intermediate parents
+	// cannot redirect filesystem access via symlinks or a TOCTOU swap.
+	components := strings.Split(root[1:], "/")
+	for _, component := range components {
+		if component == "" || component == "." || component == ".." {
+			return -1, info, errors.New("non-canonical workspace root")
+		}
+	}
+	fd, err := syscall.Open("/", syscall.O_RDONLY|syscall.O_DIRECTORY|syscall.O_CLOEXEC, 0)
 	if err != nil {
-		return -1, info, errors.New("workspace unavailable or symlinked")
+		return -1, info, errors.New("unable to open filesystem root")
+	}
+	for _, component := range components {
+		next, openErr := syscall.Openat(fd, component,
+			syscall.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
+		_ = syscall.Close(fd)
+		if openErr != nil {
+			return -1, info, errors.New("workspace unavailable or symlinked")
+		}
+		fd = next
 	}
 	if err := syscall.Fstat(fd, &info); err != nil ||
 		info.Mode&syscall.S_IFMT != syscall.S_IFDIR || info.Mode&0077 != 0 {
@@ -135,7 +154,13 @@ func writeAndSyncLocalFD(fd int, data []byte) error {
 }
 
 func readLocalWorkspaceFile(dirfd int, name string, limit int) ([]byte, error) {
-	fd, err := syscall.Openat(dirfd, name, syscall.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	// The only supported input is a single child filename beneath the
+	// already opened workspace root. openat ignores dirfd for absolute names.
+	if name == "" || name == "." || name == ".." || len(name) > 255 ||
+		strings.ContainsAny(name, "/\\\\") {
+		return nil, errors.New("unsafe workspace child name")
+	}
+	fd, err := syscall.Openat(dirfd, name, syscall.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, errors.New("workspace file absent or unsafe")
 	}
