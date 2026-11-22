@@ -56,7 +56,7 @@ func VerifyReviewEvidenceWithAssets(
 			if evidenceReaderConfigured(stream) {
 				_ = stream.Close()
 			}
-			return EvaluationReceipt{}, fmt.Errorf("%w: evidence open failed: %v", ErrEvidenceInvalid, err)
+			return EvaluationReceipt{}, fmt.Errorf("%w: evidence open failed", ErrEvidenceInvalid)
 		}
 		if !evidenceReaderConfigured(stream) {
 			return EvaluationReceipt{}, ErrEvidenceInvalid
