@@ -74,6 +74,16 @@ jobs:
             echo 'PGTEST_DSN role test was skipped: refuse security receipt' >&2
             exit 1
           fi
+      - name: Enforce live authority HTTP database-role drift gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -count=1 -v -run '^TestAuthorityHTTPRejectsRuntimeRoleDrift$' ./cmd/acp-authority-api | tee drift-test.log
+          grep -F -- '--- PASS: TestAuthorityHTTPRejectsRuntimeRoleDrift' drift-test.log
+          if grep -F -- '--- SKIP: TestAuthorityHTTPRejectsRuntimeRoleDrift' drift-test.log; then
+            echo 'live PG/TLS authority drift gate was skipped' >&2
+            exit 1
+          fi
       - name: Prove two-tenant admission and input isolation against PostgreSQL
         shell: bash
         run: |
