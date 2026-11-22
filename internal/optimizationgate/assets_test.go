@@ -231,15 +231,43 @@ func (r failingEvidenceReader) OpenEvidence(context.Context, string) (io.ReadClo
 	return nil, r.err
 }
 
-func TestIndependentEvidenceDoesNotExposeObjectStoreErrorDetails(t *testing.T) {
+func TestIndependentEvidencePreservesObjectStoreCauseWithoutLeakingDetails(t *testing.T) {
 	policy, wire, keys, _ := evidenceFixture(t)
 	secret := "s3://private-bucket/path?X-Amz-Credential=secret-token"
+	storeErr := errors.New(secret)
 	_, err := VerifyReviewEvidenceWithAssets(context.Background(), policy, wire, keys,
-		failingEvidenceReader{err: errors.New(secret)})
-	if !errors.Is(err, ErrEvidenceInvalid) {
-		t.Fatalf("object-store failure should remain an invalid-evidence error: %v", err)
+		failingEvidenceReader{err: storeErr})
+	if !errors.Is(err, ErrEvidenceInvalid) || !errors.Is(err, storeErr) {
+		t.Fatalf("object-store failure must preserve a typed cause and invalid-evidence classification: %v", err)
 	}
 	if strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), "secret-token") {
 		t.Fatalf("object-store location or credentials leaked in returned error: %v", err)
+	}
+}
+
+type failingEvidenceStream struct {
+	err    error
+	closed bool
+}
+
+func (s *failingEvidenceStream) Read([]byte) (int, error) { return 0, s.err }
+
+func (s *failingEvidenceStream) Close() error {
+	s.closed = true
+	return nil
+}
+
+func TestIndependentEvidencePreservesStreamCauseWithoutLeakingDetails(t *testing.T) {
+	policy, wire, keys, _ := evidenceFixture(t)
+	secret := "provider response contains private object URL and token"
+	readErr := errors.New(secret)
+	stream := &failingEvidenceStream{err: readErr}
+	reader := &streamingEvidenceProbe{streamOverride: stream}
+	_, err := VerifyReviewEvidenceWithAssets(context.Background(), policy, wire, keys, reader)
+	if !errors.Is(err, ErrEvidenceInvalid) || !errors.Is(err, readErr) {
+		t.Fatalf("stream read failure must preserve a typed cause and invalid-evidence classification: %v", err)
+	}
+	if !stream.closed || strings.Contains(err.Error(), secret) {
+		t.Fatalf("failed stream was not closed or provider details leaked: closed=%v err=%v", stream.closed, err)
 	}
 }
