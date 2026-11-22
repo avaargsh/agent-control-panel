@@ -256,4 +256,47 @@ func TestSandboxctlRejectsShadowSchemaReadRoleBypass(t *testing.T) {
 	if err := probe.QueryRow(ctx, "SELECT nextval($1::regclass)", seq).Scan(&advanced); err == nil {
 		t.Fatal("reader could still advance sequence after USAGE privilege revoked")
 	}
+
+	// PostgreSQL grants EXECUTE on newly created functions to PUBLIC.
+	// SECURITY DEFINER runs under the owner's table privileges; a read-only
+	// LOGIN with schema USAGE can therefore read data it has no table SELECT
+	// for. This is a distinct privilege path from table and Sequence ACLs.
+	const canaryTable = schema + ".owner_private_canary"
+	const functionName = schema + ".read_owner_private"
+	for _, statement := range []string{
+		"CREATE TABLE " + canaryTable + " (payload text NOT NULL)",
+		"INSERT INTO " + canaryTable + " VALUES ('sandbox-definer-canary')",
+		"CREATE FUNCTION " + functionName + "() RETURNS text LANGUAGE sql SECURITY DEFINER SET search_path=pg_catalog AS 'SELECT payload FROM " + canaryTable + " LIMIT 1'",
+	} {
+		if _, err := owner.Exec(ctx, statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var canary string
+	if err := probe.QueryRow(ctx, "SELECT "+functionName+"()").Scan(&canary); err != nil || canary != "sandbox-definer-canary" {
+		t.Fatalf("fixture did not reproduce actual SECURITY DEFINER data escape: got=%q err=%v", canary, err)
+	}
+	if err := verifySandboxReadRole(ctx, pool); err == nil {
+		t.Fatal("callable owner-privileged SECURITY DEFINER bypassed sandbox read-only role gate")
+	}
+	// An inaccessible routine should not block the good reader. Re-granting
+	// directly must block again, despite revoking PUBLIC EXECUTE.
+	if _, err := owner.Exec(ctx, "REVOKE EXECUTE ON FUNCTION "+functionName+"() FROM PUBLIC"); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifySandboxReadRole(ctx, pool); err != nil {
+		t.Fatalf("revoking PUBLIC SECURITY DEFINER EXECUTE did not restore reader: %v", err)
+	}
+	if _, err := owner.Exec(ctx, "GRANT EXECUTE ON FUNCTION "+functionName+"() TO "+username); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifySandboxReadRole(ctx, pool); err == nil {
+		t.Fatal("direct SECURITY DEFINER EXECUTE grant bypassed sandbox reader role gate")
+	}
+	if _, err := owner.Exec(ctx, "REVOKE EXECUTE ON FUNCTION "+functionName+"() FROM "+username); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifySandboxReadRole(ctx, pool); err != nil {
+		t.Fatalf("revoking direct SECURITY DEFINER EXECUTE did not restore reader: %v", err)
+	}
 }
