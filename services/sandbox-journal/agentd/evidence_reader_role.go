@@ -11,10 +11,10 @@ var ErrEvidenceReaderUntrusted = errors.New("AgentD evidence reader database ide
 
 // verifyEvidenceReaderLogin rejects owner, migrator, superuser, BYPASSRLS and
 // broadly privileged connections before a read endpoint touches source rows.
-// The connection must be an authenticated LOGIN inheriting only the dedicated
-// NOLOGIN evidence-reader role; tenant RLS is then bound with SET LOCAL GUC.
-func verifyEvidenceReaderLogin(ctx context.Context, tx pgx.Tx) error {
-	if tx == nil {
+// Each authenticated LOGIN is mapped to exactly one tenant in an owner-only
+// table. RLS derives that tenant from session_user, not a caller-settable GUC.
+func verifyEvidenceReaderLogin(ctx context.Context, tx pgx.Tx, expectedTenant string) error {
+	if tx == nil || expectedTenant == "" {
 		return ErrEvidenceReaderUntrusted
 	}
 	const check = `
@@ -31,7 +31,9 @@ SELECT COALESCE((
      AND has_schema_privilege(r.oid, 'public', 'USAGE')
      AND NOT has_schema_privilege(r.oid, 'public', 'CREATE')
      AND NOT has_database_privilege(r.oid, current_database(), 'CREATE')
-     AND NOT pg_has_role(r.oid, owner.relowner, 'MEMBER')
+     AND NOT pg_has_role(r.oid, owner_row.relowner, 'MEMBER')
+     AND public.sandbox_agentd_evidence_tenant() = $1
+     AND NOT has_table_privilege(r.oid, 'public.sandbox_agentd_evidence_reader_tenants', 'SELECT')
      AND NOT EXISTS (
        SELECT 1 FROM pg_auth_members m
        WHERE m.member = r.oid
@@ -107,6 +109,13 @@ SELECT COALESCE((
          AND n.nspname NOT LIKE 'pg_temp_%'
          AND has_schema_privilege(r.oid,n.oid,'USAGE')
          AND has_function_privilege(r.oid,f.oid,'EXECUTE')
+         AND NOT (
+           f.oid=to_regprocedure('public.sandbox_agentd_evidence_tenant()')
+           AND f.proowner=owner_row.relowner
+           AND f.prorettype='text'::regtype
+           AND f.provolatile='s'
+           AND f.proconfig @> ARRAY['search_path=pg_catalog, public']
+         )
      )
      AND NOT EXISTS (
        SELECT 1
@@ -122,11 +131,11 @@ SELECT COALESCE((
   CROSS JOIN LATERAL (
     SELECT relowner FROM pg_class
     WHERE oid=to_regclass('public.sandbox_agentd_attempts')
-  ) owner
+  ) owner_row
   WHERE r.rolname=current_user
 ), false)`
 	var allowed bool
-	if err := tx.QueryRow(ctx, check).Scan(&allowed); err != nil || !allowed {
+	if err := tx.QueryRow(ctx, check, expectedTenant).Scan(&allowed); err != nil || !allowed {
 		return ErrEvidenceReaderUntrusted
 	}
 	return nil
