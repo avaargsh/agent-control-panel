@@ -156,7 +156,7 @@ func TestAuthorityHTTPRejectsRuntimeRoleDrift(t *testing.T) {
 		SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: "localhost"},
 		NotBefore: now.Add(-time.Minute), NotAfter: now.Add(time.Hour),
 		IPAddresses: []net.IP{net.ParseIP("127.0.0.1")},
-		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		KeyUsage:    x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	})
 	clientPEM, clientKey := mint(&x509.Certificate{
 		SerialNumber: big.NewInt(3), Subject: pkix.Name{CommonName: "workload"},
