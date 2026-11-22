@@ -6,6 +6,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func signedVariant(t *testing.T, wire []byte, modify func(*EvaluationReceipt)) []byte {
@@ -112,5 +114,25 @@ func TestPostgresReconcileExpiredAttemptFromDatabaseClock(t *testing.T) {
 	}
 	if assets.opens != 0 {
 		t.Fatalf("expired challenge caused external evidence fetch: opens=%d", assets.opens)
+	}
+}
+
+
+// A journal read failure must retain the underlying PostgreSQL error for
+// callers that distinguish schema/transport failures with errors.As.
+func TestPostgresReconcilePreservesJournalReadError(t *testing.T) {
+	store, pool := disposableAttemptStore(t)
+	policy, wire, keys, assets := attemptFixture(t, store)
+	if _, err := pool.Exec(context.Background(),
+		"ALTER TABLE optimization_verification_attempts RENAME TO optimization_verification_attempts_missing"); err != nil {
+		t.Fatalf("inject missing journal relation: %v", err)
+	}
+	_, err := store.ReconcileReviewAttempt(context.Background(), policy, wire, keys, assets)
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "42P01" {
+		t.Fatalf("reconciliation did not preserve PostgreSQL undefined-table error: pgErr=%v err=%v", pgErr, err)
+	}
+	if !errors.Is(err, ErrAttemptUnconfigured) {
+		t.Fatalf("journal read failure lost fail-closed classification: %v", err)
 	}
 }
