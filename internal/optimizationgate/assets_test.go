@@ -148,3 +148,43 @@ func TestIndependentEvidenceStopsUnboundedStreamAtDeclaredLimit(t *testing.T) {
 		t.Fatalf("evidence reader failed to enforce limit before download: readBytes=%d cap=%d closed=%v", stream.readBytes, maxEvidenceBytes, stream.closed)
 	}
 }
+
+// cancelingEvidenceStream records whether a slow or remote evidence adapter
+// was asked for any more bytes after the request was canceled mid-stream.
+// A bounded verifier must stop issuing reads as soon as cancellation is seen.
+type cancelingEvidenceStream struct {
+	cancel context.CancelFunc
+	reads  int
+	closed bool
+}
+
+func (s *cancelingEvidenceStream) Read(p []byte) (int, error) {
+	s.reads++
+	if s.reads == 1 {
+		p[0] = 'x'
+		s.cancel()
+		return 1, nil
+	}
+	return 0, errors.New("read after cancellation")
+}
+
+func (s *cancelingEvidenceStream) Close() error {
+	s.closed = true
+	return nil
+}
+
+func TestIndependentEvidenceStopsReadingWhenContextCanceledMidStream(t *testing.T) {
+	policy, wire, keys, _ := evidenceFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stream := &cancelingEvidenceStream{cancel: cancel}
+	reader := &streamingEvidenceProbe{streamOverride: stream}
+	_, err := VerifyReviewEvidenceWithAssets(ctx, policy, wire, keys, reader)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled evidence read must preserve context.Canceled: %v", err)
+	}
+	if stream.reads != 1 || !stream.closed || reader.opens != 1 {
+		t.Fatalf("evidence verifier continued reading after cancellation: reads=%d closed=%v opens=%d",
+			stream.reads, stream.closed, reader.opens)
+	}
+}
