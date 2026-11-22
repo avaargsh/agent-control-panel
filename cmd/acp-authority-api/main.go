@@ -78,6 +78,9 @@ func serve(ctx context.Context, c config) error {
 	if err != nil {
 		return errors.New("authority database unavailable")
 	}
+	if err := verifyAuthorityDatabaseRole(ctx, pool); err != nil {
+		return err
+	}
 	repo := runpg.New(pool)
 	var handler http.Handler
 	if c.publicationKey != "" {
