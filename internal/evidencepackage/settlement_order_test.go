@@ -85,7 +85,6 @@ func TestEvidencePackageRejectsSettlementBeforeSignedRecoveryObservations(t *tes
 	}
 }
 
-
 func TestEvidencePackageRejectsRecoveredRunBeforeSourceRecoveryProof(t *testing.T) {
 	for _, owner := range []string{"runtime", "agentd", "guard", "sandbox"} {
 		t.Run(owner, func(t *testing.T) {
@@ -112,7 +111,6 @@ func TestEvidencePackageAcceptsSourceProofBeforeRecoveredRunAndSettlement(t *tes
 		t.Fatalf("valid signed recovery -> recovered Run -> settlement ordering rejected: %v", err)
 	}
 }
-
 
 func TestEvidencePackageRejectsSignedLifecycleStagesOutOfOrder(t *testing.T) {
 	for _, tc := range []struct {
