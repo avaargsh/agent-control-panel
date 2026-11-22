@@ -127,6 +127,12 @@ func TestAuthorityDatabaseRoleFailClosed(t *testing.T) {
 		}
 	}
 	check(t, true)
+	var databaseName string
+	if err := admin.QueryRow(ctx, "SELECT current_database()").Scan(&databaseName); err != nil {
+		t.Fatal(err)
+	}
+	databaseIdent := pgx.Identifier{databaseName}.Sanitize()
+	ddlProbeSchema := "acp_role_ddl_probe_" + suffix
 
 	// Any grant beyond the exact seven authority relations must fail startup.
 	for _, tc := range []struct {
@@ -150,6 +156,10 @@ func TestAuthorityDatabaseRoleFailClosed(t *testing.T) {
 			"REVOKE SELECT (payload) ON " + foreignSchema + ".secret FROM " + role},
 		{"create schema objects", "GRANT CREATE ON SCHEMA " + schema + " TO " + role,
 			"REVOKE CREATE ON SCHEMA " + schema + " FROM " + role},
+		{"create in foreign schema", "GRANT CREATE ON SCHEMA " + foreignSchema + " TO " + role,
+			"REVOKE CREATE ON SCHEMA " + foreignSchema + " FROM " + role},
+		{"create new database schema", "GRANT CREATE ON DATABASE " + databaseIdent + " TO " + role,
+			"REVOKE CREATE ON DATABASE " + databaseIdent + " FROM " + role},
 		{"non-inherited privilege escalation membership", "GRANT pg_read_all_data TO " + role + " WITH INHERIT FALSE, SET TRUE",
 			"REVOKE pg_read_all_data FROM " + role},
 	} {
@@ -163,6 +173,24 @@ func TestAuthorityDatabaseRoleFailClosed(t *testing.T) {
 				var payload string
 				if err := reader.QueryRow(ctx, "SELECT payload FROM "+foreignSchema+".secret").Scan(&payload); err != nil || payload != "foreign-schema-canary" {
 					t.Fatalf("foreign schema grant was not effectively readable: payload=%q err=%v", payload, err)
+				}
+			}
+			// Verify the unexpectedly granted DDL is executable by the
+			// independently authenticated reader, not merely listed in ACLs.
+			switch tc.name {
+			case "create in foreign schema":
+				if _, err := reader.Exec(ctx, "CREATE TABLE "+foreignSchema+".role_probe (id integer)"); err != nil {
+					t.Fatalf("foreign schema CREATE grant was not effective: %v", err)
+				}
+				if _, err := reader.Exec(ctx, "DROP TABLE "+foreignSchema+".role_probe"); err != nil {
+					t.Fatal(err)
+				}
+			case "create new database schema":
+				if _, err := reader.Exec(ctx, "CREATE SCHEMA "+ddlProbeSchema); err != nil {
+					t.Fatalf("database CREATE grant was not effective: %v", err)
+				}
+				if _, err := reader.Exec(ctx, "DROP SCHEMA "+ddlProbeSchema); err != nil {
+					t.Fatal(err)
 				}
 			}
 			check(t, false)
