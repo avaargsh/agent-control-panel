@@ -226,6 +226,7 @@ func TestEvidencePackageRejectsSemanticDriftDespiteValidServiceSignatures(t *tes
 		{"provider_uid_changed", "compute_release", func(s *Statement) { s.ProviderUID = "provider-2" }},
 		{"generation_changed", "compute_release", func(s *Statement) { s.ProviderGeneration = 6 }},
 		{"pre_fault_release", "compute_release", func(s *Statement) { s.ObservedAt = s.ObservedAt.Add(-time.Hour) }},
+		{"before_guard_settlement", "compute_release", func(s *Statement) { s.ObservedAt = s.ObservedAt.Add(-2500 * time.Millisecond) }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -265,4 +266,38 @@ func TestEvidencePackageRejectsMissingForgedOrUntrustedReceipts(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestStrictDecodeRejectsAmbiguousDuplicateJSONKeys(t *testing.T) {
+	for _, raw := range []string{
+		`{"schema":"first","schema":"second"}`,
+		`{"outer":{"status":"DENIED","status":"ACCEPTED"}}`,
+		`{"values":[{"permit_epoch":1,"permit_epoch":2}]}`,
+	} {
+		var value map[string]any
+		if StrictDecode([]byte(raw), &value) {
+			t.Fatalf("duplicate source key accepted")
+		}
+	}
+}
+
+func TestEvidencePackageRejectsDuplicateKeysEvenWithValidSignature(t *testing.T) {
+	f := fixturePackage(t)
+	for i, r := range f.p.Receipts {
+		if r.Stage != "run" {
+			continue
+		}
+		raw, err := base64.StdEncoding.DecodeString(r.PayloadB64)
+		if err != nil { t.Fatal(err) }
+		edited := strings.Replace(string(raw), `"status":"ACCEPTED"`, `"status":"DENIED","status":"ACCEPTED"`, 1)
+		if edited == string(raw) { t.Fatal("fixture did not include signed status") }
+		f.p.Receipts[i].PayloadB64 = base64.StdEncoding.EncodeToString([]byte(edited))
+		f.p.Receipts[i].SignatureB64 = base64.StdEncoding.EncodeToString(
+			ed25519.Sign(f.priv["acp"], append([]byte(SignatureDomain), []byte(edited)...)))
+		if err := Verify(f.p, f.e, f.pub, f.now); err == nil {
+			t.Fatal("ambiguously signed export passed")
+		}
+		return
+	}
+	t.Fatal("missing run receipt")
 }
