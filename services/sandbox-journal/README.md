@@ -31,6 +31,12 @@ go vet ./...
 
 Tests cover 20 concurrent duplicate submissions, immutable digest and original Run conflict, foreign tenant denial, separate DB-pool read after reconnect, single Outbox insertion, and injected Outbox insert failure causing full journal rollback. `go test` skips database cases if `SANDBOX_JOURNAL_TEST_DSN` is absent; **only the actual hosted PostgreSQL job counts as database evidence**.
 
+## Command commit integrity (candidate migration 0011, non-dispatch)
+
+`migrations/0011_command_commit_integrity.sql` is an additive **owner-only** migration after 0010 in the standalone Sandbox PostgreSQL database. It locks Command and original Outbox tables while auditing all committed history, and refuses installation if a command has no exact original Outbox or its JSONB binding contains mismatched/extra fields. It installs `DEFERRABLE INITIALLY DEFERRED` constraint triggers on **both** Command and Outbox INSERTs, so an independent Command Writer cannot commit a Command alone or a forged Outbox even when bypassing the Go repository's atomic write method. The valid two-statement `RecordPermitUnavailable` transaction and identical replay must remain accepted.
+
+Real PostgreSQL integration tests must prove direct SQL orphan/forged commits fail with SQLSTATE `23514` and roll back without source evidence; a previously consistent history must survive migration replay. The demo migration order is now 0001–0011 before test fixtures. Database table owners and superusers can still alter triggers, so this is **local commit integrity**, not signed evidence or authorization for actual AgentD execution. No trusted Guard Permit/PEP, external effect `UNKNOWN` reconciliation or physical release is claimed.
+
 ## Blockers and next work
 
 1. EngageGuard #34: independently reviewed trusted Scoped Permit issuer, atomic claim, revocation and executor PEP.
