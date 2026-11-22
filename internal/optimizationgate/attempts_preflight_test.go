@@ -50,3 +50,15 @@ func TestAttemptConsumptionChecksNonceBeforeFetchingIndependentEvidence(t *testi
 		}
 	})
 }
+
+func TestCanceledAttemptConsumptionPreservesContextError(t *testing.T) {
+	store, _ := disposableAttemptStore(t)
+	policy, wire, keys, assets := attemptFixture(t, store)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	reader := &countingAttemptEvidenceReader{testEvidenceReader: assets}
+	_, err := store.ConsumeReviewEvidence(ctx, policy, wire, keys, reader)
+	if !errors.Is(err, context.Canceled) || reader.opens != 0 {
+		t.Fatalf("canceled attempt should preserve cancellation before any blob fetch: opens=%d err=%v", reader.opens, err)
+	}
+}
