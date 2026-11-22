@@ -1,6 +1,10 @@
 """Regression tests for a fail-closed exported GitHub Actions run receipt."""
 import copy
 import importlib.util
+import json
+import io
+import contextlib
+import tempfile
 from pathlib import Path
 import unittest
 
@@ -16,7 +20,7 @@ def fixture():
     return {
         'databaseId': 123456789,
         'url': 'https://github.com/avaargsh/agent-control-panel/actions/runs/123456789',
-        'workflowName': 'Same ACP Run to recovered Decision acceptance (non-production)',
+        'workflowName': 'Same ACP Run real Guard Plan Step mTLS (non-production)',
         'headSha': SHA,
         'headBranch': 'main',
         'event': 'workflow_dispatch',
@@ -37,6 +41,19 @@ class ReceiptTest(unittest.TestCase):
         self.assertEqual(receipt['grade'], 'CI_METADATA_CHECK_ONLY')
         self.assertFalse(receipt['production_accepted'])
         self.assertEqual(receipt['required_job'], 'e2e')
+
+    def test_golden_contract_matches_actual_github_workflow(self):
+        workflow = (SCRIPT.parent.parent / '.github' / 'workflows' / 'acp-temporal-golden-path.yml').read_text(encoding='utf-8')
+        self.assertTrue(workflow.startswith('name: '))
+        self.assertEqual(module.SCENARIOS['golden'][0], workflow.splitlines()[0].removeprefix('name: '))
+        self.assertIn('  e2e:', workflow)
+        self.assertIn('      - name: ' + GOLDEN_STEP, workflow)
+
+    def test_stale_golden_workflow_name_is_denied(self):
+        data = fixture()
+        data['workflowName'] = 'Same ACP Run to recovered Decision acceptance (non-production)'
+        with self.assertRaises(module.ReceiptError):
+            module.verify_run(data, SHA, 'golden')
 
     def test_wrong_sha_is_denied(self):
         with self.assertRaises(module.ReceiptError):
@@ -86,6 +103,54 @@ class ReceiptTest(unittest.TestCase):
         for bad in (None, [], {'jobs':'fake'}, {'databaseId': True}):
             with self.subTest(bad=bad), self.assertRaises(module.ReceiptError):
                 module.verify_run(bad,SHA,'golden')
+
+    def test_ambiguous_duplicate_json_keys_fail_closed_at_cli_boundary(self):
+        original = json.dumps(fixture())
+        ambiguous = (
+            original.replace(
+                '"headSha": "' + SHA + '"',
+                '"headSha": "' + ('b' * 40) + '", "headSha": "' + SHA + '"',
+                1,
+            ),
+            original.replace(
+                '"name": "e2e"',
+                '"name": "not-the-acceptance-job", "name": "e2e"',
+                1,
+            ),
+            original.replace(
+                '"name": "' + GOLDEN_STEP + '"',
+                '"conclusion": "failure", "name": "' + GOLDEN_STEP + '"',
+                1,
+            ),
+        )
+        for payload in ambiguous:
+            with self.subTest(payload=payload[:130]), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / 'run.json'
+                path.write_text(payload, encoding='utf-8')
+                out, err = io.StringIO(), io.StringIO()
+                with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                    code = module.main([
+                        '--run-json', str(path), '--expected-sha', SHA, '--scenario', 'golden',
+                    ])
+                self.assertEqual(code, 1, 'ambiguous evidence must be rejected')
+                self.assertIn('"ok": false', err.getvalue().lower())
+                self.assertEqual(out.getvalue(), '')
+
+    def test_nonfinite_json_constants_fail_closed_at_cli_boundary(self):
+        original = json.dumps(fixture())
+        for value in ('NaN', 'Infinity', '-Infinity'):
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / 'run.json'
+                payload = original[:-1] + ', "extra_metadata": ' + value + '}'
+                path.write_text(payload, encoding='utf-8')
+                out, err = io.StringIO(), io.StringIO()
+                with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                    code = module.main([
+                        '--run-json', str(path), '--expected-sha', SHA, '--scenario', 'golden',
+                    ])
+                self.assertEqual(code, 1, 'Non-standard JSON constants cannot support a CI receipt')
+                self.assertIn('"ok": false', err.getvalue().lower())
+                self.assertEqual(out.getvalue(), '')
 
     def test_sha_validation(self):
         with self.assertRaises(module.ReceiptError): module.verify_run(fixture(), 'main','golden')
