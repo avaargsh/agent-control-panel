@@ -57,7 +57,7 @@ func TestLeaseRevocationEvictsExistingRepeatableReadSession(t *testing.T) {
 	}
 	defer active.Close()
 	tx, err := active.BeginTx(ctx, pgx.TxOptions{
-		IsoLevel: pgx.RepeatableRead,
+		IsoLevel:   pgx.RepeatableRead,
 		AccessMode: pgx.ReadOnly,
 	})
 	if err != nil {
