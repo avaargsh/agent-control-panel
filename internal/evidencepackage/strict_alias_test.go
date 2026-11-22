@@ -21,7 +21,7 @@ func TestEvidenceStrictDecodeRejectsCaseFoldedKeys(t *testing.T) {
 		`{"status":"UNKNOWN","STATUS":"EXITED"}`,
 		`{"subject":{"run_id":"run-1","RUN_ID":"other-run"}}`,
 		`{"permit_epoch":1,"PERMIT_EPOCH":2}`,
-		`{"status":"UNKNOWN","\\u0053tatus":"EXITED"}`,
+		`{"status":"UNKNOWN","\u0053tatus":"EXITED"}`,
 	} {
 		var out map[string]any
 		if StrictDecode([]byte(raw), &out) {
