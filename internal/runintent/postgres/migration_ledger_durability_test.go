@@ -167,7 +167,6 @@ func TestMigrationLedgerAllowsOwnerColumnGrants(t *testing.T) {
 	}
 }
 
-
 // Migrations are intentionally bound to the authenticated LOGIN identity.
 // SET ROLE must not silently turn a different effective role into the
 // migration actor, even when the switched role has elevated database rights.
