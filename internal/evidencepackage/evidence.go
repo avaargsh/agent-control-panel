@@ -127,6 +127,7 @@ func digest(s string) bool {
 	}
 	return true
 }
+
 // StrictDecode rejects duplicate JSON object keys in addition to unknown
 // fields and trailing data. Different service parsers must not disagree on
 // an owner-signed field because of duplicate keys.
