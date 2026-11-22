@@ -35,7 +35,7 @@ func TestCommandCommitRejectsOrphanAndForgedOutbox(t *testing.T) {
 	}
 	orphan := sample()
 	orphan.CommandID = "direct-sql-orphan"
-	_, err := repo.pool.Exec(ctx, `INSERT INTO public.sandbox_journal_commands
+	_, err = repo.pool.Exec(ctx, `INSERT INTO public.sandbox_journal_commands
 	  (tenant_id,sandbox_uid,command_id,run_id,runtime_attempt_id,request_digest)
 	  VALUES($1,$2,$3,$4,$5,$6)`,
 		orphan.TenantID, orphan.SandboxUID, orphan.CommandID,
