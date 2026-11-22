@@ -27,7 +27,7 @@ The CI suite uses a disposable PostgreSQL 16 database owner (not a real producti
 ## Release and security blockers (fail-closed)
 
 1. Missing actual authenticated Guard Permit issuer, runtime Tool Binding, epoch fencing and executor PEP prior to any command effect; this PR deliberately has **no dispatch endpoint**.
-2. The command journal and source Inspect tables still have **owner-only** permissions; no independently reviewed production least-privilege source writer/reader and tenant RLS role policy.
+2. The source writer remains owner-controlled. Draft #113 adds a dedicated `NOLOGIN` read-only group role, tenant GUC RLS policies for all three source tables, a separate LOGIN regression, and request-time rejection of owner/overprivileged reader connections. Production role provisioning, credential custody and independent deployment remain operator obligations.
 3. No real provisioned private signing keys, key rotation/revocation, trusted SPIFFE issuer, workload attestation or configured production mTLS listener (the handler tests use ephemeral identities).
 4. No independent, write-protected accepted Run/Guard binding and exact signed Head distribution integrated into ACP's live G05; the injected callback remains a trusted contract, not a deployed service.
 5. No source-owned signed sandbox workspace continuity, independent Runtime/Guard postfault reconcilers, authenticated original same-Run response assembler, physical Compute/Sandbox provider-absence or cost FINAL evidence.
