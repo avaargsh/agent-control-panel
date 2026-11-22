@@ -208,6 +208,28 @@ func TestAuthorityDatabaseRoleFailClosed(t *testing.T) {
 			})
 		}
 	})
+	// Effective PostgreSQL sequence privileges include grants to PUBLIC,
+	// not just direct grants to this LOGIN. Enforce the same deny/revoke
+	// behavior for a PUBLIC-granted side-effectful nextval operation.
+	t.Run("public sequence usage is not read-only authority", func(t *testing.T) {
+		if _, err := admin.Exec(ctx, "GRANT USAGE ON SEQUENCE "+foreignSequence+" TO PUBLIC"); err != nil {
+			t.Fatal(err)
+		}
+		var advanced int64
+		if err := reader.QueryRow(ctx, "SELECT nextval($1::regclass)", foreignSequence).Scan(&advanced); err != nil || advanced < 1 {
+			t.Fatalf("actual PUBLIC-granted sequence mutation not observed: value=%d err=%v", advanced, err)
+		}
+		check(t, false)
+		if _, err := admin.Exec(ctx, "REVOKE USAGE ON SEQUENCE "+foreignSequence+" FROM PUBLIC"); err != nil {
+			t.Fatal(err)
+		}
+		check(t, true)
+		var denied *pgconn.PgError
+		err := reader.QueryRow(ctx, "SELECT nextval($1::regclass)", foreignSequence).Scan(&advanced)
+		if !errors.As(err, &denied) || denied.Code != "42501" {
+			t.Fatalf("PUBLIC sequence usage must deny after revocation: %v", err)
+		}
+	})
 	check(t, true)
 	var databaseName string
 	if err := admin.QueryRow(ctx, "SELECT current_database()").Scan(&databaseName); err != nil {
