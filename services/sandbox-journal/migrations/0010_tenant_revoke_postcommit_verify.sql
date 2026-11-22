@@ -66,6 +66,47 @@ BEGIN
       USING ERRCODE = '23514';
   END IF;
 
+  -- Checking only the two known Writer/Reader groups is insufficient.
+  -- A misconfigured DBA can later grant an unrelated inheritable or
+  -- SET ROLE-capable group after the local revocation receipt was written.
+  -- A revoked principal must have NO remaining role membership at all.
+  IF EXISTS (
+    SELECT 1 FROM pg_catalog.pg_auth_members AS m
+    WHERE m.member = p_expected_oid
+  ) THEN
+    RAISE EXCEPTION 'revoked LOGIN retains an unexpected PostgreSQL role membership'
+      USING ERRCODE = '23514';
+  END IF;
+
+  -- Likewise, direct ACL grants (including column-level rights) survive
+  -- revoking the two runtime group memberships. Inspect ALL source-owned
+  -- lease state and governance tables. If the role was dropped, there is
+  -- no remaining role OID whose object rights can be exercised.
+  IF EXISTS (
+    SELECT 1
+    FROM pg_catalog.pg_roles AS r
+    CROSS JOIN (
+      VALUES
+        ('public.sandbox_lease_intents'::regclass),
+        ('public.sandbox_lease_intent_events'::regclass),
+        ('public.sandbox_lease_db_principals'::regclass),
+        ('public.sandbox_lease_login_revocations'::regclass)
+    ) AS protected(table_oid)
+    WHERE r.oid = p_expected_oid
+      AND (
+        pg_catalog.has_table_privilege(
+          r.oid, protected.table_oid,
+          'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER'
+        )
+        OR pg_catalog.has_any_column_privilege(
+          r.oid, protected.table_oid, 'SELECT,INSERT,UPDATE,REFERENCES'
+        )
+      )
+  ) THEN
+    RAISE EXCEPTION 'revoked LOGIN retains source-owned lease object privileges'
+      USING ERRCODE = '23514';
+  END IF;
+
   IF EXISTS (
     SELECT 1 FROM public.sandbox_lease_db_principals AS p
     WHERE p.login_name = p_login OR p.login_role_oid = p_expected_oid
