@@ -127,6 +127,27 @@ func TestAuthorityDatabaseRoleFailClosed(t *testing.T) {
 		}
 	}
 	check(t, true)
+	// A dedicated login may have no direct SELECT on a sensitive relation
+	// yet read it through a SECURITY DEFINER function. PostgreSQL grants
+	// EXECUTE on new functions to PUBLIC by default; schema USAGE suffices
+	// for this otherwise underprivileged LOGIN to invoke the function.
+	t.Run("callable SECURITY DEFINER cannot bypass readonly role fence", func(t *testing.T) {
+		probe := pgx.Identifier{foreignSchema, "reader_privilege_probe"}.Sanitize()
+		if _, err := admin.Exec(ctx, "CREATE FUNCTION "+probe+
+			"() RETURNS text LANGUAGE sql SECURITY DEFINER SET search_path=pg_catalog AS $ SELECT payload FROM "+
+			pgx.Identifier{foreignSchema, "secret"}.Sanitize()+" LIMIT 1 $"); err != nil {
+			t.Fatal(err)
+		}
+		defer admin.Exec(context.Background(), "DROP FUNCTION "+probe+"()")
+		var leaked string
+		if err := reader.QueryRow(ctx, "SELECT "+probe+"()").Scan(&leaked); err != nil || leaked != "foreign-schema-canary" {
+			t.Fatalf("probe did not exercise actual SECURITY DEFINER privilege escalation: value=%q err=%v", leaked, err)
+		}
+		// The role has no direct SELECT on foreignSchema.secret. A callable
+		// definer function must still be rejected at startup.
+		check(t, false)
+	})
+	check(t, true)
 	var databaseName string
 	if err := admin.QueryRow(ctx, "SELECT current_database()").Scan(&databaseName); err != nil {
 		t.Fatal(err)
