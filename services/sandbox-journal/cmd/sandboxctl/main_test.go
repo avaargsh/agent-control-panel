@@ -171,6 +171,9 @@ func TestSandboxctlRejectsShadowSchemaReadRoleBypass(t *testing.T) {
 		_, _ = owner.Exec(context.Background(), "REVOKE ALL ON DATABASE sandbox_journal_ci FROM "+username)
 		_, _ = owner.Exec(context.Background(), "REVOKE ALL ON SCHEMA public,"+schema+" FROM "+username)
 		_, _ = owner.Exec(context.Background(), "DROP SCHEMA IF EXISTS "+schema+" CASCADE")
+		// Additional SELECT grants on the canonical public tables must be
+		// revoked too, or the test leaves a reusable LOGIN in the CI DB.
+		_, _ = owner.Exec(context.Background(), "DROP OWNED BY "+username)
 		_, _ = owner.Exec(context.Background(), "DROP ROLE IF EXISTS "+username)
 	}()
 	for _, statement := range statements {
