@@ -79,6 +79,16 @@ func testRepository(t *testing.T) *Repository {
 	if _, err := pool.Exec(ctx, string(commitGuard)); err != nil {
 		t.Fatal("lease commit-integrity migration:", err)
 	}
+	// Tenant policy is installed by the owner, never through a runtime LOGIN.
+	// Unbound logins are denied by default; real test users are bound only
+	// after the DBA has provisioned their separate account credentials.
+	rls, err := os.ReadFile(filepath.Join("..", "migrations", "0007_tenant_login_rls.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, string(rls)); err != nil {
+		t.Fatal("tenant LOGIN RLS migration:", err)
+	}
 	return New(pool)
 }
 
