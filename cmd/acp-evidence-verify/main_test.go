@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -37,5 +38,22 @@ func TestReadRegularRejectsSymlinkAndEmptyReceipt(t *testing.T) {
 	}
 	if _, err := readRegular(empty, 32); err == nil {
 		t.Fatal("empty authoritative input accepted")
+	}
+}
+
+func TestCLIRequiresPairedIndependentArchiveInputs(t *testing.T) {
+	for _, addition := range [][]string{
+		{"--archive-seal", "some-seal.json"},
+		{"--archive-pub", "some-archive.pub"},
+	} {
+		args := append([]string{
+			"--package", "missing.json",
+			"--expected", "missing.json",
+			"--trust-dir", "missing-trust",
+		}, addition...)
+		err := run(args)
+		if err == nil || !strings.Contains(err.Error(), "must be provided together") {
+			t.Fatalf("partial archive flag was accepted or not explicitly blocked: %v", err)
+		}
 	}
 }
