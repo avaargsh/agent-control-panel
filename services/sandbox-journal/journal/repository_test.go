@@ -188,6 +188,7 @@ func TestReplayRefusesCorruptOrMissingCommittedOutbox(t *testing.T) {
 		{"changed_original_run", `UPDATE sandbox_journal_outbox SET payload=jsonb_set(payload,'{run_id}','"different-run"'::jsonb)`},
 		{"changed_attempt", `UPDATE sandbox_journal_outbox SET payload=jsonb_set(payload,'{runtime_attempt_id}','"other-attempt"'::jsonb)`},
 		{"changed_digest", `UPDATE sandbox_journal_outbox SET payload=jsonb_set(payload,'{request_digest}','"sha256:0000000000000000000000000000000000000000000000000000000000000000"'::jsonb)`},
+		{"unexpected_sensitive_field", `UPDATE sandbox_journal_outbox SET payload=jsonb_set(payload,'{raw_bearer_token}',to_jsonb('not-an-authorized-field'::text))`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := setup(t)
