@@ -112,6 +112,22 @@ func verifySandboxReadRole(ctx context.Context, pool *pgxpool.Pool) error {
 		  AND has_table_privilege(current_user, 'public.sandbox_journal_commands'::regclass, 'SELECT')
 		  AND has_table_privilege(current_user, 'public.sandbox_lease_intent_events'::regclass, 'SELECT')
 		  AND has_table_privilege(current_user, 'public.sandbox_journal_outbox'::regclass, 'SELECT')
+		  -- PostgreSQL Sequence ACLs are separate from table ACLs.
+		  -- USAGE/UPDATE may advance a persisted sequence even without
+		  -- table DML. This command accepts ONLY SELECT on four journal
+		  -- tables, never unrelated sequence rights or PUBLIC grants.
+		  AND NOT EXISTS (
+		    SELECT 1 FROM pg_catalog.pg_class c
+		    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+		    WHERE c.relkind = 'S'
+		      AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+		      AND n.nspname NOT LIKE 'pg_toast%'
+		      AND n.nspname NOT LIKE 'pg_temp_%'
+		      -- WHERE reordering must never call this function on a table.
+		      AND CASE WHEN c.relkind = 'S'
+		               THEN has_sequence_privilege(current_user, c.oid, 'SELECT,USAGE,UPDATE')
+		               ELSE false END
+		  )
 		  AND NOT EXISTS (
 		    SELECT 1 FROM pg_roles AS r
 		    WHERE (r.rolname = session_user OR pg_has_role(session_user, r.oid, 'MEMBER'))
