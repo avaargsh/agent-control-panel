@@ -46,7 +46,11 @@ jobs:
       - name: Verify Go formatting
         run: |
           files="$(gofmt -l services/sandbox-journal)"
-          test -z "$files" || { echo "$files"; exit 1; }
+          if [ -n "$files" ]; then
+            echo "$files"
+            gofmt -d services/sandbox-journal
+            exit 1
+          fi
       - name: Verify independent module hashes
         working-directory: services/sandbox-journal
         run: go mod verify
