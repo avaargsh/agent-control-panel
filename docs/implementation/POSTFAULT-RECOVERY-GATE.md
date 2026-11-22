@@ -83,3 +83,8 @@ go test -race -count=1 -v -run '^TestPhysicalWorkspace(SurvivesWorkerSIGKILL|Rec
 ```
 
 The existing ACP Temporal Golden Path CI now also invokes this specific test explicitly **before** the mandatory source-signed full recovery gate. A local PASS does **not** create Sandbox/AgentD/Guard authority receipts, attest a KVM/Pod mount, prove UID lease renewal, reconcile a real externally executed command, or revalidate a genuine Guard Permit. The final step must still report **BLOCKED** until #70/#71/#72 deliver those real producers.
+
+
+### Disposable local filesystem boundary regressions (2026-11-22)
+
+The **test-only** Linux workspace inspector now resolves the absolute root one directory component at a time via directory handles and `O_NOFOLLOW`, rejecting parent symlinks and non-canonical `..` components. Its child-file read only accepts a single relative filename, denying absolute paths, `../`, embedded separators and symlink substitution. An additional concurrent symlink-swap test asserts that a successful read never returns bytes from an external file. These checks exercise a local disposable helper, **not** a deployed AgentD filesystem API, a mount-namespace sandbox or a source-signed producer. The real SandboxService/AgentD egress, filesystem traversal and execution permissions remain a separate blocked acceptance gate.
