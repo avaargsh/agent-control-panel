@@ -167,7 +167,7 @@ func readLocalWorkspaceFile(dirfd int, name string, limit int) ([]byte, error) {
 	file := os.NewFile(uintptr(fd), "disposable-local-read")
 	defer file.Close()
 	var stat syscall.Stat_t
-	if syscall.Fstat(fd, &stat) != nil || stat.Mode&syscall.S_IFMT != syscall.S_IFREG {
+	if syscall.Fstat(fd, &stat) != nil || stat.Mode&syscall.S_IFMT != syscall.S_IFREG || stat.Nlink != 1 {
 		return nil, errors.New("workspace file is not regular")
 	}
 	content, err := io.ReadAll(io.LimitReader(file, int64(limit)+1))
