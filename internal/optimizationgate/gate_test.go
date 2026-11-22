@@ -140,7 +140,6 @@ func TestRejectsCrossScopeVerifierKeyEvenWhenGloballyTrusted(t *testing.T) {
 	}
 }
 
-
 func TestRejectsUnsafeVerifierRunIdentity(t *testing.T) {
 	for _, runID := range []string{"../run", "other/run", "run\nspoof", "run\u200bhidden", strings.Repeat("r", 129)} {
 		t.Run(strings.ReplaceAll(runID, "\n", "-newline-"), func(t *testing.T) {
