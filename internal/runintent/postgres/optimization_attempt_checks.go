@@ -10,7 +10,7 @@ import (
 
 // verifyOptimizationAttemptChecks rebuilds the reviewed v13 table's CHECK
 // predicates in a disposable TEMP relation on the same PostgreSQL server.
-// It compares the complete normalized expression multiset rather than
+// It compares column identity/types/NOT NULL/defaults and the complete\n// normalized expression multiset rather than
 // trusting constraint names: CHECK (TRUE) under the original name is drift.
 // The source is the checksum-pinned embedded migration, never a caller input.
 func verifyOptimizationAttemptChecks(ctx context.Context, tx pgx.Tx, source []byte) error {
@@ -28,6 +28,9 @@ func verifyOptimizationAttemptChecks(ctx context.Context, tx pgx.Tx, source []by
 		tail[:end] + "\n) ON COMMIT DROP"
 	if _, err := tx.Exec(ctx, expectedDDL, pgx.QueryExecModeSimpleProtocol); err != nil {
 		return fmt.Errorf("compile expected optimization v13 CHECK constraints: %w", err)
+	}
+	if err := verifyOptimizationAttemptColumns(ctx, tx); err != nil {
+		return err
 	}
 	var equal bool
 	if err := tx.QueryRow(ctx, `
