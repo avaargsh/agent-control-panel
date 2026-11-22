@@ -105,11 +105,11 @@ func TestOptimizationAttemptMigrationRejectsSameNameWeakVerifierIndex(t *testing
 	}{
 		{
 			name: "wrong unique key still has same index name",
-			ddl: "CREATE UNIQUE INDEX optimization_attempt_verifier_run_unique ON optimization_verification_attempts (verification_nonce) WHERE consumed_at IS NOT NULL",
+			ddl:  "CREATE UNIQUE INDEX optimization_attempt_verifier_run_unique ON optimization_verification_attempts (verification_nonce) WHERE consumed_at IS NOT NULL",
 		},
 		{
 			name: "inverted partial predicate",
-			ddl: "CREATE UNIQUE INDEX optimization_attempt_verifier_run_unique ON optimization_verification_attempts (tenant_id,project_id,verifier_run_id) WHERE consumed_at IS NULL",
+			ddl:  "CREATE UNIQUE INDEX optimization_attempt_verifier_run_unique ON optimization_verification_attempts (tenant_id,project_id,verifier_run_id) WHERE consumed_at IS NULL",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
