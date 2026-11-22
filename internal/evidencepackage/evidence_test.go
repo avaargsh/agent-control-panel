@@ -50,6 +50,10 @@ func fixturePackage(t *testing.T) fixture {
 		Schema: ExpectedSchema, Subject: subject, Fault: fault,
 		RunIntentID: "intent-1", RequestDigest: hash("a"),
 		AllocationID: "allocation-1", ProviderUID: "provider-1", ProviderGeneration: 7,
+		SourceRevisions: make(map[string]uint64),
+	}
+	for i, stage := range stages {
+		e.SourceRevisions[stage.stage] = uint64(i + 4)
 	}
 	f := fixture{
 		e: e, now: now,
@@ -130,6 +134,7 @@ func fixturePackage(t *testing.T) fixture {
 			Schema: ObservationSchema, Stage: stage.stage, Authority: stage.authority,
 			Subject: subject, RunIntentID: e.RunIntentID, RequestDigest: e.RequestDigest,
 			ObservedAt: fault.At.Add(-10 * time.Second),
+			SourceRevision: e.SourceRevisions[stage.stage],
 		}
 		switch stage.stage {
 		case "run":
