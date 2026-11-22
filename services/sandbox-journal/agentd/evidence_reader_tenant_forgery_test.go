@@ -73,7 +73,6 @@ func TestEvidenceReaderCannotForgeTenantWithSessionGUC(t *testing.T) {
 	}
 }
 
-
 // Revoking the owner-maintained binding must deny the identical authenticated
 // LOGIN, even if that LOGIN forges a formerly valid tenant custom setting.
 func TestEvidenceReaderRevokedBindingDeniesSourceReads(t *testing.T) {
