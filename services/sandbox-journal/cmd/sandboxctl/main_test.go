@@ -368,4 +368,55 @@ func TestSandboxctlRejectsShadowSchemaReadRoleBypass(t *testing.T) {
 	if err := verifySandboxReadRole(ctx, pool); err != nil {
 		t.Fatalf("revoking foreign column SELECT did not restore dedicated read role: %v", err)
 	}
+
+	// The login's effective ACLs alone are not enough. A NOINHERIT grant
+	// with SET TRUE lets the same authenticated login switch to a helper
+	// role, obtaining foreign-table INSERT even though the login's
+	// ordinary current_user INSERT privilege remains false.
+	const delegated = "sandboxctl_shadow_delegate"
+	if _, err := owner.Exec(ctx, "CREATE ROLE "+delegated+
+		" NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_, _ = owner.Exec(context.Background(), "REVOKE "+delegated+" FROM "+username)
+		_, _ = owner.Exec(context.Background(), "DROP OWNED BY "+delegated)
+		_, _ = owner.Exec(context.Background(), "DROP ROLE IF EXISTS "+delegated)
+	}()
+	for _, grant := range []string{
+		"GRANT USAGE ON SCHEMA " + schema + " TO " + delegated,
+		"GRANT INSERT ON " + externalTable + " TO " + delegated,
+		"GRANT " + delegated + " TO " + username + " WITH INHERIT FALSE, SET TRUE",
+	} {
+		if _, err := owner.Exec(ctx, grant); err != nil {
+			t.Fatalf("prepare delegated foreign writer: %v", err)
+		}
+	}
+	var inherited bool
+	if err := pool.QueryRow(ctx, "SELECT has_table_privilege(current_user, $1::regclass, 'INSERT')", externalTable).Scan(&inherited); err != nil || inherited {
+		t.Fatalf("delegated permission was inherited or untestable: inherited=%t err=%v", inherited, err)
+	}
+	attacker, err := probe.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := attacker.Exec(ctx, "SET ROLE "+delegated); err != nil {
+		attacker.Release()
+		t.Fatalf("actual login could not switch to delegated writer: %v", err)
+	}
+	_, effectErr := attacker.Exec(ctx, "INSERT INTO "+externalTable+" VALUES ('delegated-insert-verified')")
+	_, resetErr := attacker.Exec(ctx, "RESET ROLE")
+	attacker.Release()
+	if effectErr != nil || resetErr != nil {
+		t.Fatalf("actual delegated write failed: insert=%v reset=%v", effectErr, resetErr)
+	}
+	if err := verifySandboxReadRole(ctx, pool); err == nil {
+		t.Fatal("SET ROLE to NOINHERIT foreign writer bypassed exact-four-table reader preflight")
+	}
+	if _, err := owner.Exec(ctx, "REVOKE "+delegated+" FROM "+username); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifySandboxReadRole(ctx, pool); err != nil {
+		t.Fatalf("revoking delegated SET ROLE foreign writer did not restore reader: %v", err)
+	}
 }
