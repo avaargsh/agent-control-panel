@@ -448,11 +448,18 @@ func TestAuthorityHTTPRejectsRuntimeRoleDrift(t *testing.T) {
 					}
 				}()
 				var armed, triggered atomic.Bool
+				var checkCalls, injectAfterCheck atomic.Int32
 				guard := func(requestCtx context.Context) error {
 					if err := verifyAuthorityDatabaseRole(requestCtx, reader); err != nil {
 						return err
 					}
-					if armed.Load() && triggered.CompareAndSwap(false, true) {
+					// Use real PostgreSQL for both attestations and execute
+					// the independent administrator DCL immediately after
+					// the selected successful attestation. No fake rows,
+					// mocked privilege result or artificial test-only
+					// production hook is involved.
+					if armed.Load() && checkCalls.Add(1) == injectAfterCheck.Load() &&
+						triggered.CompareAndSwap(false, true) {
 						_, err := admin.Exec(requestCtx, "GRANT SELECT ON "+schema+".outbox_events TO "+role)
 						return err
 					}
@@ -505,16 +512,48 @@ func TestAuthorityHTTPRejectsRuntimeRoleDrift(t *testing.T) {
 						t.Fatal("baseline Decision Publication signature is not authentic")
 					}
 				}
+				injectAfterCheck.Store(1)
 				armed.Store(true)
 				status, body := request()
-				if !triggered.Load() {
-					t.Fatal("DCL race never injected")
+				if !triggered.Load() || checkCalls.Load() != 1 {
+					t.Fatalf("pre-read DCL injection failed: triggered=%v checks=%d", triggered.Load(), checkCalls.Load())
 				}
 				if status != http.StatusServiceUnavailable {
-					t.Fatalf("P0 TOCTOU %s: expected 503, got HTTP %d with %d response bytes after committed GRANT between attestation and read", name, status, len(body))
+					t.Fatalf("P0 pre-read TOCTOU %s: expected 503, got HTTP %d with %d response bytes after committed GRANT", name, status, len(body))
 				}
 				if strings.Contains(string(body), "\"signature\"") || strings.Contains(string(body), "\"payload\"") {
-					t.Fatal("denied DCL-race request leaked signed publication fields")
+					t.Fatal("denied pre-read DCL request leaked signed publication fields")
+				}
+
+				// Issue #98: restore the legitimate role, prove recovery,
+				// then commit a new GRANT after the *second (final)* role
+				// attestation, immediately before emission. A second check
+				// cannot atomically protect any later response emission.
+				armed.Store(false)
+				if _, err := admin.Exec(ctx, "REVOKE SELECT ON "+schema+".outbox_events FROM "+role); err != nil {
+					t.Fatal(err)
+				}
+				if status, _ := request(); status != http.StatusOK {
+					t.Fatalf("failed to recover accepted Run after revocation: HTTP %d", status)
+				}
+				checkCalls.Store(0)
+				triggered.Store(false)
+				injectAfterCheck.Store(2)
+				armed.Store(true)
+				status, body = request()
+				if !triggered.Load() || checkCalls.Load() != 2 {
+					t.Fatalf("final-check DCL injection failed: triggered=%v checks=%d", triggered.Load(), checkCalls.Load())
+				}
+				var privilegeChanged bool
+				if err := admin.QueryRow(ctx, "SELECT has_table_privilege($1,$2,'SELECT')", role,
+					schema+".outbox_events").Scan(&privilegeChanged); err != nil || !privilegeChanged {
+					t.Fatalf("independent administrator DCL was not committed: privilege=%v err=%v", privilegeChanged, err)
+				}
+				if status != http.StatusServiceUnavailable {
+					t.Fatalf("P0 final-check TOCTOU %s: expected 503, got HTTP %d with %d response bytes after committed GRANT following the final role attestation", name, status, len(body))
+				}
+				if strings.Contains(string(body), "\"signature\"") || strings.Contains(string(body), "\"payload\"") {
+					t.Fatal("denied final-check DCL request leaked signed publication fields")
 				}
 			})
 		}
