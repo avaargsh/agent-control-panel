@@ -228,7 +228,18 @@ func verifySandboxReadRole(ctx context.Context, pool *pgxpool.Pool) error {
 		        -- without ordinary table ACLs. Ban all pg_* capability groups.
 		        OR left(r.rolname, 3) = 'pg_'
 		        OR has_database_privilege(r.oid, current_database(), 'CREATE')
-		        OR has_schema_privilege(r.oid, 'public', 'CREATE')
+		        -- CREATE on any non-system schema permits durable DDL even
+		        -- without database CREATE or table DML. A NOINHERIT member
+		        -- may also SET ROLE to a helper with foreign-schema CREATE.
+		        -- Exclude ephemeral/internal namespaces, not business ones.
+		        OR EXISTS (
+		          SELECT 1
+		          FROM pg_catalog.pg_namespace AS ns
+		          WHERE ns.nspname NOT IN ('pg_catalog', 'information_schema')
+		            AND ns.nspname NOT LIKE 'pg_toast%'
+		            AND ns.nspname NOT LIKE 'pg_temp_%'
+		            AND pg_catalog.has_schema_privilege(r.oid, ns.oid, 'CREATE')
+		        )
 		        OR has_table_privilege(r.oid, 'public.sandbox_lease_intents'::regclass, 'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
 		        OR has_table_privilege(r.oid, 'public.sandbox_journal_commands'::regclass, 'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
 		        OR has_table_privilege(r.oid, 'public.sandbox_lease_intent_events'::regclass, 'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
