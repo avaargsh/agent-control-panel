@@ -81,3 +81,71 @@ func TestCommandCommitRejectsOrphanAndForgedOutbox(t *testing.T) {
 		t.Fatalf("idempotent replay failed: created=%t got=%+v err=%v", created, got, err)
 	}
 }
+
+
+// A migration cannot retroactively bless committed source facts that lack
+// their original Outbox. Only the disposable database owner injects history
+// with triggers disabled; production runtime principals have no DDL rights.
+func TestCommandCommitMigrationRefusesHistoricalOrphan(t *testing.T) {
+	repo := setup(t)
+	ctx := context.Background()
+	legacy := sample()
+	legacy.CommandID = "historical-orphan"
+	raw, err := os.ReadFile("../migrations/0011_command_commit_integrity.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	inject := func(disable bool) {
+		t.Helper()
+		tx, err := repo.pool.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = tx.Rollback(context.Background()) }()
+		if _, err := tx.Exec(ctx, "ALTER TABLE public.sandbox_journal_commands DISABLE TRIGGER USER"); err != nil {
+			t.Fatal(err)
+		}
+		if disable {
+			_, err = tx.Exec(ctx, `INSERT INTO public.sandbox_journal_commands
+				(tenant_id,sandbox_uid,command_id,run_id,runtime_attempt_id,request_digest)
+				VALUES($1,$2,$3,$4,$5,$6)`,
+				legacy.TenantID, legacy.SandboxUID, legacy.CommandID,
+				legacy.RunID, legacy.RuntimeAttemptID, legacy.RequestDigest)
+		} else {
+			_, err = tx.Exec(ctx, `DELETE FROM public.sandbox_journal_commands
+				WHERE tenant_id=$1 AND sandbox_uid=$2 AND command_id=$3`,
+				legacy.TenantID, legacy.SandboxUID, legacy.CommandID)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tx.Exec(ctx, "ALTER TABLE public.sandbox_journal_commands ENABLE TRIGGER USER"); err != nil {
+			t.Fatal(err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	inject(true)
+	defer inject(false)
+	_, err = repo.pool.Exec(ctx, string(raw))
+	assertCommandCommitDenied(t, err)
+	if _, err := repo.Get(ctx, legacy.TenantID, legacy.SandboxUID, legacy.CommandID); !errors.Is(err, ErrCorrupt) {
+		t.Fatalf("incomplete historical command was treated as a valid receipt: %v", err)
+	}
+	inject(false)
+	// The candidate migration is idempotent on clean, original committed
+	// history, including a normal atomic repository transaction.
+	healthy := sample()
+	if _, created, err := repo.RecordPermitUnavailable(ctx, healthy); err != nil || !created {
+		t.Fatalf("write valid immutable command before migration replay: created=%t err=%v", created, err)
+	}
+	if _, err := repo.pool.Exec(ctx, string(raw)); err != nil {
+		t.Fatalf("migration replay rejected valid original history: %v", err)
+	}
+	if _, err := repo.Get(ctx, healthy.TenantID, healthy.SandboxUID, healthy.CommandID); err != nil {
+		t.Fatalf("valid command lost after migration replay: %v", err)
+	}
+}
