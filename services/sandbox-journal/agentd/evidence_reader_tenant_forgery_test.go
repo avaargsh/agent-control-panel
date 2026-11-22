@@ -72,3 +72,46 @@ func TestEvidenceReaderCannotForgeTenantWithSessionGUC(t *testing.T) {
 			authenticatedLogin, foreignRows)
 	}
 }
+
+
+// Revoking the owner-maintained binding must deny the identical authenticated
+// LOGIN, even if that LOGIN forges a formerly valid tenant custom setting.
+func TestEvidenceReaderRevokedBindingDeniesSourceReads(t *testing.T) {
+	owner := testDatabase(t)
+	cmd, original := startOwnedTestProcess(t, "10")
+	defer func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	}()
+	seedAlreadyAuthorizedAttempt(t, owner, original)
+	reader := newEvidenceReaderPool(t, owner, original.TenantID)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	var login string
+	if err := reader.QueryRow(ctx, "SELECT session_user").Scan(&login); err != nil || login == "" {
+		t.Fatalf("cannot establish distinct reader LOGIN: %q %v", login, err)
+	}
+	deleted, err := owner.Exec(ctx,
+		"DELETE FROM public.sandbox_agentd_reader_login_bindings WHERE login_name=$1", login)
+	if err != nil || deleted.RowsAffected() != 1 {
+		t.Fatalf("owner could not revoke reader tenant binding: rows=%d err=%v", deleted.RowsAffected(), err)
+	}
+	tx, err := reader.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, "SELECT set_config('app.tenant_id',$1,true)", original.TenantID); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyEvidenceReaderLogin(ctx, tx); err == nil {
+		t.Fatal("revoked authenticated reader binding was accepted as current authorization")
+	}
+	var count int
+	if err := tx.QueryRow(ctx,
+		"SELECT count(*) FROM public.sandbox_agentd_attempts WHERE tenant_id=$1",
+		original.TenantID).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("revoked login read %d original source rows: %v", count, err)
+	}
+}
