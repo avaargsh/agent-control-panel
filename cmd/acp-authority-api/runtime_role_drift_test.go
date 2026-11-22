@@ -297,4 +297,28 @@ func TestAuthorityHTTPRejectsRuntimeRoleDrift(t *testing.T) {
 		t.Fatal(err)
 	}
 	checkBothRoutes("after-revoke", http.StatusForbidden)
+
+	// Loss of a mandatory catalog SELECT privilege must also be detected
+	// before reading the RunIntent: a missing RunIntent must not camouflage
+	// a broken authority-service database identity as normal HTTP 403.
+	if _, err := admin.Exec(ctx, "REVOKE SELECT ON "+schema+".admission_sessions FROM "+role); err != nil {
+		t.Fatal(err)
+	}
+	checkBothRoutes("after-required-select-revocation", http.StatusServiceUnavailable)
+	if _, err := admin.Exec(ctx, "GRANT SELECT ON "+schema+".admission_sessions TO "+role); err != nil {
+		t.Fatal(err)
+	}
+	checkBothRoutes("after-required-select-restore", http.StatusForbidden)
+
+	// NOINHERIT membership with SET ROLE potential is dangerous even if it
+	// does not make the reader's present table SELECT result change. Detect
+	// privilege escalation of the actual live LOGIN, not only table grants.
+	if _, err := admin.Exec(ctx, "GRANT pg_read_all_data TO "+role+" WITH INHERIT FALSE, SET TRUE"); err != nil {
+		t.Fatal(err)
+	}
+	checkBothRoutes("after-role-membership-grant", http.StatusServiceUnavailable)
+	if _, err := admin.Exec(ctx, "REVOKE pg_read_all_data FROM "+role); err != nil {
+		t.Fatal(err)
+	}
+	checkBothRoutes("after-role-membership-revoke", http.StatusForbidden)
 }
