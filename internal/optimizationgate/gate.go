@@ -162,6 +162,7 @@ func validPolicy(p BaselinePolicy) bool {
 	}
 	return true
 }
+
 // validVerifierRunID prevents path-like, control/format Unicode and oversized
 // audit identifiers from being reinterpreted by downstream record stores.
 func validVerifierRunID(id string) bool {
