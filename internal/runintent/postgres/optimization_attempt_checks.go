@@ -10,8 +10,9 @@ import (
 
 // verifyOptimizationAttemptChecks rebuilds the reviewed v13 table's CHECK
 // predicates in a disposable TEMP relation on the same PostgreSQL server.
-// It compares column identity/types/NOT NULL/defaults and the complete\n// normalized expression multiset rather than
-// trusting constraint names: CHECK (TRUE) under the original name is drift.
+// It compares the full column contract and normalized CHECK expressions
+// against the source migration, not merely their names. CHECK (TRUE) under
+// the original name is drift.
 // The source is the checksum-pinned embedded migration, never a caller input.
 func verifyOptimizationAttemptChecks(ctx context.Context, tx pgx.Tx, source []byte) error {
 	const tableStart = "CREATE TABLE optimization_verification_attempts ("
@@ -32,43 +33,6 @@ func verifyOptimizationAttemptChecks(ctx context.Context, tx pgx.Tx, source []by
 	if err := verifyOptimizationAttemptColumns(ctx, tx); err != nil {
 		return err
 	}
-	// Compare the full ordered column contract against PostgreSQL's
-	// interpretation of the pinned migration DDL. A same-name CHECK can
-	// survive while a privileged operator drops NOT NULL, removes a
-	// trusted timestamp default, or adds a consumed_at default.
-	// All of these must fail closed on subsequent schema verification.
-	var columnsEqual bool
-	if err := tx.QueryRow(ctx, `
-		SELECT COALESCE(
-			(SELECT jsonb_agg(jsonb_build_array(
-			   a.attnum, a.attname::text, a.atttypid::text, a.atttypmod,
-			   a.attnotnull, a.attidentity::text, a.attgenerated::text,
-			   a.attcollation::text, a.atthasmissing,
-			   coalesce(pg_get_expr(d.adbin,d.adrelid,false),''))
-			   ORDER BY a.attnum)
-			 FROM pg_attribute a
-			 LEFT JOIN pg_attrdef d ON d.adrelid=a.attrelid AND d.adnum=a.attnum
-			 WHERE a.attrelid=to_regclass('optimization_verification_attempts')
-			   AND a.attnum>0 AND NOT a.attisdropped)
-			=
-			(SELECT jsonb_agg(jsonb_build_array(
-			   a.attnum, a.attname::text, a.atttypid::text, a.atttypmod,
-			   a.attnotnull, a.attidentity::text, a.attgenerated::text,
-			   a.attcollation::text, a.atthasmissing,
-			   coalesce(pg_get_expr(d.adbin,d.adrelid,false),''))
-			   ORDER BY a.attnum)
-			 FROM pg_attribute a
-			 LEFT JOIN pg_attrdef d ON d.adrelid=a.attrelid AND d.adnum=a.attnum
-			 WHERE a.attrelid=to_regclass('pg_temp.acp_expected_optimization_checks')
-			   AND a.attnum>0 AND NOT a.attisdropped),
-			false)
-	`).Scan(&columnsEqual); err != nil {
-		return fmt.Errorf("inspect optimization v13 column metadata: %w", err)
-	}
-	if !columnsEqual {
-		return ErrSchemaDrift
-	}
-
 	var equal bool
 	if err := tx.QueryRow(ctx, `
 		SELECT
