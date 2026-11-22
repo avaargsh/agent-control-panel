@@ -38,7 +38,7 @@ The candidate `migrations/0002_lease_intents.sql` and additive `0003_lease_outbo
 
 ## Pre-Permit CommandJournal immutable source receipts (candidate migration 0004)
 
-The original `PERMIT_UNAVAILABLE` **command row and its atomic Outbox event are append-only facts**. `migrations/0004_command_journal_outbox_immutable.sql` is applied **only in the independent Sandbox Service DB**, after 0003; it is never applied to the ACP RunIntent database.
+The original `PERMIT_UNAVAILABLE` **command row and its atomic Outbox event are append-only facts**. `migrations/0005_command_journal_outbox_immutable.sql` is applied **only in the independent Sandbox Service DB**, after 0004; it is never applied to the ACP RunIntent database.
 
 Before installing UPDATE/DELETE/TRUNCATE barriers, the migration takes a PostgreSQL lock and checks every original command's bound Outbox event, generation and **exact three-field JSONB** (`run_id`, `runtime_attempt_id`, `request_digest`). Any orphan, substituted digest or unexpected payload field causes the migration to fail without sealing corrupted data. Once installed, ordinary UPDATE/DELETE and TRUNCATE (including CASCADE) cannot rewrite the command or its Outbox. Idempotent INSERT/replay and fresh-process PostgreSQL readback remain supported.
 
