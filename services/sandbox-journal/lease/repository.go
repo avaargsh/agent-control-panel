@@ -97,6 +97,11 @@ func (r *Repository) Create(ctx context.Context, in Intent) (Record, bool, error
 		if rec.Intent != in {
 			return Record{}, false, ErrConflict
 		}
+		// A replay is never trustworthy if its original Outbox fact has
+		// disappeared or changed. A cancelled intent needs BOTH events.
+		if err := verifyLeaseEvents(ctx, tx, rec, rec.Generation); err != nil {
+			return Record{}, false, err
+		}
 	} else if err != nil {
 		return Record{}, false, fmt.Errorf("create sandbox lease intent: %w", err)
 	}
@@ -155,6 +160,11 @@ func (r *Repository) CancelBeforeProvision(
 	if err != nil {
 		return Record{}, fmt.Errorf("CAS cancelled sandbox lease intent: %w", err)
 	}
+	// The logical CAS must not advance an orphaned creation record.
+	// The UPDATE is rolled back if its original event fails verification.
+	if err := verifyLeaseEvents(ctx, tx, rec, 1); err != nil {
+		return Record{}, err
+	}
 	const event = `INSERT INTO sandbox_lease_intent_events
 	 (tenant_id,lease_intent_id,generation,event_type,payload)
 	 VALUES ($1,$2,$3,'sandbox.lease-intent.cancelled-before-provision',
@@ -169,8 +179,9 @@ func (r *Repository) CancelBeforeProvision(
 	return rec, nil
 }
 
-// Get reads one tenant-scoped pre-Permit intent; no authorization is derived
-// from its identifiers or status. The caller still needs trusted authn.
+// Get reads one tenant-scoped pre-Permit intent and every required original
+// Outbox fact from the SAME repeatable-read snapshot. An orphaned state is
+// corrupt, not a successful receipt, retry authorization or provider status.
 func (r *Repository) Get(ctx context.Context, tenant, leaseID string) (Record, error) {
 	if !opaqueRef.MatchString(tenant) || !opaqueRef.MatchString(leaseID) {
 		return Record{}, ErrInvalid
@@ -178,16 +189,67 @@ func (r *Repository) Get(ctx context.Context, tenant, leaseID string) (Record, e
 	if r == nil || r.pool == nil {
 		return Record{}, ErrUnavailable
 	}
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return Record{}, fmt.Errorf("begin sandbox lease inspection: %w", err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
 	const query = `SELECT ` + leaseColumns + ` FROM sandbox_lease_intents
 	 WHERE tenant_id=$1 AND lease_intent_id=$2`
-	rec, err := scan(r.pool.QueryRow(ctx, query, tenant, leaseID))
+	rec, err := scan(tx.QueryRow(ctx, query, tenant, leaseID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Record{}, ErrNotFound
 	}
 	if err != nil {
 		return Record{}, fmt.Errorf("get sandbox lease intent: %w", err)
 	}
+	if err := verifyLeaseEvents(ctx, tx, rec, rec.Generation); err != nil {
+		return Record{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Record{}, fmt.Errorf("commit sandbox lease inspection: %w", err)
+	}
 	return rec, nil
+}
+
+// leaseQueryRow is implemented by pgx.Tx. This is an integrity inspection,
+// not a permission or a reconstruction of a missing event.
+type leaseQueryRow interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+// verifyLeaseEvents requires original creation (generation 1) and, for a
+// cancelled intent, cancellation (generation 2) in the same transaction.
+// Exact JSON comparison rejects unexpected sensitive fields as well as
+// changed Run, attempt or request digest.
+func verifyLeaseEvents(ctx context.Context, q leaseQueryRow, rec Record, through uint64) error {
+	if through < 1 || through > 2 || through > rec.Generation {
+		return ErrCorrupt
+	}
+	for generation := uint64(1); generation <= through; generation++ {
+		var actualGeneration int64
+		var eventType string
+		var payloadExact bool
+		err := q.QueryRow(ctx, `SELECT generation,event_type,
+		payload = jsonb_build_object(
+			'run_id',$4::text,
+			'runtime_attempt_id',$5::text,
+			'request_digest',$6::text)
+		FROM sandbox_lease_intent_events
+		WHERE tenant_id=$1 AND lease_intent_id=$2 AND generation=$3`,
+			rec.Intent.TenantID, rec.Intent.LeaseIntentID, int64(generation),
+			rec.Intent.RunID, rec.Intent.RuntimeAttemptID, rec.Intent.RequestDigest,
+		).Scan(&actualGeneration, &eventType, &payloadExact)
+		wantType := "sandbox.lease-intent.waiting-permit"
+		if generation == 2 {
+			wantType = "sandbox.lease-intent.cancelled-before-provision"
+		}
+		if err != nil || actualGeneration != int64(generation) ||
+			eventType != wantType || !payloadExact {
+			return ErrCorrupt
+		}
+	}
+	return nil
 }
 
 func scan(row pgx.Row) (Record, error) {

@@ -42,8 +42,32 @@ func testRepository(t *testing.T) *Repository {
 	if _, err = pool.Exec(ctx, string(raw)); err != nil {
 		t.Fatal("lease-intent migration:", err)
 	}
-	if _, err = pool.Exec(ctx, "TRUNCATE sandbox_lease_intent_events,sandbox_lease_intents CASCADE"); err != nil {
+	// Disposable owner-only test reset. After migration 0003, ordinary
+	// TRUNCATE is forbidden; disabling the USER trigger for one rollback-safe
+	// setup transaction must never be reproduced by the application writer.
+	tx, err := pool.Begin(ctx)
+	if err != nil {
 		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	for _, sql := range []string{
+		"ALTER TABLE sandbox_lease_intent_events DISABLE TRIGGER USER",
+		"TRUNCATE sandbox_lease_intent_events,sandbox_lease_intents CASCADE",
+		"ALTER TABLE sandbox_lease_intent_events ENABLE TRIGGER USER",
+	} {
+		if _, err := tx.Exec(ctx, sql); err != nil {
+			t.Fatal("isolated sandbox test reset:", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal("commit isolated sandbox test reset:", err)
+	}
+	immutable, err := os.ReadFile(filepath.Join("..", "migrations", "0003_lease_outbox_immutable.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, string(immutable)); err != nil {
+		t.Fatal("lease Outbox append-only migration:", err)
 	}
 	return New(pool)
 }
