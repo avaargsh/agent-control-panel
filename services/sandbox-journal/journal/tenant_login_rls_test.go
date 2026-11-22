@@ -155,4 +155,41 @@ func TestCommandJournalReaderCannotReadOtherTenantWithOwnLogin(t *testing.T) {
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
+
+	// A group grant without the DBA's OID-pinned LOGIN -> tenant mapping
+	// must not authorize either read or atomic INSERT+Outbox.
+	const unboundLogin = "sandbox_ci_command_unbound"
+	const unboundPassword = "command-rls-unbound-ci-only"
+	defer func() {
+		_, _ = owner.pool.Exec(context.Background(), "DROP OWNED BY "+unboundLogin)
+		_, _ = owner.pool.Exec(context.Background(), "DROP ROLE IF EXISTS "+unboundLogin)
+	}()
+	for _, statement := range []string{
+		"CREATE ROLE " + unboundLogin + " LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD '" + unboundPassword + "'",
+		"GRANT acp_sandbox_command_writer TO " + unboundLogin,
+	} {
+		if _, err := owner.pool.Exec(ctx, statement); err != nil {
+			t.Fatalf("create unbound Command writer: %v", err)
+		}
+	}
+	unboundCfg := cfg.Copy()
+	unboundCfg.ConnConfig.User, unboundCfg.ConnConfig.Password = unboundLogin, unboundPassword
+	unbound, err := pgxpool.NewWithConfig(ctx, unboundCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unbound.Close()
+	if _, err := New(unbound).Get(ctx, inA.TenantID, inA.SandboxUID, inA.CommandID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unbound Command group reader saw tenant-A facts: %v", err)
+	}
+	unboundAttempt := inB
+	unboundAttempt.CommandID = "unbound-command-attempt"
+	if _, created, err := New(unbound).RecordPermitUnavailable(ctx, unboundAttempt); err == nil || created {
+		t.Fatalf("unbound Command writer minted a receipt: created=%t err=%v", created, err)
+	}
+	readonlyAttempt := inA
+	readonlyAttempt.CommandID = "reader-forged-command"
+	if _, created, err := New(reader).RecordPermitUnavailable(ctx, readonlyAttempt); err == nil || created {
+		t.Fatalf("SELECT-only Command reader minted a receipt: created=%t err=%v", created, err)
+	}
 }
