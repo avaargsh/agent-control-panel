@@ -47,6 +47,13 @@ func TestLeaseRuntimeDatabaseRolesDenyEscalationAndPreserveCAS(t *testing.T) {
 	if _, err := owner.pool.Exec(ctx, "GRANT acp_sandbox_lease_reader TO "+readerLogin); err != nil {
 		t.Fatal(err)
 	}
+	// Only the owner/DBA can bind an authenticated LOGIN to a trusted tenant.
+	// A caller-supplied tenant field or SET ROLE must never change this.
+	if _, err := owner.pool.Exec(ctx, `INSERT INTO public.sandbox_lease_db_principals
+		(login_name, tenant_id) VALUES ($1,'tenant-a'),($2,'tenant-a')`,
+		writerLogin, readerLogin); err != nil {
+		t.Fatal("DBA tenant binding:", err)
+	}
 	connect := func(user, password string) *pgxpool.Pool {
 		t.Helper()
 		config, err := pgxpool.ParseConfig(os.Getenv("SANDBOX_JOURNAL_TEST_DSN"))
