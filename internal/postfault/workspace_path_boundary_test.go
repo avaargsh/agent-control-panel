@@ -107,3 +107,29 @@ func TestLocalWorkspaceReadRejectsConcurrentSymlinkReplacement(t *testing.T) {
 		t.Fatalf("external file changed: %q %v", b, err)
 	}
 }
+
+// Hard links are not symlinks: O_NOFOLLOW still opens a regular inode shared
+// with a sibling tenant's path. The local continuity reader must not accept
+// that inode as an isolated workspace file, even if both paths are owner-owned.
+func TestLocalWorkspaceRejectsHardLinkedSiblingTenantFile(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "tenant-a-workspace")
+	if err := os.Mkdir(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	sibling := filepath.Join(base, "tenant-b-private")
+	if err := os.WriteFile(sibling, []byte("tenant-b-confidential-bytes"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(sibling, filepath.Join(root, localSentinelFile)); err != nil {
+		t.Fatal(err)
+	}
+	fd, _, err := openLocalWorkspaceRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer syscall.Close(fd)
+	if data, err := readLocalWorkspaceFile(fd, localSentinelFile, 4096); err == nil {
+		t.Fatalf("hard-linked sibling tenant bytes escaped isolation: %q", data)
+	}
+}
