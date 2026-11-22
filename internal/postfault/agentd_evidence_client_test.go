@@ -20,10 +20,10 @@ import (
 )
 
 type evidenceTestCA struct {
-	root *x509.Certificate
+	root    *x509.Certificate
 	private ed25519.PrivateKey
-	raw []byte
-	pool *x509.CertPool
+	raw     []byte
+	pool    *x509.CertPool
 }
 
 func newEvidenceTestCA(t *testing.T) evidenceTestCA {
@@ -34,13 +34,13 @@ func newEvidenceTestCA(t *testing.T) evidenceTestCA {
 	}
 	now := time.Now().UTC()
 	template := &x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject: pkix.Name{CommonName: "test-only-evidence-ca"},
-		NotBefore: now.Add(-time.Hour),
-		NotAfter: now.Add(time.Hour),
-		IsCA: true,
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "test-only-evidence-ca"},
+		NotBefore:             now.Add(-time.Hour),
+		NotAfter:              now.Add(time.Hour),
+		IsCA:                  true,
 		BasicConstraintsValid: true,
-		KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
 	}
 	raw, err := x509.CreateCertificate(rand.Reader, template, template, key.Public(), key)
 	if err != nil {
@@ -68,11 +68,11 @@ func (ca evidenceTestCA) certificate(t *testing.T, server bool, scope string) tl
 	now := time.Now().UTC()
 	leaf := &x509.Certificate{
 		SerialNumber: serial,
-		Subject: pkix.Name{CommonName: "not-an-authority"},
-		NotBefore: now.Add(-time.Minute),
-		NotAfter: now.Add(time.Hour),
-		KeyUsage: x509.KeyUsageDigitalSignature,
-		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		Subject:      pkix.Name{CommonName: "not-an-authority"},
+		NotBefore:    now.Add(-time.Minute),
+		NotAfter:     now.Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 	}
 	if server {
 		leaf.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}
@@ -96,9 +96,9 @@ func newG05EvidenceTLSServer(t *testing.T, ca evidenceTestCA, handler http.Handl
 	s := httptest.NewUnstartedServer(handler)
 	s.TLS = &tls.Config{
 		Certificates: []tls.Certificate{ca.certificate(t, true, "")},
-		ClientCAs: ca.pool,
-		ClientAuth: tls.RequireAndVerifyClientCert,
-		MinVersion: tls.VersionTLS13,
+		ClientCAs:    ca.pool,
+		ClientAuth:   tls.RequireAndVerifyClientCert,
+		MinVersion:   tls.VersionTLS13,
 	}
 	s.StartTLS()
 	t.Cleanup(s.Close)
@@ -110,9 +110,9 @@ func agentDTestTLS(t *testing.T, ca evidenceTestCA, expected ExpectedAgentDWait)
 	scope := "spiffe://sandbox.test/tenant/" + expected.Ref.TenantID +
 		"/run/" + expected.Ref.RunID + "/role/evidence-reader"
 	return &tls.Config{
-		RootCAs: ca.pool,
+		RootCAs:      ca.pool,
 		Certificates: []tls.Certificate{ca.certificate(t, false, scope)},
-		MinVersion: tls.VersionTLS13,
+		MinVersion:   tls.VersionTLS13,
 	}
 }
 
@@ -121,24 +121,24 @@ func sourceWireFixture(t *testing.T, expected ExpectedAgentDWait,
 	head TrustedAgentDInspectHead) AgentDEvidenceResponse {
 	t.Helper()
 	wire := AgentDEvidenceResponse{
-		Schema: AgentDEvidenceReadSchema,
-		Ref: expected.Ref,
-		State: "EXITED",
+		Schema:     AgentDEvidenceReadSchema,
+		Ref:        expected.Ref,
+		State:      "EXITED",
 		NextAction: "HOLD",
 		Head: AgentDWireHead{InspectCount: head.InspectCount,
 			JournalVersion: head.JournalVersion, Digest: head.Digest},
 		Inspections: make([]AgentDWireRecord, 0, len(source)),
 		Terminal: &AgentDWireRecord{
-			PayloadB64: base64.StdEncoding.EncodeToString(waitRaw),
+			PayloadB64:   base64.StdEncoding.EncodeToString(waitRaw),
 			SignatureB64: base64.StdEncoding.EncodeToString(waitSignature),
-			Digest: inspectDigest(waitRaw),
+			Digest:       inspectDigest(waitRaw),
 		},
 	}
 	for _, signed := range source {
 		wire.Inspections = append(wire.Inspections, AgentDWireRecord{
-			PayloadB64: base64.StdEncoding.EncodeToString(signed.Payload),
+			PayloadB64:   base64.StdEncoding.EncodeToString(signed.Payload),
 			SignatureB64: base64.StdEncoding.EncodeToString(signed.Signature),
-			Digest: inspectDigest(signed.Payload),
+			Digest:       inspectDigest(signed.Payload),
 		})
 	}
 	return wire
@@ -245,9 +245,9 @@ func TestG05MTLSConsumerRejectsInsecureTransportAndTLSIdentityFailures(t *testin
 	server := newG05EvidenceTLSServer(t, ca,
 		sourceTestHandler(t, sourceWireFixture(t, expected, waitRaw, waitSig, events, head), http.StatusOK))
 	for _, tc := range []struct {
-		name string
+		name     string
 		endpoint string
-		mutate func(*tls.Config)
+		mutate   func(*tls.Config)
 	}{
 		{"plain_http", "http://127.0.0.1:1234" + AgentDEvidenceReadPath, nil},
 		{"no_client_certificate", server.URL + AgentDEvidenceReadPath, func(c *tls.Config) { c.Certificates = nil }},
