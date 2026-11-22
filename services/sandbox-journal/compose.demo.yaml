@@ -18,9 +18,10 @@ services:
       - ./migrations/0006_lease_commit_integrity.sql:/docker-entrypoint-initdb.d/06_lease_integrity.sql:ro
       - ./migrations/0007_tenant_login_rls.sql:/docker-entrypoint-initdb.d/07_tenant_rls.sql:ro
       - ./migrations/0008_tenant_login_oid_fence.sql:/docker-entrypoint-initdb.d/08_tenant_oid.sql:ro
-      - ./migrations/0009_command_tenant_login_rls.sql:/docker-entrypoint-initdb.d/09_command_rls.sql:ro
-      - ./migrations/tests/0001_sandboxctl_smoke.sql:/docker-entrypoint-initdb.d/10_seed.sql:ro
-      - ./migrations/tests/0002_sandboxctl_demo_reader.sql:/docker-entrypoint-initdb.d/11_reader.sql:ro
+      - ./migrations/0009_tenant_login_revoke_evict.sql:/docker-entrypoint-initdb.d/09_login_revoke.sql:ro
+      - ./migrations/0010_command_tenant_login_rls.sql:/docker-entrypoint-initdb.d/10_command_rls.sql:ro
+      - ./migrations/tests/0001_sandboxctl_smoke.sql:/docker-entrypoint-initdb.d/11_seed.sql:ro
+      - ./migrations/tests/0002_sandboxctl_demo_reader.sql:/docker-entrypoint-initdb.d/12_reader.sql:ro
     healthcheck:
       # TCP + seeded-row check avoids reporting healthy during PostgreSQL's
       # temporary Unix-socket-only init server or before migrations complete.
