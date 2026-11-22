@@ -155,16 +155,36 @@ jobs:
       - name: Require same-Run Sandbox workspace, Command UNKNOWN and Guard Epoch proof
         # Intentionally not continue-on-error. This is the extended recovery
         # gate, not a static fixture or a synthetic replacement for providers.
+        env:
+          AGENTD_EVIDENCE_ENDPOINT: ${{ vars.ACP_AGENTD_EVIDENCE_ENDPOINT }}
+          AGENTD_EVIDENCE_SERVER_NAME: ${{ vars.ACP_AGENTD_EVIDENCE_SERVER_NAME }}
         run: |
           set -euo pipefail
           bundle="$RUNNER_TEMP/acp-postfault/proof.json"
           expected="$RUNNER_TEMP/acp-postfault/expected.json"
           trust="$RUNNER_TEMP/acp-postfault/trust"
+          mtls="$RUNNER_TEMP/acp-agentd-mtls"
+          client_cert="$mtls/client.crt"
+          client_key="$mtls/client.key"
+          server_ca="$mtls/server-ca.pem"
           if [ ! -s "$bundle" ] || [ ! -s "$expected" ] || [ ! -d "$trust" ]; then
-            echo "::error::EXTENDED GOLDEN PATH BLOCKED: no real, independently signed Sandbox/AgentD/Guard/Runtime post-fault proof for this Run. Workflow/Decision recovery alone is not a complete release gate."
+            echo "::error::EXTENDED GOLDEN PATH BLOCKED: no real, independently signed Sandbox/AgentD/Guard/Runtime post-fault proof for this Run."
             exit 1
           fi
-          "$RUNNER_TEMP/acp-postfault-verify" --bundle "$bundle" --expected "$expected" --trust-dir "$trust"
+          if [ -z "${AGENTD_EVIDENCE_ENDPOINT:-}" ] || [ -z "${AGENTD_EVIDENCE_SERVER_NAME:-}" ] ||
+             [ ! -s "$client_cert" ] || [ ! -s "$client_key" ] || [ ! -s "$server_ca" ]; then
+            echo "::error::EXTENDED GOLDEN PATH BLOCKED: no per-Run AgentD mTLS endpoint, client identity/key and pinned server CA were provisioned by the trusted workload identity issuer."
+            exit 1
+          fi
+          "$RUNNER_TEMP/acp-postfault-verify" \
+            --bundle "$bundle" \
+            --expected "$expected" \
+            --trust-dir "$trust" \
+            --agentd-evidence-endpoint "$AGENTD_EVIDENCE_ENDPOINT" \
+            --agentd-client-cert "$client_cert" \
+            --agentd-client-key "$client_key" \
+            --agentd-server-ca "$server_ca" \
+            --agentd-server-name "$AGENTD_EVIDENCE_SERVER_NAME"
       - name: Require original signed G01-G05 lifecycle Evidence Package
         # This is a second independent gate, NOT a fixture-to-green adapter.
         run: |
