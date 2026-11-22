@@ -208,6 +208,42 @@ func TestAuthorityDatabaseRoleFailClosed(t *testing.T) {
 			check(t, true)
 		})
 	}
+	// PostgreSQL sequences use a distinct privilege model (USAGE/SELECT/UPDATE),
+	// not table SELECT/UPDATE or column grants. Assert both configured and
+	// unrelated application schemas with the independently authenticated LOGIN.
+	for _, seqSchema := range []string{schema, foreignSchema} {
+		seq := seqSchema + ".authority_gate_probe_seq"
+		if _, err := admin.Exec(ctx, "CREATE SEQUENCE "+seq); err != nil {
+			t.Fatal(err)
+		}
+		for _, privilege := range []string{"USAGE", "SELECT", "UPDATE"} {
+			t.Run("sequence/"+seqSchema+"/"+privilege, func(t *testing.T) {
+				if _, err := admin.Exec(ctx, "GRANT "+privilege+" ON SEQUENCE "+seq+" TO "+role); err != nil {
+					t.Fatal(err)
+				}
+				readSequence := func() error {
+					var value int64
+					if privilege == "SELECT" {
+						return reader.QueryRow(ctx, "SELECT last_value FROM "+seq).Scan(&value)
+					}
+					return reader.QueryRow(ctx, "SELECT nextval($1::regclass)", seq).Scan(&value)
+				}
+				if err := readSequence(); err != nil {
+					t.Fatalf("sequence privilege was not effective as reader: %v", err)
+				}
+				check(t, false)
+				if _, err := admin.Exec(ctx, "REVOKE "+privilege+" ON SEQUENCE "+seq+" FROM "+role); err != nil {
+					t.Fatal(err)
+				}
+				var pgErr *pgconn.PgError
+				if err := readSequence(); !errors.As(err, &pgErr) || pgErr.Code != "42501" {
+					t.Fatalf("sequence privilege revoke must deny with SQLSTATE 42501: %v", err)
+				}
+				check(t, true)
+			})
+		}
+	}
+
 	if _, err := admin.Exec(ctx, "REVOKE SELECT ON "+schema+".admission_sessions FROM "+role); err != nil {
 		t.Fatal(err)
 	}
