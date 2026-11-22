@@ -127,6 +127,8 @@ func TestAuthorityDatabaseRoleFailClosed(t *testing.T) {
 			"REVOKE SELECT (payload) ON " + schema + ".outbox_events FROM PUBLIC"},
 		{"create schema objects", "GRANT CREATE ON SCHEMA " + schema + " TO " + role,
 			"REVOKE CREATE ON SCHEMA " + schema + " FROM " + role},
+		{"non-inherited privilege escalation membership", "GRANT pg_read_all_data TO " + role + " WITH INHERIT FALSE, SET TRUE",
+			"REVOKE pg_read_all_data FROM " + role},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if _, err := admin.Exec(ctx, tc.grant); err != nil {
