@@ -1,0 +1,74 @@
+name: G05 real AgentD source to ACP mTLS/PG16 (non-production)
+
+on:
+  pull_request:
+    paths:
+      - 'integration/agentdsourcee2e/**'
+      - '.github/workflows/g05-agentd-real-source-e2e.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GOTOOLCHAIN: local
+  AGENTD_CROSS_MODULE_TEST_DSN: postgres://sandbox_ci:sandbox-test-only@127.0.0.1:5432/agentd_cross_module?sslmode=disable
+  PINNED_AGENTD_MIGRATION_DIR: source-pinned/services/sandbox-journal/migrations
+
+jobs:
+  real-source-to-consumer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: sandbox_ci
+          POSTGRES_PASSWORD: sandbox-test-only
+          POSTGRES_DB: agentd_cross_module
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sandbox_ci -d agentd_cross_module"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Checkout exact ACP verifier candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Checkout independently pinned AgentD source producer
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+          ref: 9f54677291ff948606c2478dcfc5f283bfd6e505
+          path: source-pinned
+      - name: Pin both immutable source SHAs
+        env:
+          EXPECTED_CONSUMER_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_CONSUMER_HEAD"
+          test "$(git -C source-pinned rev-parse HEAD)" = "9f54677291ff948606c2478dcfc5f283bfd6e505"
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version: '1.27.4'
+          cache: false
+      - name: Validate Go source and both module graphs
+        run: |
+          test "$(go env GOVERSION)" = "go1.27.4"
+          dirty="$(gofmt -l integration/agentdsourcee2e)"
+          if [ -n "$dirty" ]; then
+            printf '%s\n' "$dirty"
+            gofmt -d integration/agentdsourcee2e/*.go
+            exit 1
+          fi
+          go mod verify
+          (cd source-pinned/services/sandbox-journal && go mod verify)
+      - name: Compose real ACP and pinned source Go modules WITHOUT modifying checked-in deps
+        run: go work init . ./source-pinned/services/sandbox-journal
+      - name: Real PG16 journal, Linux Wait, mTLS source Handler and ACP G05
+        run: go test -p 1 -race -count=1 -v -run '^TestAgentDRealCrossModule' ./integration/agentdsourcee2e
+      - name: Vet complete two-module integration
+        run: go vet ./integration/agentdsourcee2e
