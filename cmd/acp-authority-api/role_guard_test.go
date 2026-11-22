@@ -56,6 +56,19 @@ func TestAuthorityDatabaseRoleFailClosed(t *testing.T) {
 		t.Fatal("migration owner was accepted as authority reader")
 	}
 
+	// A read-only authority identity must not inherit access to unrelated
+	// application schemas in the same database. This sibling schema is NOT
+	// on the test connection's search_path, so ordinary same-schema checks
+	// must not be allowed to conceal the grant.
+	foreignSchema := "acp_authority_foreign_" + suffix
+	if _, err := admin.Exec(ctx, "CREATE SCHEMA "+foreignSchema); err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Exec(context.Background(), "DROP SCHEMA "+foreignSchema+" CASCADE")
+	if _, err := admin.Exec(ctx, "CREATE TABLE "+foreignSchema+".secret (id bigint, payload text)"); err != nil {
+		t.Fatal(err)
+	}
+
 	passwordBytes := make([]byte, 24)
 	if _, err := rand.Read(passwordBytes); err != nil {
 		t.Fatal(err)
@@ -125,6 +138,10 @@ func TestAuthorityDatabaseRoleFailClosed(t *testing.T) {
 			"REVOKE UPDATE (updated_at) ON " + schema + ".run_intents FROM " + role},
 		{"public read outbox column", "GRANT SELECT (payload) ON " + schema + ".outbox_events TO PUBLIC",
 			"REVOKE SELECT (payload) ON " + schema + ".outbox_events FROM PUBLIC"},
+		{"foreign schema table read", "GRANT SELECT ON " + foreignSchema + ".secret TO " + role,
+			"REVOKE SELECT ON " + foreignSchema + ".secret FROM " + role},
+		{"foreign schema column read", "GRANT SELECT (payload) ON " + foreignSchema + ".secret TO " + role,
+			"REVOKE SELECT (payload) ON " + foreignSchema + ".secret FROM " + role},
 		{"create schema objects", "GRANT CREATE ON SCHEMA " + schema + " TO " + role,
 			"REVOKE CREATE ON SCHEMA " + schema + " FROM " + role},
 		{"non-inherited privilege escalation membership", "GRANT pg_read_all_data TO " + role + " WITH INHERIT FALSE, SET TRUE",
