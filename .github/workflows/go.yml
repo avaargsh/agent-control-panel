@@ -78,19 +78,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          go test -count=1 -v -run '^TestAuthorityHTTPRejectsRuntimeRoleDrift
-        shell: bash
-        run: |
-          set -euo pipefail
-          go test -count=1 -v -run TestTwoTenantCatalogScopesRealPostgres ./internal/admission | tee tenant-test.log
-          grep -F -- '--- PASS: TestTwoTenantCatalogScopesRealPostgres' tenant-test.log
-          if grep -F -- '--- SKIP: TestTwoTenantCatalogScopesRealPostgres' tenant-test.log; then
-            echo 'two-tenant PostgreSQL isolation test was skipped' >&2
-            exit 1
-          fi
-      - name: Race-enabled tests
-        run: go test -race -count=1 ./...
- ./cmd/acp-authority-api | tee drift-test.log
+          go test -count=1 -v -run '^TestAuthorityHTTPRejectsRuntimeRoleDrift$' ./cmd/acp-authority-api | tee drift-test.log
           grep -F -- '--- PASS: TestAuthorityHTTPRejectsRuntimeRoleDrift' drift-test.log
           if grep -F -- '--- SKIP: TestAuthorityHTTPRejectsRuntimeRoleDrift' drift-test.log; then
             echo 'live PG/TLS authority drift gate was skipped' >&2
