@@ -207,6 +207,23 @@ func TestEvidenceMTLSRejectsCrossTenantCrossRunAndMissingPeer(t *testing.T) {
 			}
 		})
 	}
+	// A valid TLS client CA is not enough: the URI SAN role and trust
+	// domain are bound to this exact evidence-reader authorization scope.
+	for _, identity := range []string{
+		"spiffe://sandbox.test/tenant/" + ref.TenantID + "/run/" + ref.RunID + "/role/command-executor",
+		"spiffe://foreign.test/tenant/" + ref.TenantID + "/run/" + ref.RunID + "/role/evidence-reader",
+	} {
+		cert := ca.issue(t, identity)
+		tr := server.Client().Transport.(*http.Transport).Clone()
+		tr.TLSClientConfig = tr.TLSClientConfig.Clone()
+		tr.TLSClientConfig.Certificates = []tls.Certificate{cert}
+		t.Cleanup(tr.CloseIdleConnections)
+		client := &http.Client{Transport: tr, Timeout: 5 * time.Second}
+		status, _ := fetchOriginalEvidence(t, client, server, ref)
+		if status != http.StatusForbidden {
+			t.Fatalf("wrong mTLS role/trust-domain received source evidence: %s HTTP %d", identity, status)
+		}
+	}
 	noCert := server.Client()
 	raw, _ := json.Marshal(EvidenceReadRequest{Ref: ref})
 	_, err = noCert.Post(server.URL+EvidenceReadPath, "application/json", bytes.NewReader(raw))
@@ -329,8 +346,12 @@ func TestEvidenceMTLSRejectsNonCanonicalAndOversizedRequests(t *testing.T) {
 	})
 	client := clientWithRunIdentity(t, server, ca, ref.TenantID, ref.RunID)
 	payload, _ := json.Marshal(EvidenceReadRequest{Ref: ref})
+	refJSON, _ := json.Marshal(ref)
+	// A duplicate with the SAME valid value must be rejected deliberately,
+	// not only because the later value happened to be invalid.
+	validDuplicate := []byte(`{"ref":` + string(refJSON) + `,"ref":` + string(refJSON) + `}`)
 	for _, raw := range [][]byte{
-		append(append([]byte(nil), payload[:len(payload)-1]...), []byte(`,"ref":{}`)...),
+		validDuplicate,
 		append(payload, []byte(" {}")...),
 		[]byte(strings.Repeat("X", 9000)),
 	} {
