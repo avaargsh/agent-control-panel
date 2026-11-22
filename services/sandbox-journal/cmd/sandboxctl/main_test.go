@@ -2,10 +2,15 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/avaargsh/agent-control-panel/services/sandbox-journal/journal"
+	"github.com/avaargsh/agent-control-panel/services/sandbox-journal/lease"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestOperatorOutputsShowDenialsAndNoSensitiveRequestDigests(t *testing.T) {
@@ -85,5 +90,38 @@ func TestSandboxctlRejectsPrivilegedDatabaseIdentityBeforeReading(t *testing.T) 
 		strings.Contains(stderr.String(), "UNVERIFIED") ||
 		strings.Contains(stderr.String(), "sandbox-test-only") {
 		t.Fatalf("writable DB credential was treated as read-only: exit=%d stdout=%q stderr=%q", exit, stdout.String(), stderr.String())
+	}
+}
+
+func TestSandboxctlRealScopedReaderFixture(t *testing.T) {
+	dsn := os.Getenv("SANDBOX_JOURNAL_READ_DSN")
+	if dsn == "" {
+		t.Skip("real SELECT-only sandbox reader DSN not configured")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	if err := verifySandboxReadRole(ctx, pool); err != nil {
+		t.Fatalf("disposable SELECT-only DB role refused: %v", err)
+	}
+	leaseRow, err := lease.New(pool).Get(ctx, "sandboxctl-smoke", "lease-smoke-1")
+	if err != nil {
+		t.Fatalf("read seeded lease by SELECT-only role: %v", err)
+	}
+	commandRow, err := journal.New(pool).Get(ctx, "sandboxctl-smoke", "sandbox-smoke-1", "command-smoke-1")
+	if err != nil {
+		t.Fatalf("read seeded command by SELECT-only role: %v", err)
+	}
+	if leaseRow.Intent.RunID != commandRow.Identity.RunID ||
+		leaseRow.Intent.RuntimeAttemptID != commandRow.Identity.RuntimeAttemptID {
+		t.Fatal("seeded lease/command not bound to same Runtime identity")
+	}
+	_, err = inspect(ctx, Query{TenantID: "sandboxctl-smoke", LeaseIntentID: "lease-smoke-1",
+		SandboxUID: "sandbox-smoke-1", CommandID: "command-smoke-1"}, lease.New(pool), journal.New(pool))
+	if err != nil {
+		t.Fatalf("valid SELECT-only fixture rejected by combined inspection: %v", err)
 	}
 }
