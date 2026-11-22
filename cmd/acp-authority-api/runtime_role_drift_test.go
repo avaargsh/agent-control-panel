@@ -434,6 +434,69 @@ func TestAuthorityHTTPRejectsRuntimeRoleDrift(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		// A read-only repeatable-read transaction does not, by itself,
+		// constitute a protected DCL/policy epoch. Observe real PG16
+		// catalog-ACL behavior with two independent backend identities and
+		// a committed out-of-band grant while the reader transaction is open.
+		// These observations are diagnostic evidence, NOT a security gate.
+		t.Run("postgres-transaction-dcl-visibility-probe", func(t *testing.T) {
+			tx, err := reader.BeginTx(ctx, pgx.TxOptions{
+				IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tx.Rollback(context.Background())
+			table := schema + ".outbox_events"
+			var readerPID, adminPID int32
+			var beforeACL, afterACL, committedACL bool
+			if err := tx.QueryRow(ctx,
+				"SELECT pg_backend_pid(), has_table_privilege(current_user,$1,'SELECT')", table,
+			).Scan(&readerPID, &beforeACL); err != nil {
+				t.Fatal(err)
+			}
+			if err := admin.QueryRow(ctx, "SELECT pg_backend_pid()").Scan(&adminPID); err != nil {
+				t.Fatal(err)
+			}
+			if beforeACL {
+				t.Fatal("transaction probe initial reader was already overprivileged")
+			}
+			var acceptedStatus string
+			if err := tx.QueryRow(ctx,
+				"SELECT status FROM "+schema+".run_intents WHERE id=$1::uuid", id,
+			).Scan(&acceptedStatus); err != nil || acceptedStatus != "ACCEPTED" {
+				t.Fatalf("transaction did not read original ACCEPTED Run: %q err=%v", acceptedStatus, err)
+			}
+			// DCL is committed on a *different* backend while the original
+			// read-only transaction remains open on the reader's backend.
+			if _, err := admin.Exec(ctx, "GRANT SELECT ON "+table+" TO "+role); err != nil {
+				t.Fatalf("independent GRANT during read transaction: %v", err)
+			}
+			if err := tx.QueryRow(ctx,
+				"SELECT has_table_privilege(current_user,$1,'SELECT')", table,
+			).Scan(&afterACL); err != nil {
+				t.Fatal(err)
+			}
+			if err := admin.QueryRow(ctx,
+				"SELECT has_table_privilege($1,$2,'SELECT')", role, table,
+			).Scan(&committedACL); err != nil {
+				t.Fatal(err)
+			}
+			if !committedACL {
+				t.Fatal("separate administrator failed to verify committed GRANT")
+			}
+			t.Logf("PG16 read-only repeatable-read DCL visibility: reader_pid=%d admin_pid=%d ACL_before=%v ACL_same_tx_after_DCL=%v administrator_committed=%v",
+				readerPID, adminPID, beforeACL, afterACL, committedACL)
+			if err := tx.Commit(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := admin.Exec(ctx, "REVOKE SELECT ON "+table+" FROM "+role); err != nil {
+				t.Fatal(err)
+			}
+			if err := verifyAuthorityDatabaseRole(ctx, reader); err != nil {
+				t.Fatalf("transaction probe did not recover least-privilege baseline: %v", err)
+			}
+		})
 		for _, publication := range []bool{false, true} {
 			name := "run-authority"
 			pathPrefix := "/internal/v1/run-authority/"
