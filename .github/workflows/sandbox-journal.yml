@@ -108,10 +108,11 @@ jobs:
           CREATE ROLE sandbox_ci_delegated LOGIN PASSWORD 'sandbox-ci-delegated' NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
           GRANT CONNECT ON DATABASE sandbox_journal_ci TO sandbox_ci_reader,sandbox_ci_writer,sandbox_ci_delegated;
           GRANT USAGE ON SCHEMA public TO sandbox_ci_reader,sandbox_ci_writer,sandbox_ci_delegated;
-          GRANT SELECT ON sandbox_lease_intents,sandbox_journal_commands,sandbox_lease_intent_events,sandbox_journal_outbox TO sandbox_ci_reader,sandbox_ci_writer,sandbox_ci_delegated;
+          GRANT acp_sandbox_lease_reader,acp_sandbox_command_reader TO sandbox_ci_reader;
+          -- Writer/delegated negative fixtures retain forbidden write grants.
+          GRANT SELECT ON sandbox_journal_commands TO sandbox_ci_writer,sandbox_ci_delegated;
           GRANT UPDATE ON sandbox_journal_commands TO sandbox_ci_writer;
           GRANT sandbox_ci_writer TO sandbox_ci_delegated;
-          GRANT acp_sandbox_lease_reader TO sandbox_ci_reader;
           INSERT INTO public.sandbox_lease_db_principals(login_name,tenant_id)
           VALUES ('sandbox_ci_reader','sandboxctl-smoke');
           SQL
