@@ -54,6 +54,41 @@ jobs:
               exit 1
             }
           done
+      - name: Require fresh AgentD InspectCount across signed before/after recovery
+        shell: bash
+        run: |
+          set -euo pipefail
+          log="$RUNNER_TEMP/postfault-inspect-count.log"
+          go test -race -count=1 -v -run '^(TestPostfaultRejectsReplayedCommandInspectCount|TestPostfaultAcceptsFreshCommandInspectCountAfterPriorInspect)
+        shell: bash
+        run: |
+          set -euo pipefail
+          log="$RUNNER_TEMP/acp-local-postfault-precursor.log"
+          go test -race -count=1 -v -run '^(TestPhysicalWorkspace|TestLocalWorkspaceRejects|TestLocalWorkspaceReadRejects|TestLocalUnknownCommandAfterSIGKILLRemainsBlocked|TestLocalUnknownCommandRejectsForgedReconciliation)' ./internal/postfault | tee "$log"
+          for marker in \
+            '--- PASS: TestPhysicalWorkspaceSurvivesWorkerSIGKILL ' \
+            '--- PASS: TestPhysicalWorkspaceRecoveryRejectsCorruptionAndStaleBinding ' \
+            '--- PASS: TestLocalWorkspaceRejectsHardLinkedSiblingTenantFile ' \
+            '--- PASS: TestLocalUnknownCommandAfterSIGKILLRemainsBlocked ' \
+            '--- PASS: TestLocalUnknownCommandRejectsForgedReconciliation ' \
+            'LOCAL_UNKNOWN_COMMAND_SIGKILL_HOLD_CONFIRMED'; do
+            grep -Fq -- "$marker" "$log" || { echo "missing mandatory local test receipt: $marker" >&2; exit 1; }
+          done
+          for negative in wrong_run wrong_attempt wrong_command missing_effect duplicated_effect fabricated_terminal double_dispatch replaced_workspace_identical_files symlink_effect; do
+            grep -Fq -- "--- PASS: TestLocalUnknownCommandRejectsForgedReconciliation/$negative " "$log" || {
+              echo "missing local UNKNOWN negative case: $negative" >&2
+              exit 1
+            }
+          done
+          printf 'LOCAL_PRECURSOR_ONLY=PASS; REAL_AGENTD_GUARD_RUNTIME_EVIDENCE=NOT_VERIFIED\n'
+ ./internal/postfault | tee "$log"
+          for mandatory in \
+            '--- PASS: TestPostfaultRejectsReplayedCommandInspectCount ' \
+            '--- PASS: TestPostfaultAcceptsFreshCommandInspectCountAfterPriorInspect '; do
+            grep -Fq -- "$mandatory" "$log" || { echo "missing signed InspectCount contract test: $mandatory" >&2; exit 1; }
+          done
+          printf 'POSTFAULT_SIGNED_AGENTD_INSPECT_COUNT_GATE=PASS; REAL_AGENTD_RECONCILIATION=NOT_VERIFIED\n'
+
       - name: Compile and run real local process SIGKILL, UNKNOWN and negative matrix
         shell: bash
         run: |
