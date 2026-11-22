@@ -42,6 +42,19 @@ SELECT COALESCE((
                  OR a.rolcreatedb OR a.rolreplication)
        AND has_schema_privilege(n.oid, 'USAGE')
        AND NOT has_schema_privilege(n.oid, 'CREATE')
+       -- CREATE at database scope permits making an entirely new schema;
+       -- checking grants on the configured schema alone is insufficient.
+       AND NOT has_database_privilege(current_database(), 'CREATE')
+       -- A foreign application schema may grant DDL without granting
+       -- SELECT or other privileges on any existing relations. Reject
+       -- effective CREATE anywhere outside PostgreSQL system namespaces.
+       AND NOT EXISTS (
+           SELECT 1 FROM pg_catalog.pg_namespace s
+            WHERE s.nspname NOT IN ('pg_catalog', 'information_schema')
+              AND s.nspname NOT LIKE 'pg_toast%'
+              AND s.nspname NOT LIKE 'pg_temp_%'
+              AND has_schema_privilege(s.oid, 'CREATE')
+       )
        AND NOT pg_has_role(a.oid, n.nspowner, 'MEMBER')
        -- Even NOINHERIT memberships may permit SET ROLE to a privileged
        -- identity after startup. This dedicated service login must belong
