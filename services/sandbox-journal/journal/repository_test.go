@@ -66,7 +66,7 @@ func setup(t *testing.T) *Repository {
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal("commit isolated Journal test reset:", err)
 	}
-	immutable, err := os.ReadFile(filepath.Join("..", "migrations", "0004_command_journal_outbox_immutable.sql"))
+	immutable, err := os.ReadFile(filepath.Join("..", "migrations", "0005_command_journal_outbox_immutable.sql"))
 	if err != nil {
 		t.Fatal(err)
 	}
