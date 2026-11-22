@@ -137,6 +137,29 @@ func VerifyInspectChain(events []JournaledInspection, expected Ref, key ed25519.
 	return nil
 }
 
+// InspectHead must be pinned by an independent trusted consumer (e.g. ACP
+// Run evidence verifier). A self-supplied head cannot detect a truncated
+// suffix of an otherwise valid signature/hash chain.
+type InspectHead struct {
+	InspectCount   uint64
+	JournalVersion uint64
+	Digest         string
+}
+
+func VerifyInspectAtHead(events []JournaledInspection, expected Ref,
+	key ed25519.PublicKey, now time.Time, trustedHead InspectHead) error {
+	if err := VerifyInspectChain(events, expected, key, now); err != nil {
+		return err
+	}
+	last := events[len(events)-1]
+	if last.Event.InspectCount != trustedHead.InspectCount ||
+		last.Event.JournalVersion != trustedHead.JournalVersion ||
+		last.Digest != trustedHead.Digest {
+		return ErrUnverified
+	}
+	return nil
+}
+
 // LoadInspectChain is a fresh, read-only source query which never trusts an
 // inspector's requested count, last event or claimed status. It checks the
 // original immutable attempt, then every owner-signed journal event.
