@@ -91,10 +91,12 @@ func TestLeaseRuntimeDatabaseRolesDenyEscalationAndPreserveCAS(t *testing.T) {
 			name: "writer_cannot_preseed_future_cancellation",
 			sql: `INSERT INTO public.sandbox_lease_intent_events
 				(tenant_id,lease_intent_id,generation,event_type,payload)
-				VALUES ('tenant-a','sandbox-intent-1',2,'sandbox.lease-intent.cancelled-before-provision',
-				jsonb_build_object('run_id','11111111-1111-4111-8111-111111111111',
-				'runtime_attempt_id','runtime-attempt-1','request_digest',
-				'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'))`,
+				SELECT tenant_id, lease_intent_id, 2,
+				'sandbox.lease-intent.cancelled-before-provision',
+				jsonb_build_object('run_id',run_id,'runtime_attempt_id',runtime_attempt_id,
+				'request_digest',request_digest)
+				FROM public.sandbox_lease_intents
+				WHERE tenant_id='tenant-a' AND lease_intent_id='sandbox-intent-1'`,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
