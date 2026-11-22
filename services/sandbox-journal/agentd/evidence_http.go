@@ -18,10 +18,10 @@ import (
 )
 
 const (
-	EvidenceReadPath   = "/v1/agentd/evidence:read"
-	EvidenceReadSchema = "acp.agentd-evidence-export/v1"
+	EvidenceReadPath    = "/v1/agentd/evidence:read"
+	EvidenceReadSchema  = "acp.agentd-evidence-export/v1"
 	maxEvidenceReadBody = 8192
-	maxExportedEvents = 256
+	maxExportedEvents   = 256
 )
 
 // PinnedHeadLookup must independently obtain the accepted, complete source
@@ -101,9 +101,9 @@ func decodeReadRequest(r *http.Request) (EvidenceReadRequest, int) {
 
 func signedSource(raw, signature []byte, sourceDigest string) SignedSourceRecord {
 	return SignedSourceRecord{
-		PayloadB64: base64.StdEncoding.EncodeToString(raw),
+		PayloadB64:   base64.StdEncoding.EncodeToString(raw),
 		SignatureB64: base64.StdEncoding.EncodeToString(signature),
-		Digest: sourceDigest,
+		Digest:       sourceDigest,
 	}
 }
 
