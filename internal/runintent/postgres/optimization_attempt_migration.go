@@ -80,6 +80,19 @@ func verifyOptimizationAttemptSchema(ctx context.Context, tx pgx.Tx, source []by
 	if nonOwnerGrants {
 		return ErrSchemaDrift
 	}
+	// Compile the exact v13 partial UNIQUE index on the same PostgreSQL
+	// engine: same-name, same-uniqueness indexes may still use weaker key
+	// columns or predicate. Neither name nor i.indpred != NULL is proof.
+	if _, err := tx.Exec(ctx, `
+		CREATE TEMP TABLE acp_expected_optimization_index (
+			tenant_id text, project_id text, verifier_run_id text, consumed_at timestamptz
+		) ON COMMIT DROP;
+		CREATE UNIQUE INDEX acp_expected_optimization_verifier_run_unique
+			ON pg_temp.acp_expected_optimization_index (tenant_id,project_id,verifier_run_id)
+			WHERE consumed_at IS NOT NULL;
+	`, pgx.QueryExecModeSimpleProtocol); err != nil {
+		return fmt.Errorf("compile expected verifier Run deduplication index: %w", err)
+	}
 	var keys bool
 	if err := tx.QueryRow(ctx, `SELECT
 		EXISTS (SELECT 1 FROM pg_constraint c WHERE c.conrelid=to_regclass('optimization_verification_attempts')
@@ -91,10 +104,19 @@ func verifyOptimizationAttemptSchema(ctx context.Context, tx pgx.Tx, source []by
 		AND (SELECT count(*) FROM pg_constraint c WHERE c.conrelid=to_regclass('optimization_verification_attempts')
 		  AND c.conname IN ('optimization_attempt_lifetime','optimization_attempt_consumption_consistency')
 		  AND c.contype='c' AND c.convalidated)=2
-		AND EXISTS (SELECT 1 FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid
+		AND EXISTS (
+		  SELECT 1 FROM pg_index i
+		  JOIN pg_class c ON c.oid=i.indexrelid
+		  JOIN pg_index expected ON expected.indrelid=to_regclass('pg_temp.acp_expected_optimization_index')
 		  WHERE i.indrelid=to_regclass('optimization_verification_attempts')
-		    AND c.relname='optimization_attempt_verifier_run_unique' AND i.indisvalid AND i.indisunique
-		    AND i.indpred IS NOT NULL)`).Scan(&keys); err != nil {
+		    AND c.relname='optimization_attempt_verifier_run_unique'
+		    AND i.indisvalid AND i.indisready AND i.indisunique
+		    AND i.indnkeyatts=3 AND i.indnatts=3 AND i.indexprs IS NULL
+		    AND pg_get_indexdef(i.indexrelid,1,false)=pg_get_indexdef(expected.indexrelid,1,false)
+		    AND pg_get_indexdef(i.indexrelid,2,false)=pg_get_indexdef(expected.indexrelid,2,false)
+		    AND pg_get_indexdef(i.indexrelid,3,false)=pg_get_indexdef(expected.indexrelid,3,false)
+		    AND pg_get_expr(i.indpred,i.indrelid,false)=pg_get_expr(expected.indpred,expected.indrelid,false)
+		)`).Scan(&keys); err != nil {
 		return err
 	}
 	if !keys {
