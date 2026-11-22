@@ -52,3 +52,19 @@ ACP accepted Run / RuntimeAttempt / original request hash
 **Unimplemented on this Draft**: a trusted Guard issuer / executor PEP; authenticated AgentD attempt registration; a source-owned durable `InspectCount`/inspection event chain; production mTLS transport and independent trust anchor; same-Run postfault bundle wire adapter; live SandboxLease continuity; actual Guard authorization revalidation, physical Sandbox/Compute release, cost FINAL. The root ACP `postfault.Verify` requires increasing `InspectCount` and source `agentd.inspect`, so a terminal receipt alone MUST NOT be passed off as that independently journaled inspection. The G01–G05 release gate MUST remain **BLOCKED** until all requirements are demonstrated against one actual original Run.
 
 See ACP Issues [#70](https://github.com/avaargsh/agent-control-panel/issues/70)–[#72](https://github.com/avaargsh/agent-control-panel/issues/72), Draft [#91](https://github.com/avaargsh/agent-control-panel/pull/91), [#105](https://github.com/avaargsh/agent-control-panel/pull/105) and [#106](https://github.com/avaargsh/agent-control-panel/pull/106).
+
+## Durable source-owned Inspect events — Draft #111
+
+Schema `0014_agentd_inspect_events.sql` adds an **owner-only** append-only per-attempt inspection stream. This migration is ordered after 0013 and appears in the disposable Docker Compose and migration manifest. It grants NO production table privilege, signer authority, Guard Permit, tool execution or release capability.
+
+`InspectAndJournal` takes the exact immutable `Ref` (tenant, Run, RuntimeAttempt, SandboxUID, CommandID, AttemptID, ProviderCommandUID, request hash, Guard PermitID/Epoch, PID/start ticks/boot ID), independently configured AgentD source keys, and the isolated DB connection. It serializes access by locking the original source attempt row in a transaction, verifies the original committed OS Wait if present, and writes **exactly one freshly signed `agentd.inspect` event per successful inspection transaction**. Each carries:
+
+- Source = `agentd.inspect`, immutable original `Ref`, `State`, source `ExitReceiptDigest` (empty for UNKNOWN), `NextAction=HOLD`, `DispatchCount=1`, `Replayed=false`.
+- `InspectCount=N`, `JournalVersion=N` in the dedicated *Inspect event stream*, and `PreviousDigest=SHA256(exact previous signed event payload)`. This revision is **not** the OS Wait terminal's own separate `JournalRevision=2`: the two stream counters must never be conflated.
+- Canonical raw JSON payload, domain-separated Ed25519 source signature, raw SHA256 digest, one atomic append-only PostgreSQL commit.
+
+`LoadInspectChain` reads the full signed history from a separate repeatable-read snapshot, refuses missing/corrupt identity or signatures, and checks exact consecutive counters and hash links. `VerifyInspectAtHead` additionally compares the tail to an **independently pinned trusted head**: a self-reported head cannot detect malicious suffix truncation. The root G05 verifier must independently pin the before-fault source count/head and assert a fresh after-fault head from the same Run/Attempt; otherwise a recycled pre-fault `InspectCount` is insufficient.
+
+In failure cases, a fresh inspection with no authentic durable terminal persists `UNKNOWN/HOLD` and `CanRetry=false`. If terminal signature/DB is untrustworthy, no success or fabricated terminal is committed. Even a verified terminal does **not** authorize resource release; external provider effects can remain uncertain.
+
+**Current unimplemented blockers:** Guard issuer/PEP, authenticated production attempt registration, ownership/RLS grants to a dedicated AgentD writer, source key custody/revocation, mTLS receipt export, independently trusted head distribution, canonical cross-service signed postfault Bundle assembly, Sandbox/Guard provider evidence, physical Compute release/cost FINAL. No claim of G01–G05 production acceptance or merge eligibility.
