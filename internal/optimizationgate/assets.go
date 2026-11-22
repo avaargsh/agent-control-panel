@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"io"
 	"reflect"
 )
@@ -56,7 +55,7 @@ func VerifyReviewEvidenceWithAssets(
 			if evidenceReaderConfigured(stream) {
 				_ = stream.Close()
 			}
-			return EvaluationReceipt{}, fmt.Errorf("%w: evidence open failed", ErrEvidenceInvalid)
+			return EvaluationReceipt{}, safeEvidenceFailure{stage: "evidence open failed", cause: err}
 		}
 		if !evidenceReaderConfigured(stream) {
 			return EvaluationReceipt{}, ErrEvidenceInvalid
@@ -71,8 +70,13 @@ func VerifyReviewEvidenceWithAssets(
 		if err := ctx.Err(); err != nil {
 			return EvaluationReceipt{}, err
 		}
-		if size == 0 || size > int64(maxEvidenceBytes) ||
-			(readErr != nil && !errors.Is(readErr, io.EOF)) || closeErr != nil {
+		if readErr != nil && !errors.Is(readErr, io.EOF) {
+			return EvaluationReceipt{}, safeEvidenceFailure{stage: "evidence read failed", cause: readErr}
+		}
+		if closeErr != nil {
+			return EvaluationReceipt{}, safeEvidenceFailure{stage: "evidence close failed", cause: closeErr}
+		}
+		if size == 0 || size > int64(maxEvidenceBytes) {
 			return EvaluationReceipt{}, ErrEvidenceInvalid
 		}
 		if claimed != "sha256:"+hex.EncodeToString(hash.Sum(nil)) {
@@ -80,6 +84,28 @@ func VerifyReviewEvidenceWithAssets(
 		}
 	}
 	return receipt, nil
+}
+
+// safeEvidenceFailure preserves the provider's typed cause for errors.Is/As
+// while deliberately omitting provider-controlled text (which may contain
+// private object paths, signed URLs or credentials) from Error().
+type safeEvidenceFailure struct {
+	stage string
+	cause error
+}
+
+func (e safeEvidenceFailure) Error() string {
+	if e.stage == "" {
+		return ErrEvidenceInvalid.Error()
+	}
+	return ErrEvidenceInvalid.Error() + ": " + e.stage
+}
+
+func (e safeEvidenceFailure) Unwrap() []error {
+	if e.cause == nil {
+		return []error{ErrEvidenceInvalid}
+	}
+	return []error{ErrEvidenceInvalid, e.cause}
 }
 
 func evidenceReaderConfigured(reader any) bool {
