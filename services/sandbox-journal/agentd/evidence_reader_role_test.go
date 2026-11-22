@@ -18,8 +18,17 @@ import (
 // This test requires a distinct PostgreSQL LOGIN. It must not pass through
 // the owner pool used by the source writer or rely on SET ROLE as a substitute
 // for an independently authenticated reader identity.
-func newEvidenceReaderPool(t *testing.T, owner *pgxpool.Pool, tenantID string) *pgxpool.Pool {
+func newEvidenceReaderPool(t *testing.T, owner *pgxpool.Pool, tenantIDs ...string) *pgxpool.Pool {
 	t.Helper()
+	// Legacy AgentD mTLS fixtures use the original isolated tenant A.
+	// Explicit callers can pin another tenant to test cross-tenant behavior.
+	if len(tenantIDs) > 1 {
+		t.Fatal("evidence LOGIN accepts exactly one authenticated tenant binding")
+	}
+	tenantID := "agentd-tenant-a"
+	if len(tenantIDs) == 1 {
+		tenantID = tenantIDs[0]
+	}
 	role := fmt.Sprintf("acp_agentd_reader_login_%d", time.Now().UnixNano())
 	roleSQL := pgx.Identifier{role}.Sanitize()
 	passwordBytes := make([]byte, 24)
