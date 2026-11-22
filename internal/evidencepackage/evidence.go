@@ -43,7 +43,7 @@ type Expected struct {
 	ProviderGeneration uint64            `json:"provider_generation"`
 	// SourceRevisions is an independently captured, authoritative head for
 	// each stage. A signature without this head does not prevent stale replay.
-	SourceRevisions    map[string]uint64 `json:"source_revisions"`
+	SourceRevisions map[string]uint64 `json:"source_revisions"`
 }
 
 type Receipt struct {
