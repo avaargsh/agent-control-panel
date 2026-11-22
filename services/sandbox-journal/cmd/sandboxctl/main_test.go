@@ -204,4 +204,53 @@ func TestSandboxctlRejectsShadowSchemaReadRoleBypass(t *testing.T) {
 	if err := verifySandboxReadRole(ctx, pool); err == nil {
 		t.Fatal("shadow search_path concealed UPDATE privileges on canonical public Sandbox tables")
 	}
+
+	// A role with no table DML may still advance a PostgreSQL Sequence.
+	// Revoke the intentionally excessive table grant and establish a
+	// positive SELECT-only baseline before granting any sequence right.
+	for _, statement := range []string{
+		"REVOKE UPDATE ON public.sandbox_lease_intents FROM " + username,
+		"REVOKE SELECT ON ALL TABLES IN SCHEMA " + schema + " FROM " + username,
+		"GRANT SELECT ON public.sandbox_lease_intents,public.sandbox_journal_commands,public.sandbox_lease_intent_events,public.sandbox_journal_outbox TO " + username,
+	} {
+		if _, err := owner.Exec(ctx, statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := verifySandboxReadRole(ctx, pool); err != nil {
+		t.Fatalf("verified SELECT-only baseline rejected before sequence grant: %v", err)
+	}
+	const seq = schema + ".side_effect_probe"
+	if _, err := owner.Exec(ctx, "CREATE SEQUENCE "+seq); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := owner.Exec(ctx, "GRANT USAGE ON SEQUENCE "+seq+" TO "+username); err != nil {
+		t.Fatal(err)
+	}
+	// Use a separate connection with the *same* independently authenticated
+	// role but no client-side read-only hint, proving server ACL permits
+	// nextval side effects; the CLI's hint is not privilege separation.
+	probeCfg := cfg.Copy()
+	probeCfg.ConnConfig.RuntimeParams["default_transaction_read_only"] = "off"
+	probe, err := pgxpool.NewWithConfig(ctx, probeCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer probe.Close()
+	var advanced int64
+	if err := probe.QueryRow(ctx, "SELECT nextval($1::regclass)", seq).Scan(&advanced); err != nil || advanced != 1 {
+		t.Fatalf("real sequence ACL side effect was not possible: value=%d err=%v", advanced, err)
+	}
+	if err := verifySandboxReadRole(ctx, pool); err == nil {
+		t.Fatal("writable sequence USAGE grant bypassed supposedly SELECT-only sandboxctl role gate")
+	}
+	if _, err := owner.Exec(ctx, "REVOKE USAGE ON SEQUENCE "+seq+" FROM "+username); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifySandboxReadRole(ctx, pool); err != nil {
+		t.Fatalf("sequence revocation did not restore SELECT-only reader: %v", err)
+	}
+	if err := probe.QueryRow(ctx, "SELECT nextval($1::regclass)", seq).Scan(&advanced); err == nil {
+		t.Fatal("reader could still advance sequence after USAGE privilege revoked")
+	}
 }
