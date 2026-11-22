@@ -18,7 +18,7 @@ import (
 // This test requires a distinct PostgreSQL LOGIN. It must not pass through
 // the owner pool used by the source writer or rely on SET ROLE as a substitute
 // for an independently authenticated reader identity.
-func newEvidenceReaderPool(t *testing.T, owner *pgxpool.Pool) *pgxpool.Pool {
+func newEvidenceReaderPool(t *testing.T, owner *pgxpool.Pool, tenantID string) *pgxpool.Pool {
 	t.Helper()
 	role := fmt.Sprintf("acp_agentd_reader_login_%d", time.Now().UnixNano())
 	roleSQL := pgx.Identifier{role}.Sanitize()
@@ -36,7 +36,15 @@ func newEvidenceReaderPool(t *testing.T, owner *pgxpool.Pool) *pgxpool.Pool {
 		_, _ = owner.Exec(context.Background(), "DROP ROLE "+roleSQL)
 		t.Fatalf("grant the dedicated tenant-scoped evidence reader role: %v", err)
 	}
+	if _, err := owner.Exec(ctx, "INSERT INTO public.sandbox_agentd_evidence_reader_tenants(login_role,tenant_id) VALUES($1,$2)", role, tenantID); err != nil {
+		_, _ = owner.Exec(context.Background(), "REVOKE sandbox_agentd_evidence_reader FROM "+roleSQL)
+		_, _ = owner.Exec(context.Background(), "DROP ROLE "+roleSQL)
+		t.Fatalf("bind authenticated reader LOGIN to one tenant: %v", err)
+	}
 	t.Cleanup(func() {
+		if _, err := owner.Exec(context.Background(), "DELETE FROM public.sandbox_agentd_evidence_reader_tenants WHERE login_role=$1", role); err != nil {
+			t.Errorf("remove evidence reader tenant mapping: %v", err)
+		}
 		if _, err := owner.Exec(context.Background(), "REVOKE sandbox_agentd_evidence_reader FROM "+roleSQL); err != nil {
 			t.Errorf("revoke evidence reader membership: %v", err)
 		}
@@ -88,18 +96,18 @@ func TestEvidenceReaderLoginIsTenantScopedAndReadOnly(t *testing.T) {
 	}
 	_ = ownerTx.Rollback(context.Background())
 
-	reader := newEvidenceReaderPool(t, owner)
+	reader := newEvidenceReaderPool(t, owner, ref.TenantID)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	tx, err := reader.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
 	if err != nil {
 		t.Fatalf("begin reader snapshot: %v", err)
 	}
-	if err := verifyEvidenceReaderLogin(ctx, tx); err != nil {
+	if err := verifyEvidenceReaderLogin(ctx, tx, ref.TenantID); err != nil {
 		_ = tx.Rollback(ctx)
 		t.Fatalf("dedicated read-only login rejected: %v", err)
 	}
-	if _, err := tx.Exec(ctx, "SELECT set_config('app.tenant_id',$1,true)", ref.TenantID); err != nil {
+	if _, err := tx.Exec(ctx, "SELECT set_config('app.tenant_id',$1,true)", other.TenantID); err != nil {
 		_ = tx.Rollback(ctx)
 		t.Fatalf("bind tenant scope in reader transaction: %v", err)
 	}
