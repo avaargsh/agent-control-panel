@@ -1,5 +1,4 @@
 """Fail-closed pure policy tests; live API attestation is a separate read-only step."""
-import copy
 import unittest
 
 from scripts.check_p0_merge_readiness import evaluate
@@ -28,6 +27,7 @@ def complete():
             "required_conversation_resolution": {"enabled": True},
             "enforce_admins": {"enabled": True},
         },
+        "reviewer_permissions": {"db-independent": "write", "runtime-independent": "maintain"},
         "reviews": [
             {"user": {"login": "db-independent"}, "state": "APPROVED", "commit_id": HEAD},
             {"user": {"login": "runtime-independent"}, "state": "APPROVED", "commit_id": HEAD},
@@ -62,6 +62,34 @@ class P0MergePolicyTests(unittest.TestCase):
         state = complete()
         state["protection"] = {}
         self.assertDenied(state, "protection")
+
+    def test_unverified_reviewer_permissions_are_not_approval(self):
+        state = complete()
+        state["reviewer_permissions"] = {}
+        self.assertDenied(state, "independent")
+
+    def test_bot_review_does_not_count(self):
+        state = complete()
+        state["reviews"][0]["user"]["type"] = "Bot"
+        self.assertDenied(state, "independent")
+
+    def test_admin_bypass_is_denied(self):
+        state = complete()
+        state["protection"]["enforce_admins"]["enabled"] = False
+        self.assertDenied(state, "administrator bypass")
+
+    def test_unresolved_conversations_policy_is_denied(self):
+        state = complete()
+        state["protection"]["required_conversation_resolution"]["enabled"] = False
+        self.assertDenied(state, "conversation resolution")
+
+    def test_fresh_third_party_changes_requested_still_blocks(self):
+        state = complete()
+        state["reviews"].append({
+            "user": {"login": "security-third"}, "state": "CHANGES_REQUESTED",
+            "commit_id": HEAD,
+        })
+        self.assertDenied(state, "requests changes")
 
     def test_owner_self_approval_is_not_independent(self):
         state = complete()
