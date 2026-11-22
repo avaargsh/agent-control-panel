@@ -18,6 +18,7 @@ import (
 var (
 	ErrAttemptUnconfigured = errors.New("trusted optimization attempt journal unavailable")
 	ErrAttemptUnavailable  = errors.New("optimization attempt expired, mismatched or already consumed")
+	ErrAttemptCommitUnknown = errors.New("optimization attempt commit outcome unknown: read-only reconciliation required")
 )
 
 // AttemptStore is an internal PostgreSQL-only adapter. Trusted host admission
@@ -124,7 +125,7 @@ func (s *AttemptStore) ConsumeReviewEvidence(
 		return EvaluationReceipt{}, ErrAttemptUnavailable
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return EvaluationReceipt{}, fmt.Errorf("%w: commit consumption: %v", ErrAttemptUnconfigured, err)
+		return EvaluationReceipt{}, fmt.Errorf("%w: commit consumption: %v", ErrAttemptCommitUnknown, err)
 	}
 	return receipt, nil
 }
