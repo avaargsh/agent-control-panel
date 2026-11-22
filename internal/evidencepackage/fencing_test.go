@@ -10,7 +10,7 @@ func TestEvidencePackageFencesOldAndConflictingSourceRevisions(t *testing.T) {
 		t.Fatalf("fresh expected source heads must verify: %v", err)
 	}
 	for _, tc := range []struct {
-		name string
+		name   string
 		change func(*Statement)
 	}{
 		{"old_signed_receipt", func(s *Statement) { s.SourceRevision-- }},
