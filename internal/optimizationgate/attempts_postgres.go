@@ -90,11 +90,22 @@ func (s *AttemptStore) ConsumeReviewEvidence(
 	if ctx == nil || s == nil || s.pool == nil {
 		return EvaluationReceipt{}, ErrAttemptUnconfigured
 	}
-	receipt, err := VerifyReviewEvidenceWithAssets(ctx, trusted, signedReceipt, keys, reader)
-	if err != nil {
+	// Verify the bounded signed claim before looking up the challenge, so
+	// unsigned callers cannot probe whether a nonce was issued. Do not fetch
+	// external evidence for a missing, expired or already-consumed attempt.
+	if _, err := VerifyReviewEvidence(trusted, signedReceipt, keys); err != nil {
 		return EvaluationReceipt{}, err
 	}
 	policyDigest, err := policySHA(trusted)
+	if err != nil {
+		return EvaluationReceipt{}, err
+	}
+	if err := s.preflightPendingAttempt(ctx, trusted, policyDigest); err != nil {
+		return EvaluationReceipt{}, err
+	}
+	// The preflight is a resource guard only, not authorization: final
+	// PostgreSQL UPDATE below still atomically fences concurrent consumers.
+	receipt, err := VerifyReviewEvidenceWithAssets(ctx, trusted, signedReceipt, keys, reader)
 	if err != nil {
 		return EvaluationReceipt{}, err
 	}
@@ -135,6 +146,37 @@ func (s *AttemptStore) ConsumeReviewEvidence(
 		return EvaluationReceipt{}, fmt.Errorf("%w: commit consumption: %w", ErrAttemptCommitUnknown, err)
 	}
 	return receipt, nil
+}
+
+// preflightPendingAttempt prevents replays and forged/unissued challenges
+// from imposing external evidence-store downloads. It deliberately takes no
+// row lock; final UPDATE must still enforce the one-time authority and expiry.
+func (s *AttemptStore) preflightPendingAttempt(ctx context.Context, policy BaselinePolicy, policyDigest string) error {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return fmt.Errorf("%w: begin nonce preflight: %v", ErrAttemptUnconfigured, err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	if err := bindAttemptScope(ctx, tx, policy); err != nil {
+		return err
+	}
+	var pending bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (
+		SELECT 1 FROM optimization_verification_attempts
+		WHERE verification_nonce=$1 AND tenant_id=$2 AND project_id=$3
+		  AND experiment_id=$4 AND policy_digest=$5
+		  AND consumed_at IS NULL AND expires_at>clock_timestamp()
+	)`, policy.VerificationNonce, policy.TenantID, policy.ProjectID,
+		policy.ExperimentID, policyDigest).Scan(&pending); err != nil {
+		return fmt.Errorf("%w: inspect pending attempt: %v", ErrAttemptUnconfigured, err)
+	}
+	if !pending {
+		return ErrAttemptUnavailable
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("%w: commit nonce preflight: %v", ErrAttemptUnconfigured, err)
+	}
+	return nil
 }
 
 func bindAttemptScope(ctx context.Context, tx pgx.Tx, p BaselinePolicy) error {
