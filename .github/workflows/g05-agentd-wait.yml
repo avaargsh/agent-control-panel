@@ -1,0 +1,39 @@
+name: G05 original AgentD Wait source join (non-production)
+
+on:
+  pull_request:
+    paths:
+      - 'internal/postfault/agentd_wait*'
+      - '.github/workflows/g05-agentd-wait.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GOTOOLCHAIN: local
+
+jobs:
+  source-join:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Confirm exact source SHA
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version: '1.27.4'
+          cache: false
+      - name: Verify toolchain and formatting
+        run: |
+          test "$(go env GOVERSION)" = "go1.27.4"
+          test -z "$(gofmt -l internal/postfault/agentd_wait.go internal/postfault/agentd_wait_test.go)"
+          go mod verify
+      - name: Independent signer + original Wait G05 tests
+        run: go test -race -count=1 -run '^TestG05' ./internal/postfault
