@@ -181,7 +181,7 @@ func TestInvalidRequestNeverWrites(t *testing.T) {
 
 func TestReplayRefusesCorruptOrMissingCommittedOutbox(t *testing.T) {
 	for _, tc := range []struct {
-		name string
+		name   string
 		tamper string
 	}{
 		{"missing_event", "DELETE FROM sandbox_journal_outbox"},
