@@ -47,6 +47,7 @@ type Receipt struct {
 	Stage        string `json:"stage"`
 	Authority    string `json:"authority"`
 	PayloadB64   string `json:"payload_b64"`
+	OriginalB64  string `json:"original_b64"`
 	SignatureB64 string `json:"signature_b64"`
 }
 
@@ -72,6 +73,7 @@ type Statement struct {
 	Subject            postfault.Subject `json:"subject"`
 	RunIntentID        string            `json:"run_intent_id"`
 	RequestDigest      string            `json:"request_digest"`
+	OriginalDigest     string            `json:"original_digest"`
 	ObservedAt         time.Time         `json:"observed_at"`
 	Status             string            `json:"status"`
 	DecisionID         string            `json:"decision_id,omitempty"`
@@ -239,6 +241,11 @@ func Verify(p Package, e Expected, keys map[string]ed25519.PublicKey, now time.T
 			s.RequestDigest != e.RequestDigest ||
 			s.ObservedAt.IsZero() || s.ObservedAt.After(now) {
 			return reject("source receipt not bound to the original Run")
+		}
+		native, err := base64.StdEncoding.Strict().DecodeString(r.OriginalB64)
+		if err != nil || len(native) == 0 || len(native) > maxReceiptBytes ||
+			!digest(s.OriginalDigest) || DigestRaw(native) != s.OriginalDigest {
+			return reject("source-native original receipt bytes do not match signed digest")
 		}
 		if r.Stage == "run" || r.Stage == "decision" || r.Stage == "permit" {
 			if !s.ObservedAt.Before(e.Fault.At) {
