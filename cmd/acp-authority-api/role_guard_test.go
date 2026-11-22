@@ -146,6 +146,21 @@ func TestAuthorityDatabaseRoleFailClosed(t *testing.T) {
 		// The role has no direct SELECT on foreignSchema.secret. A callable
 		// definer function must still be rejected at startup.
 		check(t, false)
+		// Test effective access, not the mere existence of a routine:
+		// removing PUBLIC EXECUTE must restore this dedicated reader.
+		if _, err := admin.Exec(ctx, "REVOKE EXECUTE ON FUNCTION "+probe+"() FROM PUBLIC"); err != nil {
+			t.Fatal(err)
+		}
+		check(t, true)
+		// A direct grant must fail again even without PUBLIC EXECUTE.
+		if _, err := admin.Exec(ctx, "GRANT EXECUTE ON FUNCTION "+probe+"() TO "+role); err != nil {
+			t.Fatal(err)
+		}
+		check(t, false)
+		if _, err := admin.Exec(ctx, "REVOKE EXECUTE ON FUNCTION "+probe+"() FROM "+role); err != nil {
+			t.Fatal(err)
+		}
+		check(t, true)
 	})
 	check(t, true)
 	var databaseName string
