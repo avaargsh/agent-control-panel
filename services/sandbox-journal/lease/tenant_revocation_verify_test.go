@@ -124,6 +124,39 @@ func TestLeaseRevocationVerificationRequiresCommittedState(t *testing.T) {
 	if err := verifyCommittedRevocation(ctx, independent, login, oid); err != nil {
 		t.Fatalf("valid operator state was not independently verifiable: %v", err)
 	}
+
+	// After a receipt has been committed, privileged operators can still
+	// regrant rights unrelated to the two expected lease groups. A verifier
+	// that inspects only Writer/Reader membership misses those leftovers.
+	// Each negative check owns its setup/cleanup, so both must execute on RED.
+	t.Run("unexpected_role_membership", func(t *testing.T) {
+		const extraRole = "sandbox_lease_ci_unexpected_group"
+		if _, err := owner.pool.Exec(ctx, "CREATE ROLE "+extraRole+" NOLOGIN"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := owner.pool.Exec(ctx, "GRANT "+extraRole+" TO "+login); err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			_, _ = owner.pool.Exec(context.Background(), "REVOKE "+extraRole+" FROM "+login)
+		}()
+		if err := verifyCommittedRevocation(ctx, independent, login, oid); err == nil {
+			t.Fatal("revocation verifier accepted unexpected residual role membership")
+		}
+	})
+	t.Run("direct_lease_table_privilege", func(t *testing.T) {
+		if _, err := owner.pool.Exec(ctx,
+			"GRANT SELECT ON TABLE public.sandbox_lease_intents TO "+login); err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			_, _ = owner.pool.Exec(context.Background(),
+				"REVOKE SELECT ON TABLE public.sandbox_lease_intents FROM "+login)
+		}()
+		if err := verifyCommittedRevocation(ctx, independent, login, oid); err == nil {
+			t.Fatal("revocation verifier accepted residual direct lease SELECT grant")
+		}
+	})
 }
 
 // Test that a receipt alone is not proof. A live authenticated backend must
