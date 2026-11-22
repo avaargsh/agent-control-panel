@@ -46,6 +46,7 @@ func TestSandboxMigrationVersionsAndDisposableDemoAreComplete(t *testing.T) {
 		10: "0010_tenant_revoke_postcommit_verify.sql",
 		11: "0011_command_tenant_login_rls.sql",
 		12: "0012_command_commit_integrity.sql",
+		13: "0013_agentd_attempt_terminal.sql",
 	} {
 		if got := nameByVersion[version]; got != expected {
 			t.Errorf("stacked Sandbox migration %04d must be %s, got %q", version, expected, got)
