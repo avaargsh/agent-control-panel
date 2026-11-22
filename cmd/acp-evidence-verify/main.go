@@ -48,12 +48,16 @@ func run(args []string) error {
 	trustDir := flags.String("trust-dir", "", "out-of-band service public keys")
 	archivePath := flags.String("archive-seal", "", "optional independently signed historical capture-time assertion")
 	archivePublicPath := flags.String("archive-pub", "", "optional independently trusted archival issuer public key")
+	requireLinked := flags.Bool("require-linked", false, "opt in to complete source-signed upstream receipt digest graph (live only)")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 ||
 		*pkgPath == "" || *expectedPath == "" || *trustDir == "" {
 		return errors.New("--package, --expected and --trust-dir are mandatory")
 	}
 	if (*archivePath == "") != (*archivePublicPath == "") {
 		return errors.New("--archive-seal and --archive-pub must be provided together")
+	}
+	if *requireLinked && *archivePath != "" {
+		return errors.New("--require-linked is live-only; archival source-link verification is not implemented")
 	}
 	rawPackage, err := readRegular(*pkgPath, maxInput)
 	if err != nil {
@@ -99,7 +103,12 @@ func run(args []string) error {
 		}
 		return evidencepackage.VerifyArchive(rawPackage, rawExpected, seal, keys, archiveKey, time.Now().UTC())
 	}
-	// The default path never accepts a historical capture-time override.
+	// The opt-in link gate cannot be bypassed by historical clock input.
+	// The legacy v2 Verify mode remains an explicit backwards-compatible
+	// offline consistency check, never a production execution authorization.
+	if *requireLinked {
+		return evidencepackage.VerifyLinked(pkg, expected, keys, time.Now().UTC())
+	}
 	return evidencepackage.Verify(pkg, expected, keys, time.Now().UTC())
 }
 
