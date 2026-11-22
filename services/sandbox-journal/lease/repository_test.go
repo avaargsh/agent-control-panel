@@ -109,6 +109,14 @@ func testRepository(t *testing.T) *Repository {
 	if _, err := pool.Exec(ctx, string(loginOIDFence)); err != nil {
 		t.Fatal("tenant LOGIN role OID fencing migration:", err)
 	}
+	// Owner-only operator revocation and session-eviction contract.
+	revokeMigration, err := os.ReadFile(filepath.Join("..", "migrations", "0009_tenant_login_revoke_evict.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, string(revokeMigration)); err != nil {
+		t.Fatal("tenant LOGIN revocation migration:", err)
+	}
 	return New(pool)
 }
 

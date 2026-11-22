@@ -351,4 +351,21 @@ func TestSandboxctlRejectsShadowSchemaReadRoleBypass(t *testing.T) {
 	if err := verifySandboxReadRole(ctx, pool); err != nil {
 		t.Fatalf("revoking foreign SELECT did not restore dedicated read role: %v", err)
 	}
+	// Column grants can bypass a table-ACL-only allowlist. The test role
+	// must be rejected even if it can read just one foreign column.
+	if _, err := owner.Exec(ctx, "GRANT SELECT (payload) ON "+externalTable+" TO "+username); err != nil {
+		t.Fatal(err)
+	}
+	if err := probe.QueryRow(ctx, "SELECT payload FROM "+externalTable).Scan(&payload); err != nil || payload != "foreign-insert-verified" {
+		t.Fatalf("independent LOGIN did not exercise foreign column SELECT: payload=%q err=%v", payload, err)
+	}
+	if err := verifySandboxReadRole(ctx, pool); err == nil {
+		t.Fatal("foreign column SELECT grant bypassed exact-four-table reader fence")
+	}
+	if _, err := owner.Exec(ctx, "REVOKE SELECT (payload) ON "+externalTable+" FROM "+username); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifySandboxReadRole(ctx, pool); err != nil {
+		t.Fatalf("revoking foreign column SELECT did not restore dedicated read role: %v", err)
+	}
 }
