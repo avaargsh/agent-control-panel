@@ -121,6 +121,57 @@ func TestPostfaultIndependentSignedAuthoritiesPassCompleteRecovery(t *testing.T)
 	}
 }
 
+// A source signature authenticates exact bytes, but cannot make an
+// ambiguously decoded JSON document safe. Distinct JSON parsers may interpret
+// the first and last duplicate field differently; reject before using it as
+// a Permit/Recovery/Release decision input.
+func TestPostfaultRejectsAmbiguousSignedDuplicateJSON(t *testing.T) {
+	cases := []struct {
+		name, original, replacement string
+	}{
+		{"duplicate_top_level_fault", `"fault_id":"sigkill-worker-1"`, `"fault_id":"foreign-fault","fault_id":"sigkill-worker-1"`},
+		{"duplicate_nested_recovery", `"recovered":true`, `"recovered":false,"recovered":true`},
+		{"escaped_duplicate_key_alias", `"recovered":true`, `"\\u0072ecovered":false,"recovered":true`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			b, keys, signers, now := fixtureRecoveryBundle(t)
+			replaced := false
+			for i, receipt := range b.Receipts {
+				if receipt.Authority != "runtime" || receipt.Phase != "after_recovery" {
+					continue
+				}
+				raw, err := base64.StdEncoding.DecodeString(receipt.PayloadB64)
+				if err != nil {
+					t.Fatal(err)
+				}
+				ambiguous := strings.Replace(string(raw), tc.original, tc.replacement, 1)
+				if ambiguous == string(raw) || !json.Valid([]byte(ambiguous)) {
+					t.Fatalf("test fixture did not produce valid ambiguous JSON")
+				}
+				// Standard json.Unmarshal keeps the last duplicate value.
+				// The signed payload remains syntactically valid; rejection
+				// must be deliberate, not a parser or signature failure.
+				var parsed Observation
+				if err := json.Unmarshal([]byte(ambiguous), &parsed); err != nil {
+					t.Fatal(err)
+				}
+				b.Receipts[i].PayloadB64 = base64.StdEncoding.EncodeToString([]byte(ambiguous))
+				b.Receipts[i].SignatureB64 = base64.StdEncoding.EncodeToString(
+					ed25519.Sign(signers["runtime"], append([]byte(SignatureDomain), []byte(ambiguous)...)))
+				replaced = true
+				break
+			}
+			if !replaced {
+				t.Fatal("runtime postfault observation missing")
+			}
+			if err := Verify(b, keys, now); err == nil {
+				t.Fatal("ambiguous source-signed JSON was accepted")
+			}
+		})
+	}
+}
+
 func TestPostfaultMissingOrForgedAuthorityCannotPass(t *testing.T) {
 	for _, tc := range []struct {
 		name string
