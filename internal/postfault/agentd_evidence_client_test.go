@@ -3,6 +3,8 @@ package postfault
 import (
 	"bytes"
 	"context"
+	"errors"
+	"io"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/tls"
@@ -111,21 +113,20 @@ func TestAgentDEvidenceClientFetchesAndVerifiesSameRunOverMutualTLS(t *testing.T
 			http.Error(w, "invalid request", http.StatusBadRequest)
 			return
 		}
-		raw := make([]byte, 8193)
-		n, err := r.Body.Read(raw)
-		if err != nil && n == 0 {
+		raw, err := io.ReadAll(io.LimitReader(r.Body, 8193))
+		if err != nil {
 			t.Errorf("read request: %v", err)
 			return
 		}
 		var request AgentDEvidenceReadRequest
-		if !StrictDecode(bytes.TrimSpace(raw[:n]), &request) || request.Ref != expected.Ref {
-			t.Errorf("request did not carry the original immutable Ref: %q", raw[:n])
+		if !StrictDecode(bytes.TrimSpace(raw), &request) || request.Ref != expected.Ref {
+			t.Errorf("request did not carry the original immutable Ref: %q", raw)
 			http.Error(w, "invalid request", http.StatusBadRequest)
 			return
 		}
 		canonical, _ := json.Marshal(request)
-		if !bytes.Equal(bytes.TrimSpace(raw[:n]), canonical) {
-			t.Errorf("request JSON was not canonical: %q", raw[:n])
+		if !bytes.Equal(bytes.TrimSpace(raw), canonical) {
+			t.Errorf("request JSON was not canonical: %q", raw)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(response)
@@ -195,13 +196,14 @@ func TestAgentDEvidenceClientKeepsUnknownHoldUnresolved(t *testing.T) {
 }
 
 func TestAgentDEvidenceClientDoesNotFollowRedirects(t *testing.T) {
+	_, _, expected, _, _, _, head, _, _ := g05SourceFixture(t)
 	redirect := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "https://example.invalid/redirected", http.StatusFound)
 	}))
 	defer redirect.Close()
 	client := redirect.Client()
 	api := AgentDEvidenceClient{Endpoint: redirect.URL, HTTPClient: client}
-	_, err := api.Read(context.Background(), AgentDWaitRef{}, TrustedAgentDInspectHead{})
+	_, err := api.Read(context.Background(), expected.Ref, head)
 	if err == nil {
 		t.Fatal("evidence client followed or accepted an HTTP redirect")
 	}
