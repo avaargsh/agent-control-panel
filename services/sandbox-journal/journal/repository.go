@@ -67,6 +67,11 @@ func (r *Repository) RecordPermitUnavailable(ctx context.Context, in identity.In
 		if rec.Identity != in {
 			return Record{}, false, ErrConflict
 		}
+		// A command row without its original atomic Outbox fact is NOT a
+		// trustworthy replay. Never mint a replacement event or dispatch.
+		if err := verifyCommittedOutbox(ctx, tx, rec); err != nil {
+			return Record{}, false, err
+		}
 	} else if err != nil {
 		return Record{}, false, dbError(err)
 	}
@@ -86,8 +91,9 @@ func (r *Repository) RecordPermitUnavailable(ctx context.Context, in identity.In
 	return rec, created, nil
 }
 
-// Get is tenant and command scoped. A missing row is not proof that an effect
-// never happened elsewhere; only a trusted provider inspection can decide.
+// Get is tenant and command scoped. Read command+Outbox in one PostgreSQL
+// snapshot; a missing or tampered event is a corruption, never a proof of
+// effect absence or permission to re-dispatch.
 func (r *Repository) Get(ctx context.Context, tenantID, sandboxUID, commandID string) (Record, error) {
 	if r == nil || r.pool == nil {
 		return Record{}, ErrUnavailable
@@ -97,13 +103,24 @@ func (r *Repository) Get(ctx context.Context, tenantID, sandboxUID, commandID st
 			return Record{}, identity.ErrInvalid
 		}
 	}
-	rec, err := scan(r.pool.QueryRow(ctx, `SELECT tenant_id,run_id,runtime_attempt_id,sandbox_uid,command_id,request_digest,generation,state,created_at
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return Record{}, fmt.Errorf("begin sandbox journal inspection: %w", err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	rec, err := scan(tx.QueryRow(ctx, `SELECT tenant_id,run_id,runtime_attempt_id,sandbox_uid,command_id,request_digest,generation,state,created_at
  FROM sandbox_journal_commands WHERE tenant_id=$1 AND sandbox_uid=$2 AND command_id=$3`, tenantID, sandboxUID, commandID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Record{}, ErrNotFound
 	}
 	if err != nil {
 		return Record{}, fmt.Errorf("read command: %w", err)
+	}
+	if err := verifyCommittedOutbox(ctx, tx, rec); err != nil {
+		return Record{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Record{}, fmt.Errorf("commit sandbox journal inspection: %w", err)
 	}
 	return rec, nil
 }
@@ -120,6 +137,38 @@ func scan(row pgx.Row) (Record, error) {
 	rec.Generation = uint64(generation)
 	return rec, nil
 }
+// queryRow is implemented by both pgx.Tx and pgxpool.Pool. Checks never
+// authorize an effect; they only reject a disconnected historical record.
+type queryRow interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+// verifyCommittedOutbox reads the original, uniquely keyed Outbox fact
+// alongside the command. Lost ACK, deleted event or mismatched immutable
+// binding must remain an error; no repair-by-resend is attempted.
+func verifyCommittedOutbox(ctx context.Context, q queryRow, rec Record) error {
+	var generation int64
+	var eventType, runID, attemptID, requestDigest string
+	err := q.QueryRow(ctx, `SELECT generation,event_type,
+ payload->>'run_id',payload->>'runtime_attempt_id',payload->>'request_digest'
+ FROM sandbox_journal_outbox
+ WHERE tenant_id=$1 AND sandbox_uid=$2 AND command_id=$3 AND generation=$4`,
+		rec.Identity.TenantID, rec.Identity.SandboxUID, rec.Identity.CommandID, rec.Generation,
+	).Scan(&generation, &eventType, &runID, &attemptID, &requestDigest)
+	if err != nil {
+		// Includes a missing event, NULL/invalid typed field or an unavailable
+		// Outbox. Caller must fail closed, never turn this into an idempotent PASS.
+		return ErrCorrupt
+	}
+	if generation != int64(rec.Generation) ||
+		eventType != "sandbox.command.permit-unavailable" ||
+		runID != rec.Identity.RunID || attemptID != rec.Identity.RuntimeAttemptID ||
+		requestDigest != rec.Identity.RequestDigest {
+		return ErrCorrupt
+	}
+	return nil
+}
+
 func dbError(err error) error {
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
