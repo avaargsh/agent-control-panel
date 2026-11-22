@@ -10,7 +10,7 @@ import (
 // accept a later privileged actor replacing any guard with same-name CHECK(TRUE).
 func TestOptimizationAttemptMigrationRejectsWeakenedCheckPredicates(t *testing.T) {
 	cases := []struct {
-		name string
+		name       string
 		constraint string
 	}{
 		{"consumption consistency", "optimization_attempt_consumption_consistency"},
