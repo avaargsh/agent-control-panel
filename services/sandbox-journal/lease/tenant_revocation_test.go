@@ -10,13 +10,20 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// This initial owner-side test fixture only removes the mapping. It must be
-// replaced by a fenced DBA revocation operation if an already-open snapshot
-// still carries historical RLS visibility after the mapping is removed.
+// Revoke through the owner-only, exact-OID operation. A mere DELETE of
+// the mapping is not enough to fence an existing REPEATABLE READ snapshot.
 func revokeLeasePrincipalForTest(ctx context.Context, owner *Repository, login string, roleOID uint32) error {
-	_, err := owner.pool.Exec(ctx, `DELETE FROM public.sandbox_lease_db_principals
-		WHERE login_name=$1 AND login_role_oid=$2::oid`, login, roleOID)
-	return err
+	var terminated int
+	err := owner.pool.QueryRow(ctx,
+		"SELECT public.sandbox_revoke_lease_login($1::name,$2::oid)",
+		login, roleOID).Scan(&terminated)
+	if err != nil {
+		return err
+	}
+	if terminated < 1 {
+		return fmt.Errorf("revocation did not evict the active tenant session: %d", terminated)
+	}
+	return nil
 }
 
 func TestLeaseRevocationEvictsExistingRepeatableReadSession(t *testing.T) {
