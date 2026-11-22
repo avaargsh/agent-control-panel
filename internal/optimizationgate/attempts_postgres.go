@@ -99,7 +99,11 @@ func (s *AttemptStore) ConsumeReviewEvidence(
 		return EvaluationReceipt{}, err
 	}
 	receiptDigest := digestBytes(signedReceipt)
-	tx, err := s.pool.Begin(ctx)
+	begin := s.pool.Begin
+	if s.beginConsume != nil {
+		begin = s.beginConsume
+	}
+	tx, err := begin(ctx)
 	if err != nil {
 		return EvaluationReceipt{}, fmt.Errorf("%w: begin consume: %v", ErrAttemptUnconfigured, err)
 	}
