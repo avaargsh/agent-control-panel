@@ -117,6 +117,16 @@ func testRepository(t *testing.T) *Repository {
 	if _, err := pool.Exec(ctx, string(revokeMigration)); err != nil {
 		t.Fatal("tenant LOGIN revocation migration:", err)
 	}
+	// The operator must independently verify committed revocation facts
+	// and *actual* authenticated PostgreSQL role/backend state. Never
+	// substitute the revoker's own uncommitted SQL transaction for this.
+	verifyMigration, err := os.ReadFile(filepath.Join("..", "migrations", "0010_tenant_revoke_postcommit_verify.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, string(verifyMigration)); err != nil {
+		t.Fatal("tenant LOGIN post-commit verification migration:", err)
+	}
 	return New(pool)
 }
 
