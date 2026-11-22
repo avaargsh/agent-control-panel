@@ -31,7 +31,8 @@ import (
 // must stop exposing even negative authority lookup results as soon as its
 // database role gains extra privileges, without a process restart or a new
 // connection. The 403 positive control is a nonexistent, correctly scoped
-// RunIntent; no protected execution or publication is enabled.
+// RunIntent; the publication endpoint is enabled without any existing
+// RunIntent, so neither route can publish an effect or signed receipt.
 func TestAuthorityHTTPRejectsRuntimeRoleDrift(t *testing.T) {
 	dsn := os.Getenv("PGTEST_DSN")
 	if dsn == "" {
@@ -176,6 +177,20 @@ func TestAuthorityHTTPRejectsRuntimeRoleDrift(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// Configure a real publisher as well as the plain Run Authority route.
+	// With no accepted RunIntent, neither route can produce a publication.
+	releaseDirectory := filepath.Join(tmp, "releases")
+	if err := os.Mkdir(releaseDirectory, 0700); err != nil {
+		t.Fatal(err)
+	}
+	publicationKey := filepath.Join(tmp, "publication.seed")
+	seed := make([]byte, 32)
+	if _, err := rand.Read(seed); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(publicationKey, seed, 0600); err != nil {
+		t.Fatal(err)
+	}
 	clientCertificate, err := tls.X509KeyPair(clientPEM, clientKey)
 	if err != nil {
 		t.Fatal(err)
@@ -207,6 +222,7 @@ func TestAuthorityHTTPRejectsRuntimeRoleDrift(t *testing.T) {
 		serverErrors <- serve(serverCtx, config{
 			dsn: roleURL.String(), cert: certPath, key: keyPath, ca: caPath,
 			peer: peer, tenant: "tenant-drift", address: addr,
+			releaseDirectory: releaseDirectory, publicationKey: publicationKey,
 		})
 	}()
 	defer func() {
@@ -224,8 +240,10 @@ func TestAuthorityHTTPRejectsRuntimeRoleDrift(t *testing.T) {
 	id := "00000000-0000-4000-8000-000000000001"
 	endpoint := "https://" + addr + "/internal/v1/run-authority/" + id +
 		"?run_id=" + id + "&request_digest=sha256:" + strings.Repeat("a", 64)
-	getStatus := func() (int, error) {
-		resp, err := client.Get(endpoint)
+	publicationEndpoint := strings.Replace(endpoint, "/internal/v1/run-authority/",
+		"/internal/v1/decision-publication/", 1)
+	getStatus := func(target string) (int, error) {
+		resp, err := client.Get(target)
 		if err != nil {
 			return 0, err
 		}
@@ -236,7 +254,7 @@ func TestAuthorityHTTPRejectsRuntimeRoleDrift(t *testing.T) {
 	// Wait only for the listener to start; never mask unexpected HTTP codes.
 	var status int
 	for deadline := time.Now().Add(8 * time.Second); ; {
-		status, err = getStatus()
+		status, err = getStatus(endpoint)
 		if err == nil {
 			break
 		}
@@ -253,19 +271,30 @@ func TestAuthorityHTTPRejectsRuntimeRoleDrift(t *testing.T) {
 	if status != http.StatusForbidden {
 		t.Fatalf("expected valid mTLS and missing RunIntent denial: HTTP %d", status)
 	}
+	checkBothRoutes := func(phase string, want int) {
+		t.Helper()
+		for _, route := range []struct {
+			name, endpoint string
+		}{
+			{"run-authority", endpoint},
+			{"decision-publication", publicationEndpoint},
+		} {
+			got, err := getStatus(route.endpoint)
+			if err != nil || got != want {
+				t.Fatalf("%s %s: HTTP %d, want %d: %v", phase, route.name, got, want, err)
+			}
+		}
+	}
+	checkBothRoutes("before-grant", http.StatusForbidden)
 	// On the same running process and reused TLS/DB connection pool, make
 	// the role overprivileged *after* startup. The next validated request
 	// must fail closed, rather than returning the old negative lookup result.
 	if _, err := admin.Exec(ctx, "GRANT SELECT ON "+schema+".outbox_events TO "+role); err != nil {
 		t.Fatal(err)
 	}
-	if status, err = getStatus(); err != nil || status != http.StatusServiceUnavailable {
-		t.Fatalf("runtime privilege drift was not denied: status=%d err=%v", status, err)
-	}
+	checkBothRoutes("after-grant", http.StatusServiceUnavailable)
 	if _, err := admin.Exec(ctx, "REVOKE SELECT ON "+schema+".outbox_events FROM "+role); err != nil {
 		t.Fatal(err)
 	}
-	if status, err = getStatus(); err != nil || status != http.StatusForbidden {
-		t.Fatalf("role recovery did not reenable legitimate negative lookup: status=%d err=%v", status, err)
-	}
+	checkBothRoutes("after-revoke", http.StatusForbidden)
 }
