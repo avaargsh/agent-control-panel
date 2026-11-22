@@ -133,7 +133,7 @@ func fixturePackage(t *testing.T) fixture {
 		s := Statement{
 			Schema: ObservationSchema, Stage: stage.stage, Authority: stage.authority,
 			Subject: subject, RunIntentID: e.RunIntentID, RequestDigest: e.RequestDigest,
-			ObservedAt: fault.At.Add(-10 * time.Second),
+			ObservedAt:     fault.At.Add(-10 * time.Second),
 			SourceRevision: e.SourceRevisions[stage.stage],
 		}
 		switch stage.stage {
