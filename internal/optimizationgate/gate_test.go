@@ -19,6 +19,7 @@ func fixture() (BaselinePolicy, EvaluationReceipt, ed25519.PrivateKey, map[strin
 		EvaluationDigest:       "sha256:" + strings.Repeat("d", 64),
 		WorkloadDigest:         "sha256:" + strings.Repeat("e", 64),
 		EnvironmentDigest:      "sha256:" + strings.Repeat("f", 64),
+		VerifierKeyID:          "independent-v1",
 		ExpectedWorkItems:      100, MinimumQualityPasses: 100, MinimumOutputTokens: 2000,
 	}
 	r := EvaluationReceipt{
@@ -116,6 +117,26 @@ func TestRejectsUntrustedOrAmbiguousSignedEvidence(t *testing.T) {
 	dupWire, _ := json.Marshal(SignedReceipt{KeyID: "independent-v1", Payload: payload, Signature: base64.StdEncoding.EncodeToString(ed25519.Sign(key, payload))})
 	if _, err := VerifyReviewEvidence(policy, dupWire, keys); !errors.Is(err, ErrInvalidContract) {
 		t.Fatalf("even correctly signed duplicate-key payload must fail: %v", err)
+	}
+}
+
+func TestRejectsCrossScopeVerifierKeyEvenWhenGloballyTrusted(t *testing.T) {
+	policy, receipt, _, keys := fixture()
+	other := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x8}, ed25519.SeedSize))
+	keys["other-scope"] = other.Public().(ed25519.PublicKey)
+	payload, err := json.Marshal(receipt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wire, err := json.Marshal(SignedReceipt{
+		KeyID: "other-scope", Payload: payload,
+		Signature: base64.StdEncoding.EncodeToString(ed25519.Sign(other, payload)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := VerifyReviewEvidence(policy, wire, keys); !errors.Is(err, ErrUntrustedReceipt) {
+		t.Fatalf("a globally trusted but unbound verifier must not approve this experiment: %v", err)
 	}
 }
 
