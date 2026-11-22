@@ -125,3 +125,70 @@ func TestSandboxctlRealScopedReaderFixture(t *testing.T) {
 		t.Fatalf("valid SELECT-only fixture rejected by combined inspection: %v", err)
 	}
 }
+
+
+// A PostgreSQL client may supply its own search_path. A writable credential
+// with SELECT on same-named shadow tables must never pass the Sandbox reader
+// preflight by making unqualified regclass lookups resolve to a false schema.
+func TestSandboxctlRejectsShadowSchemaReadRoleBypass(t *testing.T) {
+	dsn := os.Getenv("SANDBOX_JOURNAL_TEST_DSN")
+	if dsn == "" {
+		t.Skip("requires an isolated real PostgreSQL 16 Sandbox test database")
+	}
+	ctx := context.Background()
+	owner, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer owner.Close()
+	const schema = "sandboxctl_shadow_schema"
+	const username = "sandboxctl_shadow_login"
+	statements := []string{
+		"CREATE SCHEMA " + schema,
+		"CREATE TABLE " + schema + ".sandbox_lease_intents (id integer)",
+		"CREATE TABLE " + schema + ".sandbox_journal_commands (id integer)",
+		"CREATE TABLE " + schema + ".sandbox_lease_intent_events (id integer)",
+		"CREATE TABLE " + schema + ".sandbox_journal_outbox (id integer)",
+		"CREATE ROLE " + username + " LOGIN PASSWORD 'sandboxctl-ci-shadow-only' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS",
+		"GRANT CONNECT ON DATABASE sandbox_journal_ci TO " + username,
+		"GRANT USAGE ON SCHEMA public," + schema + " TO " + username,
+		"GRANT SELECT ON ALL TABLES IN SCHEMA " + schema + " TO " + username,
+		"GRANT UPDATE ON public.sandbox_lease_intents TO " + username,
+	}
+	defer func() {
+		_, _ = owner.Exec(context.Background(), "REVOKE UPDATE ON public.sandbox_lease_intents FROM "+username)
+		_, _ = owner.Exec(context.Background(), "DROP SCHEMA IF EXISTS "+schema+" CASCADE")
+		_, _ = owner.Exec(context.Background(), "DROP ROLE IF EXISTS "+username)
+	}()
+	for _, statement := range statements {
+		if _, err := owner.Exec(ctx, statement); err != nil {
+			t.Fatalf("prepare real shadow-schema role fixture: %v", err)
+		}
+	}
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.ConnConfig.User = username
+	cfg.ConnConfig.Password = "sandboxctl-ci-shadow-only"
+	if cfg.ConnConfig.RuntimeParams == nil {
+		cfg.ConnConfig.RuntimeParams = map[string]string{}
+	}
+	cfg.ConnConfig.RuntimeParams["search_path"] = schema + ",public"
+	cfg.ConnConfig.RuntimeParams["default_transaction_read_only"] = "on"
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	if err := pool.Ping(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var effective bool
+	if err := pool.QueryRow(ctx, "SELECT has_table_privilege(current_user, 'public.sandbox_lease_intents'::regclass, 'UPDATE')").Scan(&effective); err != nil || !effective {
+		t.Fatalf("fixture is not a truly writable credential: effective=%t err=%v", effective, err)
+	}
+	if err := verifySandboxReadRole(ctx, pool); err == nil {
+		t.Fatal("shadow search_path concealed UPDATE privileges on canonical public Sandbox tables")
+	}
+}
