@@ -193,4 +193,27 @@ func TestCommandJournalReaderCannotReadOtherTenantWithOwnLogin(t *testing.T) {
 	if _, created, err := New(reader).RecordPermitUnavailable(ctx, readonlyAttempt); err == nil || created {
 		t.Fatalf("SELECT-only Command reader minted a receipt: created=%t err=%v", created, err)
 	}
+
+	// The upstream 0009 owner-controlled revoke primitive terminates actual
+	// authenticated sessions, removes the OID-fenced mapping and sets NOLOGIN.
+	// Its effect must fence a previously valid Command writer, not only leases.
+	var writerOID uint32
+	if err := owner.pool.QueryRow(ctx, "SELECT oid FROM pg_catalog.pg_roles WHERE rolname=$1", writerLogin).Scan(&writerOID); err != nil {
+		t.Fatal(err)
+	}
+	var terminated int
+	if err := owner.pool.QueryRow(ctx, `SELECT public.sandbox_revoke_lease_login($1::name,$2::oid)`, writerLogin, writerOID).Scan(&terminated); err != nil {
+		t.Fatalf("source-owned exact LOGIN/OID revocation failed: %v", err)
+	}
+	if _, err := New(writer).Get(ctx, inB.TenantID, inB.SandboxUID, inB.CommandID); err == nil {
+		t.Fatal("revoked Command writer continued reading tenant facts")
+	}
+	revokedAttempt := inB
+	revokedAttempt.CommandID = "revoked-command-attempt"
+	if _, created, err := New(writer).RecordPermitUnavailable(ctx, revokedAttempt); err == nil || created {
+		t.Fatalf("revoked Command writer minted an original Outbox: created=%t err=%v", created, err)
+	}
+	if got, err := owner.Get(ctx, ownB.TenantID, ownB.SandboxUID, ownB.CommandID); err != nil || got.Identity != ownB {
+		t.Fatalf("revocation damaged durable committed command history: got=%+v err=%v", got, err)
+	}
 }
