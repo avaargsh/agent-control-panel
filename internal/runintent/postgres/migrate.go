@@ -119,7 +119,7 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 	// A superuser could also change session authorization, so this guards
 	// accidental/coordinated delegated ownership drift, not hostile DBAs.
 	var migrationLoginOwnsLedger bool
-	if err := tx.QueryRow(ctx, `SELECT EXISTS (
+	if err := tx.QueryRow(ctx, `SELECT current_user=session_user AND EXISTS (
 		SELECT 1 FROM pg_class c
 		JOIN pg_roles r ON r.oid=c.relowner
 		WHERE c.oid=to_regclass('schema_migrations')
