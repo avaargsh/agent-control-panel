@@ -13,8 +13,8 @@ import (
 )
 
 const (
-	InspectSchema = "acp.agentd-inspect-event/v1"
-	InspectDomain = "acp.agentd-inspect-event/v1\x00"
+	InspectSchema    = "acp.agentd-inspect-event/v1"
+	InspectDomain    = "acp.agentd-inspect-event/v1\x00"
 	maxInspectEvents = 10000
 )
 
@@ -237,11 +237,11 @@ func InspectAndJournal(ctx context.Context, db *pgxpool.Pool, ref Ref,
 	}
 	event := InspectEvent{
 		Schema: InspectSchema, Source: "agentd.inspect", Ref: ref,
-		ObservedAt: time.Now().UTC().Format(time.RFC3339Nano),
+		ObservedAt:   time.Now().UTC().Format(time.RFC3339Nano),
 		InspectCount: next, JournalVersion: next,
 		PreviousDigest: previous, State: blockedEvent.Result.State,
 		ExitReceiptDigest: blockedEvent.Result.ExitReceiptDigest,
-		NextAction: Hold, DispatchCount: 1, Replayed: false,
+		NextAction:        Hold, DispatchCount: 1, Replayed: false,
 	}
 	eventRaw, err := json.Marshal(event)
 	if err != nil || len(eventRaw) > 8192 {
