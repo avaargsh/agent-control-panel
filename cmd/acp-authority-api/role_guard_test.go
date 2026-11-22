@@ -244,6 +244,31 @@ func TestAuthorityDatabaseRoleFailClosed(t *testing.T) {
 		}
 	}
 
+	// PUBLIC receives any sequence ACL grant made to everybody, not only
+	// privileges given directly to the independently authenticated LOGIN.
+	// A successful guard after REVOKE also exercises a pg_class catalog
+	// containing both ordinary relations and sequence relkinds.
+	t.Run("public sequence USAGE remains planner-safe", func(t *testing.T) {
+		sequence := foreignSchema + ".authority_gate_probe_seq"
+		if _, err := admin.Exec(ctx, "GRANT USAGE ON SEQUENCE "+sequence+" TO PUBLIC"); err != nil {
+			t.Fatal(err)
+		}
+		var advanced int64
+		if err := reader.QueryRow(ctx, "SELECT nextval($1::regclass)", sequence).Scan(&advanced); err != nil || advanced < 1 {
+			t.Fatalf("PUBLIC sequence USAGE was not effective: value=%d err=%v", advanced, err)
+		}
+		check(t, false)
+		if _, err := admin.Exec(ctx, "REVOKE USAGE ON SEQUENCE "+sequence+" FROM PUBLIC"); err != nil {
+			t.Fatal(err)
+		}
+		var pgErr *pgconn.PgError
+		err := reader.QueryRow(ctx, "SELECT nextval($1::regclass)", sequence).Scan(&advanced)
+		if !errors.As(err, &pgErr) || pgErr.Code != "42501" {
+			t.Fatalf("sequence privilege should be revoked with SQLSTATE 42501: %v", err)
+		}
+		check(t, true)
+	})
+
 	// SECURITY DEFINER functions execute as their owner and are callable by
 	// PUBLIC by default. A read-only LOGIN with EXECUTE can therefore disclose
 	// data it cannot SELECT directly. Probe both the current schema and an
