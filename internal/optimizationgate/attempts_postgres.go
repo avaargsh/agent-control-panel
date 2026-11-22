@@ -48,7 +48,7 @@ func (s *AttemptStore) IssueReviewAttempt(ctx context.Context, trusted BaselineP
 	}
 	nonce := make([]byte, 32)
 	if _, err := rand.Read(nonce); err != nil {
-		return BaselinePolicy{}, fmt.Errorf("%w: generate nonce: %v", ErrAttemptUnconfigured, err)
+		return BaselinePolicy{}, fmt.Errorf("%w: generate nonce: %w", ErrAttemptUnconfigured, err)
 	}
 	trusted.VerificationNonce = hex.EncodeToString(nonce)
 	if !validPolicy(trusted) {
@@ -60,7 +60,7 @@ func (s *AttemptStore) IssueReviewAttempt(ctx context.Context, trusted BaselineP
 	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return BaselinePolicy{}, fmt.Errorf("%w: begin issue: %v", ErrAttemptUnconfigured, err)
+		return BaselinePolicy{}, fmt.Errorf("%w: begin issue: %w", ErrAttemptUnconfigured, err)
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
 	if err := bindAttemptScope(ctx, tx, trusted); err != nil {
@@ -71,10 +71,10 @@ func (s *AttemptStore) IssueReviewAttempt(ctx context.Context, trusted BaselineP
 		VALUES ($1,$2,$3,$4,$5,clock_timestamp()+($6::bigint*interval '1 second'))`,
 		trusted.VerificationNonce, trusted.TenantID, trusted.ProjectID, trusted.ExperimentID, digest,
 		int64(ttl/time.Second)); err != nil {
-		return BaselinePolicy{}, fmt.Errorf("%w: persist attempt: %v", ErrAttemptUnconfigured, err)
+		return BaselinePolicy{}, fmt.Errorf("%w: persist attempt: %w", ErrAttemptUnconfigured, err)
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return BaselinePolicy{}, fmt.Errorf("%w: commit attempt: %v", ErrAttemptUnconfigured, err)
+		return BaselinePolicy{}, fmt.Errorf("%w: commit attempt: %w", ErrAttemptUnconfigured, err)
 	}
 	return trusted, nil
 }
@@ -119,7 +119,7 @@ func (s *AttemptStore) ConsumeReviewEvidence(
 	}
 	tx, err := begin(ctx)
 	if err != nil {
-		return EvaluationReceipt{}, fmt.Errorf("%w: begin consume: %v", ErrAttemptUnconfigured, err)
+		return EvaluationReceipt{}, fmt.Errorf("%w: begin consume: %w", ErrAttemptUnconfigured, err)
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
 	if err := bindAttemptScope(ctx, tx, trusted); err != nil {
@@ -140,7 +140,7 @@ func (s *AttemptStore) ConsumeReviewEvidence(
 		return EvaluationReceipt{}, ErrAttemptUnavailable
 	}
 	if err != nil {
-		return EvaluationReceipt{}, fmt.Errorf("%w: consume attempt: %v", ErrAttemptUnconfigured, err)
+		return EvaluationReceipt{}, fmt.Errorf("%w: consume attempt: %w", ErrAttemptUnconfigured, err)
 	}
 	if claimedNonce != trusted.VerificationNonce {
 		return EvaluationReceipt{}, ErrAttemptUnavailable
@@ -196,7 +196,7 @@ func policySHA(policy BaselinePolicy) (string, error) {
 	}
 	raw, err := json.Marshal(policy)
 	if err != nil {
-		return "", fmt.Errorf("%w: policy marshal: %v", ErrInvalidContract, err)
+		return "", fmt.Errorf("%w: policy marshal: %w", ErrInvalidContract, err)
 	}
 	return digestBytes(raw), nil
 }
