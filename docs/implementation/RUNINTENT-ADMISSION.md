@@ -122,7 +122,10 @@ The authority service now additionally **fails at startup** if its actual
 PostgreSQL LOGIN is privileged (superuser, BYPASSRLS, role/database creator),
 can create objects in the selected schema, owns or inherits ownership of its
 schema/tables, lacks any of its seven required SELECT grants, or has write
-privileges or additional application-table reads in that schema. The separate
+privileges or additional application-table reads in that schema. Both table-
+level and effective column-level grants are checked, including `PUBLIC` grants:
+a column-only `SELECT` on Outbox or a column-only `UPDATE` on RunIntent is
+still an excessive authority and must fail startup. The separate
 `TestAuthorityDatabaseRoleFailClosed` uses a real, independently authenticated
 LOGIN in an isolated PostgreSQL test database, then adds and revokes excessive
 grants to prove the gate changes its decision. It requires `PGTEST_DSN` and is
