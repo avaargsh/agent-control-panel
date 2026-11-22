@@ -105,6 +105,8 @@ func verifySandboxReadRole(ctx context.Context, pool *pgxpool.Pool) error {
 		  AND has_schema_privilege(current_user, current_schema(), 'USAGE')
 		  AND has_table_privilege(current_user, 'sandbox_lease_intents'::regclass, 'SELECT')
 		  AND has_table_privilege(current_user, 'sandbox_journal_commands'::regclass, 'SELECT')
+		  AND has_table_privilege(current_user, 'sandbox_lease_intent_events'::regclass, 'SELECT')
+		  AND has_table_privilege(current_user, 'sandbox_journal_outbox'::regclass, 'SELECT')
 		  AND NOT EXISTS (
 		    SELECT 1 FROM pg_roles AS r
 		    WHERE (r.rolname = session_user OR pg_has_role(session_user, r.oid, 'MEMBER'))
