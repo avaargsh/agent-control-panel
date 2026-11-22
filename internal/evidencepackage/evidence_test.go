@@ -288,9 +288,13 @@ func TestEvidencePackageRejectsDuplicateKeysEvenWithValidSignature(t *testing.T)
 			continue
 		}
 		raw, err := base64.StdEncoding.DecodeString(r.PayloadB64)
-		if err != nil { t.Fatal(err) }
+		if err != nil {
+			t.Fatal(err)
+		}
 		edited := strings.Replace(string(raw), `"status":"ACCEPTED"`, `"status":"DENIED","status":"ACCEPTED"`, 1)
-		if edited == string(raw) { t.Fatal("fixture did not include signed status") }
+		if edited == string(raw) {
+			t.Fatal("fixture did not include signed status")
+		}
 		f.p.Receipts[i].PayloadB64 = base64.StdEncoding.EncodeToString([]byte(edited))
 		f.p.Receipts[i].SignatureB64 = base64.StdEncoding.EncodeToString(
 			ed25519.Sign(f.priv["acp"], append([]byte(SignatureDomain), []byte(edited)...)))
