@@ -18,6 +18,7 @@ func verifyOptimizationAttemptColumns(ctx context.Context, tx pgx.Tx) error {
 		WITH metadata AS (
 			SELECT a.attrelid, a.attnum,
 				jsonb_build_object(
+					'position', a.attnum,
 					'name', a.attname,
 					'type', a.atttypid::text,
 					'type_modifier', a.atttypmod,
@@ -26,6 +27,7 @@ func verifyOptimizationAttemptColumns(ctx context.Context, tx pgx.Tx) error {
 					'generated', a.attgenerated::text,
 					'identity', a.attidentity::text,
 					'has_default', a.atthasdef,
+					'has_missing', a.atthasmissing,
 					'default', pg_get_expr(d.adbin,d.adrelid,false)
 				) AS definition
 			FROM pg_attribute a
