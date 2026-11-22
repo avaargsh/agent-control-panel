@@ -14,12 +14,12 @@ import (
 
 type testEvidenceReader map[string][]byte
 
-func (r testEvidenceReader) ReadEvidence(_ context.Context, digest string) ([]byte, error) {
+func (r testEvidenceReader) OpenEvidence(_ context.Context, digest string) (io.ReadCloser, error) {
 	data, ok := r[digest]
 	if !ok {
 		return nil, fmt.Errorf("missing evidence %s", digest)
 	}
-	return data, nil
+	return io.NopCloser(bytes.NewReader(data)), nil
 }
 
 func evidenceSHA(data []byte) string {
@@ -106,11 +106,7 @@ func (r *streamingEvidenceProbe) OpenEvidence(ctx context.Context, digest string
 	if r.streamOverride != nil {
 		return r.streamOverride, nil
 	}
-	data, err := r.testEvidenceReader.ReadEvidence(ctx, digest)
-	if err != nil {
-		return nil, err
-	}
-	return io.NopCloser(bytes.NewReader(data)), nil
+	return r.testEvidenceReader.OpenEvidence(ctx, digest)
 }
 
 func TestIndependentEvidencePrefersBoundedStreamingOverEagerByteFetch(t *testing.T) {
