@@ -216,7 +216,7 @@ CREATE OR REPLACE FUNCTION public.sandbox_verify_command_login_revocation(
 )
 RETURNS boolean LANGUAGE plpgsql SECURITY INVOKER
 SET search_path = pg_catalog, public
-AS $
+AS $$
 BEGIN
   IF NOT public.sandbox_verify_lease_login_revocation(p_login, p_expected_oid) THEN
     RAISE EXCEPTION 'upstream Lease LOGIN revocation proof did not succeed'
@@ -266,7 +266,7 @@ BEGIN
 
   RETURN TRUE;
 END;
-$;
+$$;
 
 REVOKE ALL ON FUNCTION public.sandbox_verify_command_login_revocation(name, oid)
   FROM PUBLIC, acp_sandbox_lease_writer, acp_sandbox_lease_reader,
