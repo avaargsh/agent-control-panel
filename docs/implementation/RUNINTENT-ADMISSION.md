@@ -120,7 +120,8 @@ deployment gates.
 
 The authority service now additionally **fails at startup** if its actual
 PostgreSQL LOGIN is privileged (superuser, BYPASSRLS, role/database creator),
-can create objects in the selected schema, owns or inherits ownership of its
+can create objects in any non-system schema, has database-level CREATE
+privilege (which permits making new schemas), owns or inherits ownership of its
 schema/tables, lacks any of its seven required SELECT grants, or has write
 privileges or additional application-table reads in that schema. Both table-
 level and effective column-level grants are checked, including `PUBLIC` grants:
@@ -131,7 +132,10 @@ also have no database role memberships: a `NOINHERIT` membership with
 privileges appear limited. The separate
 `TestAuthorityDatabaseRoleFailClosed` uses a real, independently authenticated
 LOGIN in an isolated PostgreSQL test database, then adds and revokes excessive
-grants to prove the gate changes its decision. It requires `PGTEST_DSN` and is
+grants to prove the gate changes its decision, including actual CREATE TABLE
+in a foreign schema and CREATE SCHEMA using a database-level grant. These
+are executed CI regression cases, not a claim that startup validation
+continuously monitors future grants. It requires `PGTEST_DSN` and is
 **not** a production deployment or a substitute for tenant-specific RLS.
 A compromised authority service with this read-only role could still read
 other tenants' rows in its granted tables via raw SQL: the mTLS service's
