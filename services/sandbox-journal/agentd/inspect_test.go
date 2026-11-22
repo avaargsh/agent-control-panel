@@ -207,3 +207,64 @@ func TestForgedWaitPIDOrAttemptCannotCommitTerminal(t *testing.T) {
 		t.Fatal("foreign AttemptID committed authoritative exit")
 	}
 }
+
+func TestTerminalJournalIsAppendOnlyAndTrustKeyIsIndependent(t *testing.T) {
+	pool := testDatabase(t)
+	cmd, original := startOwnedTestProcess(t, "0.2")
+	seedAlreadyAuthorizedAttempt(t, pool, original)
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = cmd.Wait()
+	first, err := RecordWaitOutcome(context.Background(), pool, original, cmd.ProcessState, priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := RecordWaitOutcome(context.Background(), pool, original, cmd.ProcessState, priv)
+	if err != nil || first != second {
+		t.Fatalf("ACK replay changed original Wait receipt: first=%+v second=%+v err=%v", first, second, err)
+	}
+	var count int
+	if err := pool.QueryRow(context.Background(),
+		"SELECT count(*) FROM public.sandbox_agentd_terminal_receipts").Scan(&count); err != nil || count != 1 {
+		t.Fatalf("source commit replay duplicated terminal: n=%d err=%v", count, err)
+	}
+	if _, err := pool.Exec(context.Background(),
+		"UPDATE public.sandbox_agentd_terminal_receipts SET payload=decode('666f72676564','hex')"); err == nil {
+		t.Fatal("source-owned immutable Wait payload modified")
+	}
+	foreignPub, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result, err := InspectCommand(context.Background(), pool, original, foreignPub); !errors.Is(err, ErrUnverified) ||
+		result.State != Unknown || result.ExitReceiptDigest != "" {
+		t.Fatalf("untrusted signer promoted original terminal: %+v / %v", result, err)
+	}
+	if result, err := InspectCommand(context.Background(), pool, original, pub); err != nil ||
+		result.State != FailedConfirmed || result.ExitReceiptDigest == "" {
+		t.Fatalf("valid original Wait was not verifiable after rejected forgery: %+v / %v", result, err)
+	}
+}
+
+func TestPermitUnavailableOrUnknownAttemptCannotMintWaitReceipt(t *testing.T) {
+	pool := testDatabase(t)
+	cmd, original := startOwnedTestProcess(t, "0.2")
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = cmd.Wait()
+	// A pre-Permit logical rejection is not a dispatched AgentD process.
+	// With no original authorized attempt row, even a real child exit is
+	// insufficient to claim a source-owned terminal for this Run.
+	if _, err := RecordWaitOutcome(context.Background(), pool, original, cmd.ProcessState, priv); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unregistered source attempt minted real Wait terminal: %v", err)
+	}
+	var count int
+	if err := pool.QueryRow(context.Background(),
+		"SELECT count(*) FROM public.sandbox_agentd_terminal_receipts").Scan(&count); err != nil || count != 0 {
+		t.Fatalf("unregistered attempt produced terminal: count=%d err=%v", count, err)
+	}
+}
