@@ -198,12 +198,30 @@ func InspectCommand(ctx context.Context, db *pgxpool.Pool, expected Ref, trusted
 		return hold, ErrUnverified
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
+	hold, err = inspectCommandTx(ctx, tx, expected, trusted)
+	if err != nil {
+		return blocked(expected), err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return blocked(expected), ErrUnverified
+	}
+	hold.OriginalProcess = inspectLinuxOriginalProcess(expected)
+	return hold, nil
+}
+
+// inspectCommandTx reads the original attempt and its immutable Wait receipt
+// within a caller-owned snapshot. It never commits or creates source events.
+func inspectCommandTx(ctx context.Context, tx pgx.Tx, expected Ref, trusted ed25519.PublicKey) (Result, error) {
+	hold := blocked(expected)
+	if tx == nil || !expected.valid() || len(trusted) != ed25519.PublicKeySize {
+		return hold, ErrUnverified
+	}
 	if err := readOriginal(ctx, tx, expected); err != nil {
 		return hold, err
 	}
 	var raw, signature []byte
 	var savedDigest string
-	err = tx.QueryRow(ctx, `SELECT payload,signature,payload_digest
+	err := tx.QueryRow(ctx, `SELECT payload,signature,payload_digest
 		FROM public.sandbox_agentd_terminal_receipts
 		WHERE tenant_id=$1 AND sandbox_uid=$2 AND command_id=$3 AND attempt_id=$4`,
 		expected.TenantID, expected.SandboxUID, expected.CommandID, expected.AttemptID,
@@ -221,12 +239,6 @@ func InspectCommand(ctx context.Context, db *pgxpool.Pool, expected Ref, trusted
 		hold.ReceiptPayload = raw
 		hold.ReceiptSignature = signature
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return blocked(expected), ErrUnverified
-	}
-	hold.OriginalProcess = inspectLinuxOriginalProcess(expected)
-	// A confirmed terminal permits external *independent* lifecycle checks,
-	// but not blindly retrying or releasing a Guard/Compute lease.
 	return hold, nil
 }
 
