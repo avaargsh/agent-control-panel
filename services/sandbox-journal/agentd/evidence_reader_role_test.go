@@ -90,7 +90,7 @@ func TestEvidenceReaderLoginIsTenantScopedAndReadOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := verifyEvidenceReaderLogin(context.Background(), ownerTx); err == nil {
+	if err := verifyEvidenceReaderLogin(context.Background(), ownerTx, ref.TenantID); err == nil {
 		_ = ownerTx.Rollback(context.Background())
 		t.Fatal("owner connection was accepted as the least-privilege evidence reader")
 	}
