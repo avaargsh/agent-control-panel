@@ -74,6 +74,47 @@ func TestLeaseRuntimeDatabaseRolesDenyEscalationAndPreserveCAS(t *testing.T) {
 	if _, err := New(reader).Get(ctx, in.TenantID, in.LeaseIntentID); err != nil {
 		t.Fatalf("least privileged reader cannot inspect: %v", err)
 	}
+	// INSERT and the three mutable UPDATE columns are intentionally granted
+	// to the writer; PostgreSQL must still block malformed partial transactions
+	// at COMMIT, not rely on a permission error at the statement boundary.
+	for _, tc := range []struct {
+		name string
+		sql  string
+	}{
+		{
+			name: "writer_cannot_cancel_without_event",
+			sql: `UPDATE public.sandbox_lease_intents
+				SET state='CANCELLED_BEFORE_PROVISION', generation=2, updated_at=clock_timestamp()
+				WHERE tenant_id='tenant-a' AND lease_intent_id='sandbox-intent-1'`,
+		},
+		{
+			name: "writer_cannot_preseed_future_cancellation",
+			sql: `INSERT INTO public.sandbox_lease_intent_events
+				(tenant_id,lease_intent_id,generation,event_type,payload)
+				VALUES ('tenant-a','sandbox-intent-1',2,'sandbox.lease-intent.cancelled-before-provision',
+				jsonb_build_object('run_id','11111111-1111-4111-8111-111111111111',
+				'runtime_attempt_id','runtime-attempt-1','request_digest',
+				'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'))`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tx, err := writer.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = tx.Exec(ctx, tc.sql); err != nil {
+				_ = tx.Rollback(ctx)
+				t.Fatalf("test must reach COMMIT under limited writer privileges: %v", err)
+			}
+			if err = tx.Commit(ctx); err == nil {
+				t.Fatal("limited writer committed a partial source-owned fact")
+			}
+			got, inspectErr := New(reader).Get(ctx, in.TenantID, in.LeaseIntentID)
+			if inspectErr != nil || got.Generation != 1 || got.State != WaitingForPermit {
+				t.Fatalf("rejected direct write changed durable lease state: %+v %v", got, inspectErr)
+			}
+		})
+	}
 	for _, tc := range []struct{ name, sql string }{
 		{"disable_update_trigger", "ALTER TABLE public.sandbox_lease_intent_events DISABLE TRIGGER sandbox_lease_outbox_no_update_delete"},
 		{"disable_truncate_trigger", "ALTER TABLE public.sandbox_lease_intent_events DISABLE TRIGGER sandbox_lease_outbox_no_truncate"},
