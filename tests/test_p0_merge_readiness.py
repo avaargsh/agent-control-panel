@@ -133,6 +133,51 @@ class P0MergePolicyTests(unittest.TestCase):
         state["pr"]["base"]["ref"] = "feat/sandbox-owned-journal-nondispatch-20261121"
         self.assertDenied(state, "main")
 
+    def test_child_83_denies_missing_main_merged_parent_81(self):
+        state = complete()
+        state["pr"]["number"] = 83
+        self.assertDenied(state, "parent #81")
+
+    def test_child_83_denies_parent_merged_only_into_feature_branch(self):
+        state = complete()
+        state["pr"]["number"] = 83
+        state["stack_parent"] = {
+            "number": 81, "merged": True, "head": {"sha": "a2b6ea8b040180760e81273f16206e0742e86274"},
+            "base": {"ref": "feat/other"}, "merge_commit_sha": "c" * 40,
+            "on_current_main": False,
+        }
+        self.assertDenied(state, "parent #81")
+
+    def test_child_83_allows_pinned_main_merged_parent_81(self):
+        state = complete()
+        state["pr"]["number"] = 83
+        state["stack_parent"] = {
+            "number": 81, "merged": True, "head": {"sha": "a2b6ea8b040180760e81273f16206e0742e86274"},
+            "base": {"ref": "main"}, "merge_commit_sha": "c" * 40,
+            "on_current_main": True,
+        }
+        self.assertEqual(evaluate(state, expected_head=HEAD), [])
+
+    def test_child_84_denies_wrong_parent_head_even_if_merged(self):
+        state = complete()
+        state["pr"]["number"] = 84
+        state["stack_parent"] = {
+            "number": 83, "merged": True, "head": {"sha": "d" * 40},
+            "base": {"ref": "main"}, "merge_commit_sha": "c" * 40,
+            "on_current_main": True,
+        }
+        self.assertDenied(state, "parent #83")
+
+    def test_child_102_denies_wrong_parent_or_missing_main_ancestry(self):
+        state = complete()
+        state["pr"]["number"] = 102
+        state["stack_parent"] = {
+            "number": 84, "merged": True, "head": {"sha": "e9d74571b16d1c994037bdb7e13b3af4cfa5ba50"},
+            "base": {"ref": "main"}, "merge_commit_sha": "c" * 40,
+            "on_current_main": False,
+        }
+        self.assertDenied(state, "parent #84")
+
     def test_required_checks_must_not_be_empty(self):
         state = complete()
         state["protection"]["required_status_checks"]["checks"] = []
