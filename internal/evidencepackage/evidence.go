@@ -19,10 +19,10 @@ import (
 )
 
 const (
-	Schema            = "acp.evidence-package/v1"
-	ObservationSchema = "acp.evidence-observation/v1"
-	ExpectedSchema    = "acp.evidence-expected/v1"
-	SignatureDomain   = "acp.evidence-observation/v1\x00"
+	Schema            = "acp.evidence-package/v2"
+	ObservationSchema = "acp.evidence-observation/v2"
+	ExpectedSchema    = "acp.evidence-expected/v2"
+	SignatureDomain   = "acp.evidence-observation/v2\x00"
 	maxReceiptBytes   = 16 << 10
 	maxRecoveryBytes  = 128 << 10
 )
