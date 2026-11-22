@@ -84,3 +84,31 @@ func TestEvidencePackageRejectsSettlementBeforeSignedRecoveryObservations(t *tes
 		})
 	}
 }
+
+
+func TestEvidencePackageRejectsRecoveredRunBeforeSourceRecoveryProof(t *testing.T) {
+	for _, owner := range []string{"runtime", "agentd", "guard", "sandbox"} {
+		t.Run(owner, func(t *testing.T) {
+			f := fixturePackage(t)
+			// Runtime's RECOVERED lifecycle statement is fault+3s; all
+			// required owners report an independently signed observation
+			// at fault+3.5s. Guard settlement at fault+4s is still after
+			// that observation, so this specifically tests G05 recovery
+			// ordering rather than the G03/G04 settlement fence.
+			shiftSignedPostfaultObservation(t, &f, owner, f.e.Fault.At.Add(3500*time.Millisecond))
+			if err := Verify(f.p, f.e, f.pub, f.now); err == nil {
+				t.Fatalf("G05 accepted recovered Run before %s postfault source proof", owner)
+			}
+		})
+	}
+}
+
+func TestEvidencePackageAcceptsSourceProofBeforeRecoveredRunAndSettlement(t *testing.T) {
+	f := fixturePackage(t)
+	for _, owner := range []string{"runtime", "agentd", "guard", "sandbox"} {
+		shiftSignedPostfaultObservation(t, &f, owner, f.e.Fault.At.Add(2500*time.Millisecond))
+	}
+	if err := Verify(f.p, f.e, f.pub, f.now); err != nil {
+		t.Fatalf("valid signed recovery -> recovered Run -> settlement ordering rejected: %v", err)
+	}
+}
