@@ -49,6 +49,11 @@ func testSourceDB(t *testing.T) *pgxpool.Pool {
 	if migrationRoot == "" {
 		t.Fatal("missing pinned AgentD source migration directory")
 	}
+	// go test executes with the package directory as cwd, not the repo
+	// workspace root where the pinned independent source checkout lives.
+	if !filepath.IsAbs(migrationRoot) {
+		migrationRoot = filepath.Join("..", "..", migrationRoot)
+	}
 	for _, migration := range []string{"0013_agentd_attempt_terminal.sql", "0014_agentd_inspect_events.sql"} {
 		raw, err := os.ReadFile(filepath.Join(migrationRoot, migration))
 		if err != nil {
