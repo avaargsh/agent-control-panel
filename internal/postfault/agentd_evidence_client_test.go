@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
