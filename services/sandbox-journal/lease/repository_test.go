@@ -99,6 +99,16 @@ func testRepository(t *testing.T) *Repository {
 	if _, err := pool.Exec(ctx, string(rls)); err != nil {
 		t.Fatal("tenant LOGIN RLS migration:", err)
 	}
+	// This owner-only migration NEVER rebinds existing LOGIN names to new
+	// PostgreSQL role OIDs. A missing or stale OID remains fail-closed until
+	// independently re-enrolled by a DBA.
+	loginOIDFence, err := os.ReadFile(filepath.Join("..", "migrations", "0008_tenant_login_oid_fence.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, string(loginOIDFence)); err != nil {
+		t.Fatal("tenant LOGIN role OID fencing migration:", err)
+	}
 	return New(pool)
 }
 
