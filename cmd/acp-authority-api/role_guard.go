@@ -98,6 +98,25 @@ SELECT COALESCE((
                   OR has_any_column_privilege(c.oid, 'SELECT,INSERT,UPDATE,REFERENCES')
               )
        )
+       -- Sequence USAGE/SELECT/UPDATE are not relation or column ACLs.
+       -- A reader with nextval/setval or sequence-reading access can mutate
+       -- or inspect independently scoped state even with no table grants.
+       -- Deny effective sequence privileges in every application schema,
+       -- including the configured catalog schema.
+       AND NOT EXISTS (
+           SELECT 1
+             FROM pg_catalog.pg_class c
+             JOIN pg_catalog.pg_namespace s ON s.oid = c.relnamespace
+            WHERE c.relkind = 'S'
+              AND s.nspname NOT IN ('pg_catalog', 'information_schema')
+              AND s.nspname NOT LIKE 'pg_toast%'
+              AND s.nspname NOT LIKE 'pg_temp_%'
+              AND (
+                  has_sequence_privilege(c.oid, 'USAGE')
+                  OR has_sequence_privilege(c.oid, 'SELECT')
+                  OR has_sequence_privilege(c.oid, 'UPDATE')
+              )
+       )
        AND NOT EXISTS (
            SELECT 1 FROM pg_catalog.pg_class c
             WHERE c.relnamespace = n.oid
