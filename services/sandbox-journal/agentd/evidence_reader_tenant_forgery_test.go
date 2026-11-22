@@ -28,7 +28,7 @@ func TestEvidenceReaderCannotForgeTenantWithSessionGUC(t *testing.T) {
 	foreign.ProviderCommandUID = "foreign-provider-command"
 	seedAlreadyAuthorizedAttempt(t, owner, foreign)
 
-	reader := newEvidenceReaderPool(t, owner) // separate authenticated DB LOGIN
+	reader := newEvidenceReaderPool(t, owner, original.TenantID) // independent DB LOGIN / owner-managed tenant
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
