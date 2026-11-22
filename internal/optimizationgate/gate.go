@@ -35,6 +35,7 @@ type BaselinePolicy struct {
 	WorkloadDigest         string
 	EnvironmentDigest      string
 	VerifierKeyID          string // selected by trusted tenant/project policy
+	VerificationNonce      string // 32 random bytes, hexadecimal, from trusted attempt authority
 	ExpectedWorkItems      int64
 	MinimumQualityPasses   int64
 	MinimumOutputTokens    int64 // 0 for non-token workloads
@@ -56,6 +57,9 @@ type EvaluationReceipt struct {
 	BaselineEnvironmentDigest  string `json:"baseline_environment_digest"`
 	CandidateEnvironmentDigest string `json:"candidate_environment_digest"`
 	VerifierRunID              string `json:"verifier_run_id"`
+	VerificationNonce          string `json:"verification_nonce"`
+	BaselineEvidenceDigest     string `json:"baseline_evidence_digest"`
+	CandidateEvidenceDigest    string `json:"candidate_evidence_digest"`
 	BaselineWorkItems          int64  `json:"baseline_work_items"`
 	CandidateWorkItems         int64  `json:"candidate_work_items"`
 	BaselineOutputTokens       int64  `json:"baseline_output_tokens"`
@@ -108,9 +112,12 @@ func VerifyReviewEvidence(policy BaselinePolicy, wire []byte, verifierKeys map[s
 		receipt.CandidateSHA != policy.CandidateSHA || receipt.ExperimentBaselineSHA != policy.ExperimentBaselineSHA ||
 		receipt.IntegrationBaselineSHA != policy.IntegrationBaselineSHA || receipt.EvaluationDigest != policy.EvaluationDigest ||
 		receipt.WorkloadDigest != policy.WorkloadDigest || receipt.BaselineEnvironmentDigest != policy.EnvironmentDigest ||
-		receipt.CandidateEnvironmentDigest != policy.EnvironmentDigest || receipt.VerifierRunID == "" ||
-		strings.TrimSpace(receipt.VerifierRunID) != receipt.VerifierRunID ||
+		receipt.CandidateEnvironmentDigest != policy.EnvironmentDigest ||
+		receipt.VerificationNonce != policy.VerificationNonce ||
+		!digest(receipt.BaselineEvidenceDigest) || !digest(receipt.CandidateEvidenceDigest) ||
+		!validVerifierRunID(receipt.VerifierRunID) ||
 		receipt.BaselineWorkItems != policy.ExpectedWorkItems || receipt.CandidateWorkItems != policy.ExpectedWorkItems ||
+		receipt.BaselineOutputTokens < 0 || receipt.CandidateOutputTokens < 0 ||
 		receipt.BaselineOutputTokens < policy.MinimumOutputTokens || receipt.CandidateOutputTokens < policy.MinimumOutputTokens ||
 		(policy.MinimumOutputTokens > 0 && receipt.CandidateOutputTokens < receipt.BaselineOutputTokens) ||
 		receipt.BaselineQualityPasses < policy.MinimumQualityPasses ||
@@ -148,12 +155,29 @@ func validPolicy(p BaselinePolicy) bool {
 		!hexString(p.CandidateSHA, 40) || !hexString(p.ExperimentBaselineSHA, 40) ||
 		!hexString(p.IntegrationBaselineSHA, 40) || !digest(p.EvaluationDigest) ||
 		!digest(p.WorkloadDigest) || !digest(p.EnvironmentDigest) ||
+		!hexString(p.VerificationNonce, 64) ||
 		p.ExpectedWorkItems <= 0 || p.MinimumQualityPasses <= 0 ||
 		p.MinimumQualityPasses > p.ExpectedWorkItems || p.MinimumOutputTokens < 0 {
 		return false
 	}
 	return true
 }
+// validVerifierRunID prevents path-like, control/format Unicode and oversized
+// audit identifiers from being reinterpreted by downstream record stores.
+func validVerifierRunID(id string) bool {
+	if len(id) == 0 || len(id) > 128 {
+		return false
+	}
+	for i, ch := range id {
+		if (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') ||
+			(ch >= '0' && ch <= '9') || (i > 0 && (ch == '.' || ch == '_' || ch == '-' || ch == ':')) {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
 func digest(s string) bool {
 	return strings.HasPrefix(s, "sha256:") && hexString(strings.TrimPrefix(s, "sha256:"), 64)
 }
