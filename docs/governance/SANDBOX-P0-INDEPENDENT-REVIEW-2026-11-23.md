@@ -52,6 +52,26 @@ The stack #81 → #83 → #84 → #102 was ancestry-verified: each child's merge
 4. Keep #91 **Draft and unmerged for full protected-path acceptance** while there is no genuine same-Run trusted Guard issuer/PEP, real Sandbox lease/workspace continuity, AgentD `UNKNOWN → InspectCommand → terminal or HOLD` source receipt, separate signed trust keys, provider UID absence/release and current CI. Do not edit failing Golden Path to green or use a database snapshot as physical evidence.
 5. Production G01–G05 promotion requires a **separate**, human-signed service/physical release decision after all live tests and rollback drills. Landing data structures on `main` never confers permission to execute a protected command.
 
+## Executable premerge policy auditor — advisory until server-side Ruleset enforcement
+
+The source-pinned read-only checker is `scripts/check_p0_merge_readiness.py`, with fail-closed regression cases in `tests/test_p0_merge_readiness.py`. It contains **no** GitHub approval, reviewer invitation, merge, branch-setting or provider write API. It consumes independently queried REST metadata in **live mode**, never a user-authored offline snapshot as release authority, and returns a nonzero NO-GO for any missing, truncated, inaccessible or stale input.
+
+To use it from a trusted operator checkout, inject a separately authorized **read-only governance token** via a secret manager into `ACP_GOVERNANCE_READ_TOKEN` (never commit or log it). Supply the current full 40-hex source HEAD and current target `main` SHA **explicitly**:
+
+```sh
+python3 scripts/check_p0_merge_readiness.py \
+  --repository avaargsh/agent-control-panel \
+  --pr 81 \
+  --expected-head a2b6ea8b040180760e81273f16206e0742e86274 \
+  --expected-main 468c13bdb499dc3f33e4073cf58b8a31ff04dccc
+```
+
+This is a **dated illustrative invocation**. Before a live review, replace both hashes with newly verified GitHub source and target SHAs, then require a source-pinned human review of any changed policy. If the token lacks access to branch protection, check runs or reviewer collaborator permissions, the preflight is **BLOCKED**; HTTP 403 must not become `[]` or `APPROVED`.
+
+The checker requires: open non-Draft PR targeting current main; no main SHA or HEAD drift; authoritative main branch protection/review/check settings; strict current-base required job checks; at least two distinct **eligible non-author human** `APPROVED` reviews on the exact HEAD and no outstanding `CHANGES_REQUESTED`; stale-review dismissal, last-push approval, admin enforcement and conversation resolution. For stacked #83/#84/#102, it separately loads the pinned parent PR, demands that its exact reviewed HEAD was merged **into main**, and verifies its merge commit is an ancestor of the **current** main. Retargeting a child alone is not sufficient. #91 remains **hard BLOCKED** pending independent live same-Run physical and signed source evidence.
+
+**Important limits:** Unit tests can validate reject/accept logic but do **not** prove that the public repository's branch rules are active. REST observations are subject to change between check and merge; GitHub server-side Rulesets/required check contexts, legitimate CODEOWNERS and actual human decisions remain the enforcement and authorization mechanisms. This script does **not** ascertain reviewer expertise or the correctness of their diff review, only GitHub identity/permission and exact reviewed source. Never treat an `ELIGIBLE_AT_PINNED_SHA_ONLY` string as license to merge, alter Guard/AgentD permissions, or release production. It is intentionally not an auto-merge gate and requires a separate admin-configured protected workflow before mandatory-enforcement claims.
+
 ## Reviewer ledger — must be populated by real GitHub actors
 
 | Required field | Current value |
