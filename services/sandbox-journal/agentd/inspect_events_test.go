@@ -108,7 +108,9 @@ func TestInspectSourceRejectsForeignAttemptAndUntrustedSignerBeforeMinting(t *te
 		t.Fatalf("foreign Run permitted source inspection: %v", err)
 	}
 	other, _, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := InspectAndJournal(context.Background(), db, ref, other, priv); !errors.Is(err, ErrUnverified) {
 		t.Fatalf("inspector minted event with signer/key mismatch: %v", err)
 	}
@@ -125,9 +127,13 @@ func TestInspectSourceVerifierDetectsReorderedTamperedAndReboundEvents(t *testin
 	seedAlreadyAuthorizedAttempt(t, db, ref)
 	pub, priv := testSourceInspectKey(t)
 	first, err := InspectAndJournal(context.Background(), db, ref, pub, priv)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	second, err := InspectAndJournal(context.Background(), db, ref, pub, priv)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	now := time.Now().UTC()
 	samples := []struct {
 		name string
@@ -135,10 +141,22 @@ func TestInspectSourceVerifierDetectsReorderedTamperedAndReboundEvents(t *testin
 	}{
 		{"missing_first", func(s []JournaledInspection) []JournaledInspection { return s[1:] }},
 		{"reverse", func(s []JournaledInspection) []JournaledInspection { s[0], s[1] = s[1], s[0]; return s }},
-		{"altered_bytes", func(s []JournaledInspection) []JournaledInspection { s[1].Payload = append(append([]byte(nil), s[1].Payload...), ' '); return s }},
-		{"wrong_digest", func(s []JournaledInspection) []JournaledInspection { s[1].Digest = "sha256:" + string(bytes.Repeat([]byte("f"), 64)); return s }},
-		{"wrong_signature", func(s []JournaledInspection) []JournaledInspection { s[1].Signature = make([]byte, ed25519.SignatureSize); return s }},
-		{"rebound_attempt", func(s []JournaledInspection) []JournaledInspection { s[0].Event.Ref.AttemptID = "changed-attempt"; return s }},
+		{"altered_bytes", func(s []JournaledInspection) []JournaledInspection {
+			s[1].Payload = append(append([]byte(nil), s[1].Payload...), ' ')
+			return s
+		}},
+		{"wrong_digest", func(s []JournaledInspection) []JournaledInspection {
+			s[1].Digest = "sha256:" + string(bytes.Repeat([]byte("f"), 64))
+			return s
+		}},
+		{"wrong_signature", func(s []JournaledInspection) []JournaledInspection {
+			s[1].Signature = make([]byte, ed25519.SignatureSize)
+			return s
+		}},
+		{"rebound_attempt", func(s []JournaledInspection) []JournaledInspection {
+			s[0].Event.Ref.AttemptID = "changed-attempt"
+			return s
+		}},
 		{"count_rollback", func(s []JournaledInspection) []JournaledInspection { s[1].Event.InspectCount = 1; return s }},
 	}
 	for _, tc := range samples {
