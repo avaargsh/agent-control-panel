@@ -31,19 +31,19 @@ const (
 // Ref includes the original immutable Run, provider process identity and Guard
 // reference, all pinned by the source-owned Journal. It is NOT a Permit.
 type Ref struct {
-	TenantID          string `json:"tenant_id"`
-	RunID             string `json:"run_id"`
-	RuntimeAttemptID  string `json:"runtime_attempt_id"`
-	SandboxUID        string `json:"sandbox_uid"`
-	CommandID         string `json:"command_id"`
-	AttemptID         string `json:"attempt_id"`
+	TenantID           string `json:"tenant_id"`
+	RunID              string `json:"run_id"`
+	RuntimeAttemptID   string `json:"runtime_attempt_id"`
+	SandboxUID         string `json:"sandbox_uid"`
+	CommandID          string `json:"command_id"`
+	AttemptID          string `json:"attempt_id"`
 	ProviderCommandUID string `json:"provider_command_uid"`
-	RequestDigest     string `json:"request_digest"`
-	GuardPermitID     string `json:"guard_permit_id"`
-	PermitEpoch       uint64 `json:"permit_epoch"`
-	ProcessPID        int    `json:"process_pid"`
-	ProcessStartTicks uint64 `json:"process_start_ticks"`
-	HostBootID        string `json:"host_boot_id"`
+	RequestDigest      string `json:"request_digest"`
+	GuardPermitID      string `json:"guard_permit_id"`
+	PermitEpoch        uint64 `json:"permit_epoch"`
+	ProcessPID         int    `json:"process_pid"`
+	ProcessStartTicks  uint64 `json:"process_start_ticks"`
+	HostBootID         string `json:"host_boot_id"`
 }
 
 // TerminalReceipt must come from the AgentD process supervisor's actual OS
