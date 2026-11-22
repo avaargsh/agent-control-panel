@@ -106,7 +106,6 @@ func TestCommandCommitRejectsOrphanAndForgedOutbox(t *testing.T) {
 	}
 }
 
-
 // A migration cannot retroactively bless committed source facts that lack
 // their original Outbox. Only the disposable database owner injects history
 // with triggers disabled; production runtime principals have no DDL rights.
