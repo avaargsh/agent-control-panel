@@ -97,3 +97,33 @@ func TestUntrustedNonSuperuserCannotIssueConsumeOrReadEvenWithForgedScopeGUC(t *
 		})
 	}
 }
+
+func TestOptimizationAttemptMigrationRejectsSameNameWeakVerifierIndex(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		ddl  string
+	}{
+		{
+			name: "wrong unique key still has same index name",
+			ddl: "CREATE UNIQUE INDEX optimization_attempt_verifier_run_unique ON optimization_verification_attempts (verification_nonce) WHERE consumed_at IS NOT NULL",
+		},
+		{
+			name: "inverted partial predicate",
+			ddl: "CREATE UNIQUE INDEX optimization_attempt_verifier_run_unique ON optimization_verification_attempts (tenant_id,project_id,verifier_run_id) WHERE consumed_at IS NULL",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, pool := disposableAttemptStore(t)
+			ctx := context.Background()
+			if _, err := pool.Exec(ctx, "DROP INDEX optimization_attempt_verifier_run_unique"); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := pool.Exec(ctx, tc.ddl); err != nil {
+				t.Fatal(err)
+			}
+			if err := runpostgres.Migrate(ctx, pool); !errors.Is(err, runpostgres.ErrSchemaDrift) {
+				t.Fatalf("same-name weak verifier-run deduplication index passed migration: %v", err)
+			}
+		})
+	}
+}
