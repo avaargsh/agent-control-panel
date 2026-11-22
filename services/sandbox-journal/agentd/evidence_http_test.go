@@ -133,6 +133,29 @@ func fetchOriginalEvidence(t *testing.T, client *http.Client, server *httptest.S
 	return res.StatusCode, exported
 }
 
+func TestEvidenceMTLSRejectsDatabaseLoginMappedToAnotherTenant(t *testing.T) {
+	db := testDatabase(t)
+	cmd, ref := startOwnedTestProcess(t, "10")
+	defer func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }()
+	seedAlreadyAuthorizedAttempt(t, db, ref)
+	public, private := testSourceInspectKey(t)
+	ev, err := InspectAndJournal(context.Background(), db, ref, public, private)
+	if err != nil {
+		t.Fatal(err)
+	}
+	head := InspectHead{InspectCount: 1, JournalVersion: 1, Digest: ev.Digest}
+	// The TLS identity is valid for tenant A, but this handler's PostgreSQL
+	// LOGIN is owner-mapped to tenant B. It must fail before any source read.
+	reader := newEvidenceReaderPool(t, db, "agentd-tenant-b")
+	server, ca := newAuthenticTLSFixture(t, reader, public,
+		func(_ context.Context, _ Ref) (InspectHead, error) { return head, nil })
+	client := clientWithRunIdentity(t, server, ca, ref.TenantID, ref.RunID)
+	status, _ := fetchOriginalEvidence(t, client, server, ref)
+	if status != http.StatusServiceUnavailable {
+		t.Fatalf("tenant A mTLS identity used a tenant B database LOGIN: HTTP %d", status)
+	}
+}
+
 func TestEvidenceMTLSReadOnlyUnknownHoldRequiresPinnedHeadAndSameRun(t *testing.T) {
 	db := testDatabase(t)
 	cmd, ref := startOwnedTestProcess(t, "10")
