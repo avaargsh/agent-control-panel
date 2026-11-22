@@ -4,9 +4,9 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
-	"strings"
 
 	"github.com/avaargsh/agent-control-panel/internal/postfault"
 )
