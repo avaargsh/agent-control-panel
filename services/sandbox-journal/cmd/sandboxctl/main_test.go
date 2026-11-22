@@ -368,4 +368,37 @@ func TestSandboxctlRejectsShadowSchemaReadRoleBypass(t *testing.T) {
 	if err := verifySandboxReadRole(ctx, pool); err != nil {
 		t.Fatalf("revoking foreign column SELECT did not restore dedicated read role: %v", err)
 	}
+	// A PostgreSQL predefined capability group is independent of ordinary
+	// table/sequence ACLs. The diagnostic LOGIN must not accept OS command
+	// execution, server file access or backend signaling memberships even when
+	// its four Sandbox table grants are otherwise SELECT-only. Tests inspect
+	// the actual PG16 membership, without running an OS command or signal.
+	for _, elevatedRole := range []string{
+		"pg_execute_server_program",
+		"pg_write_server_files",
+		"pg_read_server_files",
+		"pg_signal_backend",
+	} {
+		t.Run(elevatedRole, func(t *testing.T) {
+			if _, err := owner.Exec(ctx, "GRANT "+elevatedRole+" TO "+username); err != nil {
+				t.Fatalf("grant real PostgreSQL capability group: %v", err)
+			}
+			defer func() {
+				_, _ = owner.Exec(context.Background(), "REVOKE "+elevatedRole+" FROM "+username)
+			}()
+			var member bool
+			if err := pool.QueryRow(ctx, `SELECT pg_has_role(session_user,$1::name,'MEMBER')`, elevatedRole).Scan(&member); err != nil || !member {
+				t.Fatalf("fixture lacks expected real capability membership: member=%t err=%v", member, err)
+			}
+			if err := verifySandboxReadRole(ctx, pool); err == nil {
+				t.Fatalf("predefined capability %s bypassed SELECT-only sandboxctl fence", elevatedRole)
+			}
+			if _, err := owner.Exec(ctx, "REVOKE "+elevatedRole+" FROM "+username); err != nil {
+				t.Fatal(err)
+			}
+			if err := verifySandboxReadRole(ctx, pool); err != nil {
+				t.Fatalf("revoking %s did not restore safe reader: %v", elevatedRole, err)
+			}
+		})
+	}
 }
