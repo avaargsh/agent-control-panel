@@ -211,7 +211,6 @@ func TestPostgresAttemptExpiresOnDatabaseClock(t *testing.T) {
 	}
 }
 
-
 // Issue errors must preserve the PostgreSQL cause as well as the package-level
 // fail-closed classification so operators can distinguish schema drift.
 func TestPostgresIssuePreservesJournalWriteError(t *testing.T) {
