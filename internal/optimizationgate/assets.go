@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"reflect"
 )
 
@@ -14,11 +15,14 @@ const maxEvidenceBytes = 32 << 20
 
 var ErrEvidenceInvalid = errors.New("independent raw evaluation evidence is missing or invalid")
 
-// EvidenceReader is a trusted, host-injected capability to load immutable,
-// content-addressed evaluation artifacts. Agent-supplied readers and
-// candidate-controlled object stores are NOT independent proof.
+// EvidenceReader is a trusted, host-injected *streaming* capability for
+// immutable, content-addressed evaluation artifacts. An implementation MUST
+// avoid eagerly buffering a remote object in OpenEvidence and MUST respect
+// context cancellation. Agent-supplied readers/candidate-owned stores are NOT
+// independent proof. The verifier bounds bytes consumed from the returned
+// stream; independent IAM and object-retention are separate host obligations.
 type EvidenceReader interface {
-	ReadEvidence(context.Context, string) ([]byte, error)
+	OpenEvidence(context.Context, string) (io.ReadCloser, error)
 }
 
 // VerifyReviewEvidenceWithAssets extends the offline signed-claim check by
@@ -47,22 +51,38 @@ func VerifyReviewEvidenceWithAssets(
 		if err := ctx.Err(); err != nil {
 			return EvaluationReceipt{}, err
 		}
-		raw, err := reader.ReadEvidence(ctx, claimed)
+		stream, err := reader.OpenEvidence(ctx, claimed)
 		if err != nil {
-			return EvaluationReceipt{}, fmt.Errorf("%w: evidence fetch failed: %v", ErrEvidenceInvalid, err)
+			if evidenceReaderConfigured(stream) {
+				_ = stream.Close()
+			}
+			return EvaluationReceipt{}, fmt.Errorf("%w: evidence open failed: %v", ErrEvidenceInvalid, err)
 		}
-		if len(raw) == 0 || len(raw) > maxEvidenceBytes {
+		if !evidenceReaderConfigured(stream) {
 			return EvaluationReceipt{}, ErrEvidenceInvalid
 		}
-		hash := sha256.Sum256(raw)
-		if claimed != "sha256:"+hex.EncodeToString(hash[:]) {
+		hash := sha256.New()
+		// CopyN internally limits the source to maxEvidenceBytes+1. We
+		// never materialize an unbounded object in the verifier process.
+		// The extra byte distinguishes an exactly-full valid artifact
+		// from an oversized stream, even if the remote reader never EOFs.
+		size, readErr := io.CopyN(hash, stream, int64(maxEvidenceBytes)+1)
+		closeErr := stream.Close()
+		if err := ctx.Err(); err != nil {
+			return EvaluationReceipt{}, err
+		}
+		if size == 0 || size > int64(maxEvidenceBytes) ||
+			(readErr != nil && !errors.Is(readErr, io.EOF)) || closeErr != nil {
+			return EvaluationReceipt{}, ErrEvidenceInvalid
+		}
+		if claimed != "sha256:"+hex.EncodeToString(hash.Sum(nil)) {
 			return EvaluationReceipt{}, ErrEvidenceInvalid
 		}
 	}
 	return receipt, nil
 }
 
-func evidenceReaderConfigured(reader EvidenceReader) bool {
+func evidenceReaderConfigured(reader any) bool {
 	if reader == nil {
 		return false
 	}
