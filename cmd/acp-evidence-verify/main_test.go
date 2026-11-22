@@ -57,3 +57,21 @@ func TestCLIRequiresPairedIndependentArchiveInputs(t *testing.T) {
 		}
 	}
 }
+
+
+func TestCLIRequireLinkedOptInDoesNotSilentlyFallBackOrTrustArchive(t *testing.T) {
+	base := []string{
+		"--package", "missing.json",
+		"--expected", "missing.json",
+		"--trust-dir", "missing-trust",
+		"--require-linked",
+	}
+	if err := run(base); err == nil || !strings.Contains(err.Error(), "signed evidence package unavailable") {
+		t.Fatalf("linked flag must be parsed and fail closed on absent owner evidence: %v", err)
+	}
+	withArchive := append(append([]string(nil), base...),
+		"--archive-seal", "seal.json", "--archive-pub", "archiver.pub")
+	if err := run(withArchive); err == nil || !strings.Contains(err.Error(), "live-only") {
+		t.Fatalf("linked gate must not silently bypass itself under historical archive mode: %v", err)
+	}
+}
