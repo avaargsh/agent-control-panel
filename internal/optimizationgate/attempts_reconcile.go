@@ -73,10 +73,10 @@ func (s *AttemptStore) ReconcileReviewAttempt(
 		return "", ErrAttemptUnavailable
 	}
 	if err != nil {
-		return "", fmt.Errorf("%w: read attempt journal: %v", ErrAttemptUnconfigured, err)
+		return "", fmt.Errorf("%w: read attempt journal: %w", ErrAttemptUnconfigured, err)
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return "", fmt.Errorf("%w: commit read-only reconciliation: %v", ErrAttemptUnconfigured, err)
+		return "", fmt.Errorf("%w: commit read-only reconciliation: %w", ErrAttemptUnconfigured, err)
 	}
 	if !consumed.Valid {
 		if expired {
