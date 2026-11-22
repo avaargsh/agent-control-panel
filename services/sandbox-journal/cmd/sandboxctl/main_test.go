@@ -413,10 +413,71 @@ func TestSandboxctlRejectsShadowSchemaReadRoleBypass(t *testing.T) {
 	if err := verifySandboxReadRole(ctx, pool); err == nil {
 		t.Fatal("SET ROLE to NOINHERIT foreign writer bypassed exact-four-table reader preflight")
 	}
+	// Membership remains, but removing the dangerous *group grant*
+	// should restore this login's read-only status without removing it.
+	if _, err := owner.Exec(ctx, "REVOKE INSERT ON "+externalTable+" FROM "+delegated); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifySandboxReadRole(ctx, pool); err != nil {
+		t.Fatalf("revoking delegated foreign INSERT did not restore reader: %v", err)
+	}
+	if _, err := owner.Exec(ctx, "GRANT USAGE ON SEQUENCE "+seq+" TO "+delegated); err != nil {
+		t.Fatal(err)
+	}
+	writer, err := probe.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writer.Exec(ctx, "SET ROLE "+delegated); err != nil {
+		writer.Release()
+		t.Fatal(err)
+	}
+	sequenceErr := writer.QueryRow(ctx, "SELECT nextval($1::regclass)", seq).Scan(&advanced)
+	_, resetErr = writer.Exec(ctx, "RESET ROLE")
+	writer.Release()
+	if sequenceErr != nil || resetErr != nil {
+		t.Fatalf("delegated sequence mutation unavailable: nextval=%v reset=%v", sequenceErr, resetErr)
+	}
+	if err := verifySandboxReadRole(ctx, pool); err == nil {
+		t.Fatal("NOINHERIT SET ROLE delegated sequence USAGE bypassed reader fence")
+	}
+	if _, err := owner.Exec(ctx, "REVOKE USAGE ON SEQUENCE "+seq+" FROM "+delegated); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifySandboxReadRole(ctx, pool); err != nil {
+		t.Fatalf("revoking delegated sequence privilege did not restore reader: %v", err)
+	}
+
+	if _, err := owner.Exec(ctx, "GRANT EXECUTE ON FUNCTION "+functionName+"() TO "+delegated); err != nil {
+		t.Fatal(err)
+	}
+	writer, err = probe.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writer.Exec(ctx, "SET ROLE "+delegated); err != nil {
+		writer.Release()
+		t.Fatal(err)
+	}
+	definerErr := writer.QueryRow(ctx, "SELECT "+functionName+"()").Scan(&canary)
+	_, resetErr = writer.Exec(ctx, "RESET ROLE")
+	writer.Release()
+	if definerErr != nil || resetErr != nil || canary != "sandbox-definer-canary" {
+		t.Fatalf("delegated SECURITY DEFINER escape unavailable: data=%q read=%v reset=%v", canary, definerErr, resetErr)
+	}
+	if err := verifySandboxReadRole(ctx, pool); err == nil {
+		t.Fatal("NOINHERIT SET ROLE definer function bypassed reader fence")
+	}
+	if _, err := owner.Exec(ctx, "REVOKE EXECUTE ON FUNCTION "+functionName+"() FROM "+delegated); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifySandboxReadRole(ctx, pool); err != nil {
+		t.Fatalf("revoking delegated SECURITY DEFINER privilege did not restore reader: %v", err)
+	}
 	if _, err := owner.Exec(ctx, "REVOKE "+delegated+" FROM "+username); err != nil {
 		t.Fatal(err)
 	}
 	if err := verifySandboxReadRole(ctx, pool); err != nil {
-		t.Fatalf("revoking delegated SET ROLE foreign writer did not restore reader: %v", err)
+		t.Fatalf("revoking delegated SET ROLE membership did not restore reader: %v", err)
 	}
 }
