@@ -612,8 +612,24 @@ func TestAuthorityHTTPRejectsRuntimeRoleDrift(t *testing.T) {
 					schema+".outbox_events").Scan(&privilegeChanged); err != nil || !privilegeChanged {
 					t.Fatalf("independent administrator DCL was not committed: privilege=%v err=%v", privilegeChanged, err)
 				}
+				// Do not confuse an HTTP 200 with an authentic signed
+				// publication: verify the returned post-GRANT payload with
+				// the independently pinned Ed25519 test public key.
+				signedAfterDCL := false
+				if publication && status == http.StatusOK {
+					var signed authorityhttp.SignedPublication
+					if err := json.Unmarshal(body, &signed); err != nil {
+						t.Fatalf("post-DCL publication did not decode: %v", err)
+					}
+					pub := ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey)
+					signedAfterDCL = len(signed.Payload) > 0 &&
+						ed25519.Verify(pub, signed.Payload, signed.Signature)
+					if !signedAfterDCL {
+						t.Fatal("post-DCL HTTP 200 contained no authentic signed publication")
+					}
+				}
 				if status != http.StatusServiceUnavailable {
-					t.Fatalf("P0 final-check TOCTOU %s: expected 503, got HTTP %d with %d response bytes after committed GRANT following the final role attestation", name, status, len(body))
+					t.Fatalf("P0 final-check TOCTOU %s: expected 503, got HTTP %d with %d response bytes after committed GRANT following final attestation; authentic_signed_publication=%v", name, status, len(body), signedAfterDCL)
 				}
 				if strings.Contains(string(body), "\"signature\"") || strings.Contains(string(body), "\"payload\"") {
 					t.Fatal("denied final-check DCL request leaked signed publication fields")
