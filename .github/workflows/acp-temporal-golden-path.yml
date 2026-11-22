@@ -5,7 +5,9 @@ on:
     paths:
       - 'internal/runtimeinspect/**'
       - 'internal/postfault/**'
+      - 'internal/evidencepackage/**'
       - 'cmd/acp-postfault-verify/**'
+      - 'cmd/acp-evidence-verify/**'
       - 'internal/admission/**'
       - 'internal/authorityhttp/**'
       - 'cmd/acp-authority-api/**'
@@ -131,6 +133,9 @@ jobs:
       - name: Compile independent post-fault continuity verifier
         working-directory: acp
         run: go build -trimpath -o "$RUNNER_TEMP/acp-postfault-verify" ./cmd/acp-postfault-verify
+      - name: Compile independent G01-G05 evidence package verifier
+        working-directory: acp
+        run: go build -trimpath -o "$RUNNER_TEMP/acp-evidence-verify" ./cmd/acp-evidence-verify
       - name: Require same-Run Sandbox workspace, Command UNKNOWN and Guard Epoch proof
         # Intentionally not continue-on-error. This is the extended recovery
         # gate, not a static fixture or a synthetic replacement for providers.
@@ -144,6 +149,18 @@ jobs:
             exit 1
           fi
           "$RUNNER_TEMP/acp-postfault-verify" --bundle "$bundle" --expected "$expected" --trust-dir "$trust"
+      - name: Require original signed G01-G05 lifecycle Evidence Package
+        # This is a second independent gate, NOT a fixture-to-green adapter.
+        run: |
+          set -euo pipefail
+          package="$RUNNER_TEMP/acp-evidence/package.json"
+          expected="$RUNNER_TEMP/acp-evidence/expected.json"
+          trust="$RUNNER_TEMP/acp-evidence/trust"
+          if [ ! -s "$package" ] || [ ! -s "$expected" ] || [ ! -d "$trust" ]; then
+            echo "::error::G01-G05 EVIDENCE BLOCKED: no same-Run independently signed lifecycle, Sandbox and Compute release artifacts. Source-owned physical provider inspection is still required."
+            exit 1
+          fi
+          "$RUNNER_TEMP/acp-evidence-verify" --package "$package" --expected "$expected" --trust-dir "$trust"
 
 
 # One pinned Runtime candidate provides v12 API and business driver.
