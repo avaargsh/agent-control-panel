@@ -305,6 +305,17 @@ func Verify(p Package, e Expected, keys map[string]ed25519.PublicKey, now time.T
 		guardReleased.ObservedAt.Before(resumed.ObservedAt) {
 		return reject("G03/G04: protected operation settlement not observed")
 	}
+	// Independently signed, fresh observations can still be captured AFTER
+	// a purported settlement. Merely verifying all signatures and Run IDs
+	// would let a package present later AgentD Inspect / Guard revalidation
+	// as if they justified an earlier protected-operation settlement.
+	// This is a necessary timestamp consistency fence, not proof of real
+	// execution or a substitute for authenticated source clocks.
+	for _, authority := range []string{"runtime", "sandbox", "agentd", "guard"} {
+		if guardReleased.ObservedAt.Before(postfaultAfter[authority].ObservedAt) {
+			return reject("G03/G04: settlement predates signed postfault recovery proof")
+		}
+	}
 	if sandboxReleased.Status != "RELEASED" || !sandboxReleased.ProviderAbsent ||
 		sandboxReleased.SandboxUID != postSandbox.SandboxUID ||
 		sandboxReleased.ObservedAt.Before(guardReleased.ObservedAt) {
