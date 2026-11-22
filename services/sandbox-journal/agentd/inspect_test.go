@@ -94,7 +94,7 @@ func TestInspectMissingCommittedTerminalRemainsUnknownAndCannotRetry(t *testing.
 	cmd, original := startOwnedTestProcess(t, "0.1")
 	seedAlreadyAuthorizedAttempt(t, pool, original)
 	_ = cmd.Wait() // Actual process disappeared; supervisor NEVER persisted Wait.
-	_, trusted, _ := ed25519.GenerateKey(rand.Reader)
+	trusted, _, _ := ed25519.GenerateKey(rand.Reader)
 	got, err := InspectCommand(context.Background(), pool, original, trusted)
 	if err != nil || got.State != Unknown || got.NextAction != Hold || got.CanRetry ||
 		got.CanDeclareReleased || got.ExitReceiptDigest != "" {
@@ -111,8 +111,8 @@ func TestInspectWrongOriginalAttemptDoesNotExposeOrRebind(t *testing.T) {
 	pool := testDatabase(t)
 	cmd, original := startOwnedTestProcess(t, "0.2")
 	seedAlreadyAuthorizedAttempt(t, pool, original)
-	defer func(){ _ = cmd.Wait() }()
-	_, trusted, _ := ed25519.GenerateKey(rand.Reader)
+	defer func() { _ = cmd.Wait() }()
+	trusted, _, _ := ed25519.GenerateKey(rand.Reader)
 	for _, mutate := range []func(*Ref){
 		func(r *Ref) { r.RunID = "22222222-2222-4222-8222-222222222222" },
 		func(r *Ref) { r.TenantID = "agentd-tenant-b" },
@@ -171,7 +171,7 @@ func TestRealSIGKILLWithoutSourceCommitDoesNotInventExit(t *testing.T) {
 	pool := testDatabase(t)
 	cmd, original := startOwnedTestProcess(t, "10")
 	seedAlreadyAuthorizedAttempt(t, pool, original)
-	_, trusted, _ := ed25519.GenerateKey(rand.Reader)
+	trusted, _, _ := ed25519.GenerateKey(rand.Reader)
 	if err := cmd.Process.Kill(); err != nil {
 		t.Fatal(err)
 	}
