@@ -18,7 +18,7 @@ import (
 // This test requires a distinct PostgreSQL LOGIN. It must not pass through
 // the owner pool used by the source writer or rely on SET ROLE as a substitute
 // for an independently authenticated reader identity.
-func newEvidenceReaderPool(t *testing.T, owner *pgxpool.Pool) *pgxpool.Pool {
+func newEvidenceReaderPool(t *testing.T, owner *pgxpool.Pool, tenantID string) *pgxpool.Pool {
 	t.Helper()
 	role := fmt.Sprintf("acp_agentd_reader_login_%d", time.Now().UnixNano())
 	roleSQL := pgx.Identifier{role}.Sanitize()
@@ -37,6 +37,9 @@ func newEvidenceReaderPool(t *testing.T, owner *pgxpool.Pool) *pgxpool.Pool {
 		t.Fatalf("grant the dedicated tenant-scoped evidence reader role: %v", err)
 	}
 	t.Cleanup(func() {
+		if _, err := owner.Exec(context.Background(), "DELETE FROM public.sandbox_agentd_reader_login_bindings WHERE login_name=$1", role); err != nil {
+			t.Errorf("revoke authenticated AgentD tenant binding: %v", err)
+		}
 		if _, err := owner.Exec(context.Background(), "REVOKE sandbox_agentd_evidence_reader FROM "+roleSQL); err != nil {
 			t.Errorf("revoke evidence reader membership: %v", err)
 		}
@@ -47,6 +50,14 @@ func newEvidenceReaderPool(t *testing.T, owner *pgxpool.Pool) *pgxpool.Pool {
 			t.Errorf("drop evidence reader LOGIN: %v", err)
 		}
 	})
+	if tenantID == "" {
+		t.Fatal("missing owner-provisioned tenant for evidence LOGIN")
+	}
+	binding, err := owner.Exec(ctx, `INSERT INTO public.sandbox_agentd_reader_login_bindings(login_name,login_oid,tenant_id)
+		SELECT r.rolname,r.oid,$2 FROM pg_catalog.pg_roles r WHERE r.rolname=$1`, role, tenantID)
+	if err != nil || binding.RowsAffected() != 1 {
+		t.Fatalf("owner could not bind authenticated reader LOGIN to tenant: rows=%d err=%v", binding.RowsAffected(), err)
+	}
 	cfg, err := pgxpool.ParseConfig(os.Getenv("SANDBOX_JOURNAL_TEST_DSN"))
 	if err != nil {
 		t.Fatal(err)
@@ -88,7 +99,7 @@ func TestEvidenceReaderLoginIsTenantScopedAndReadOnly(t *testing.T) {
 	}
 	_ = ownerTx.Rollback(context.Background())
 
-	reader := newEvidenceReaderPool(t, owner)
+	reader := newEvidenceReaderPool(t, owner, ref.TenantID)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	tx, err := reader.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
