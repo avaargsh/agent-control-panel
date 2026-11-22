@@ -62,6 +62,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 		cfg.ConnConfig.RuntimeParams = map[string]string{}
 	}
 	cfg.ConnConfig.RuntimeParams["default_transaction_read_only"] = "on"
+	// Ignore caller-controlled URL options and role defaults for object lookup.
+	// Pin the real Sandbox tables before pg_temp or any attacker schema.
+	cfg.ConnConfig.RuntimeParams["search_path"] = "pg_catalog,public,pg_temp"
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
@@ -97,16 +100,18 @@ func run(args []string, stdout, stderr io.Writer) int {
 // verifySandboxReadRole checks server-side grants, not application-local
 // transaction flags. The initial session principal must have SELECT on the
 // exact Sandbox-owned read surfaces but no mutation/DDL/role-escalation rights.
+// Always resolve role permissions against source-owned public tables, never
+// unqualified regclass names from a client-supplied PostgreSQL search_path.
 // This is a local operator credential safety gate, NOT tenant authentication,
 // Sandbox lease authority, or proof of an externally trusted provider.
 func verifySandboxReadRole(ctx context.Context, pool *pgxpool.Pool) error {
 	const query = `
 		SELECT current_user = session_user
-		  AND has_schema_privilege(current_user, current_schema(), 'USAGE')
-		  AND has_table_privilege(current_user, 'sandbox_lease_intents'::regclass, 'SELECT')
-		  AND has_table_privilege(current_user, 'sandbox_journal_commands'::regclass, 'SELECT')
-		  AND has_table_privilege(current_user, 'sandbox_lease_intent_events'::regclass, 'SELECT')
-		  AND has_table_privilege(current_user, 'sandbox_journal_outbox'::regclass, 'SELECT')
+		  AND has_schema_privilege(current_user, 'public', 'USAGE')
+		  AND has_table_privilege(current_user, 'public.sandbox_lease_intents'::regclass, 'SELECT')
+		  AND has_table_privilege(current_user, 'public.sandbox_journal_commands'::regclass, 'SELECT')
+		  AND has_table_privilege(current_user, 'public.sandbox_lease_intent_events'::regclass, 'SELECT')
+		  AND has_table_privilege(current_user, 'public.sandbox_journal_outbox'::regclass, 'SELECT')
 		  AND NOT EXISTS (
 		    SELECT 1 FROM pg_roles AS r
 		    WHERE (r.rolname = session_user OR pg_has_role(session_user, r.oid, 'MEMBER'))
@@ -114,15 +119,15 @@ func verifySandboxReadRole(ctx context.Context, pool *pgxpool.Pool) error {
 		        r.rolsuper OR r.rolcreatedb OR r.rolcreaterole OR r.rolreplication OR r.rolbypassrls
 		        OR r.rolname IN ('pg_read_all_data', 'pg_write_all_data', 'pg_monitor')
 		        OR has_database_privilege(r.oid, current_database(), 'CREATE')
-		        OR has_schema_privilege(r.oid, current_schema(), 'CREATE')
-		        OR has_table_privilege(r.oid, 'sandbox_lease_intents'::regclass, 'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
-		        OR has_table_privilege(r.oid, 'sandbox_journal_commands'::regclass, 'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
-		        OR has_table_privilege(r.oid, 'sandbox_lease_intent_events'::regclass, 'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
-		        OR has_table_privilege(r.oid, 'sandbox_journal_outbox'::regclass, 'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
-		        OR has_any_column_privilege(r.oid, 'sandbox_lease_intents'::regclass, 'INSERT,UPDATE,REFERENCES')
-		        OR has_any_column_privilege(r.oid, 'sandbox_journal_commands'::regclass, 'INSERT,UPDATE,REFERENCES')
-		        OR has_any_column_privilege(r.oid, 'sandbox_lease_intent_events'::regclass, 'INSERT,UPDATE,REFERENCES')
-		        OR has_any_column_privilege(r.oid, 'sandbox_journal_outbox'::regclass, 'INSERT,UPDATE,REFERENCES')
+		        OR has_schema_privilege(r.oid, 'public', 'CREATE')
+		        OR has_table_privilege(r.oid, 'public.sandbox_lease_intents'::regclass, 'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+		        OR has_table_privilege(r.oid, 'public.sandbox_journal_commands'::regclass, 'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+		        OR has_table_privilege(r.oid, 'public.sandbox_lease_intent_events'::regclass, 'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+		        OR has_table_privilege(r.oid, 'public.sandbox_journal_outbox'::regclass, 'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+		        OR has_any_column_privilege(r.oid, 'public.sandbox_lease_intents'::regclass, 'INSERT,UPDATE,REFERENCES')
+		        OR has_any_column_privilege(r.oid, 'public.sandbox_journal_commands'::regclass, 'INSERT,UPDATE,REFERENCES')
+		        OR has_any_column_privilege(r.oid, 'public.sandbox_lease_intent_events'::regclass, 'INSERT,UPDATE,REFERENCES')
+		        OR has_any_column_privilege(r.oid, 'public.sandbox_journal_outbox'::regclass, 'INSERT,UPDATE,REFERENCES')
 		      )
 		  )
 	`
