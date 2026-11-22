@@ -41,7 +41,7 @@ func signArchiveFixture(t *testing.T, statement ArchiveStatement, key ed25519.Pr
 		t.Fatal(err)
 	}
 	return ArchiveSeal{
-		PayloadB64: base64.StdEncoding.EncodeToString(raw),
+		PayloadB64:   base64.StdEncoding.EncodeToString(raw),
 		SignatureB64: base64.StdEncoding.EncodeToString(ed25519.Sign(key, append([]byte(ArchiveDomain), raw...))),
 	}
 }
