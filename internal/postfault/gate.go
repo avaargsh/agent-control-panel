@@ -13,6 +13,7 @@ import (
 	"io"
 	"strings"
 	"time"
+	"unicode"
 )
 
 const (
@@ -156,6 +157,25 @@ func StrictDecode(data []byte, dst any) bool {
 	return decodeStrict(data, dst)
 }
 
+// foldedJSONKey canonicalizes Unicode SimpleFold equivalence classes so
+// different JSON member spellings that encoding/json could match to the same
+// struct field cannot overwrite one another in signed evidence. This is
+// linear in input size, unlike comparing every key with every previous key.
+func foldedJSONKey(key string) string {
+	var normalized strings.Builder
+	normalized.Grow(len(key))
+	for _, r := range key {
+		least := r
+		for next := unicode.SimpleFold(r); next != r; next = unicode.SimpleFold(next) {
+			if next < least {
+				least = next
+			}
+		}
+		normalized.WriteRune(least)
+	}
+	return normalized.String()
+}
+
 func decodeStrict(data []byte, dst any) bool {
 	tokens := json.NewDecoder(bytes.NewReader(data))
 	var walk func() error
@@ -177,10 +197,14 @@ func decodeStrict(data []byte, dst any) bool {
 					return err
 				}
 				key, ok := rawKey.(string)
-				if !ok || seen[key] {
-					return errors.New("duplicate or invalid JSON key")
+				if !ok {
+					return errors.New("invalid JSON key")
 				}
-				seen[key] = true
+				folded := foldedJSONKey(key)
+				if seen[folded] {
+					return errors.New("duplicate or case-folded JSON key")
+				}
+				seen[folded] = true
 				if err := walk(); err != nil {
 					return err
 				}
