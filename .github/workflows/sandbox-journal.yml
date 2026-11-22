@@ -77,10 +77,32 @@ jobs:
           fi
       - name: Smoke sandboxctl against isolated PostgreSQL (read-only)
         working-directory: services/sandbox-journal
-        env:
-          SANDBOX_JOURNAL_READ_DSN: ${{ env.SANDBOX_JOURNAL_TEST_DSN }}
         run: |
+          set -euo pipefail
           psql "$SANDBOX_JOURNAL_TEST_DSN" -v ON_ERROR_STOP=1 -f migrations/tests/0001_sandboxctl_smoke.sql
+          # Roles exist only in this disposable PostgreSQL service. The CLI
+          # must never receive the database owner/migration credential.
+          psql "$SANDBOX_JOURNAL_TEST_DSN" -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE ROLE sandbox_ci_reader LOGIN PASSWORD 'sandbox-ci-reader-only' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
+          CREATE ROLE sandbox_ci_writer LOGIN PASSWORD 'sandbox-ci-writer-only' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
+          CREATE ROLE sandbox_ci_delegated LOGIN PASSWORD 'sandbox-ci-delegated' NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
+          GRANT CONNECT ON DATABASE sandbox_journal_ci TO sandbox_ci_reader,sandbox_ci_writer,sandbox_ci_delegated;
+          GRANT USAGE ON SCHEMA public TO sandbox_ci_reader,sandbox_ci_writer,sandbox_ci_delegated;
+          GRANT SELECT ON sandbox_lease_intents,sandbox_journal_commands TO sandbox_ci_reader,sandbox_ci_writer,sandbox_ci_delegated;
+          GRANT UPDATE ON sandbox_journal_commands TO sandbox_ci_writer;
+          GRANT sandbox_ci_writer TO sandbox_ci_delegated;
+          SQL
+          export SANDBOX_JOURNAL_READ_DSN='postgres://sandbox_ci_reader:sandbox-ci-reader-only@127.0.0.1:5432/sandbox_journal_ci?sslmode=disable'
+          for unsafe_dsn in "$SANDBOX_JOURNAL_TEST_DSN" \
+            'postgres://sandbox_ci_writer:sandbox-ci-writer-only@127.0.0.1:5432/sandbox_journal_ci?sslmode=disable' \
+            'postgres://sandbox_ci_delegated:sandbox-ci-delegated@127.0.0.1:5432/sandbox_journal_ci?sslmode=disable'; do
+            if SANDBOX_JOURNAL_READ_DSN="$unsafe_dsn" go run ./cmd/sandboxctl inspect --tenant sandboxctl-smoke --lease-intent lease-smoke-1 --format json >"$RUNNER_TEMP/unsafe-reader.json" 2>"$RUNNER_TEMP/unsafe-reader.err"; then
+              echo 'sandboxctl accepted an overprivileged PostgreSQL account' >&2
+              exit 1
+            fi
+            test ! -s "$RUNNER_TEMP/unsafe-reader.json"
+            grep -q 'READ_SOURCE_UNAVAILABLE' "$RUNNER_TEMP/unsafe-reader.err"
+          done
           go run ./cmd/sandboxctl inspect --tenant sandboxctl-smoke --lease-intent lease-smoke-1 --sandbox-uid sandbox-smoke-1 --command-id command-smoke-1 --format json > "$RUNNER_TEMP/sandboxctl-smoke.json"
           go run ./cmd/sandboxctl inspect --tenant sandboxctl-smoke --lease-intent lease-smoke-1 --format text > "$RUNNER_TEMP/sandboxctl-smoke.txt"
           python3 - "$RUNNER_TEMP/sandboxctl-smoke.json" "$RUNNER_TEMP/sandboxctl-smoke.txt" <<'PY'
