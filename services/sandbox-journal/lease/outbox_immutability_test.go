@@ -2,6 +2,8 @@ package lease
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -51,5 +53,64 @@ func TestLeaseIntentOutboxRejectsOrdinaryMutation(t *testing.T) {
 				t.Fatalf("denied SQL caused history mismatch: %v", err)
 			}
 		})
+	}
+}
+
+func TestLeaseOutboxMigrationRefusesInconsistentExistingHistory(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		tamper string
+	}{
+		{"deleted_original", "DELETE FROM sandbox_lease_intent_events WHERE generation=1"},
+		{"changed_original_payload", `UPDATE sandbox_lease_intent_events SET payload=jsonb_set(payload,'{run_id}','"wrong-run"'::jsonb) WHERE generation=1`},
+		{"unearned_cancellation_event", `INSERT INTO sandbox_lease_intent_events (tenant_id,lease_intent_id,generation,event_type,payload)
+			SELECT tenant_id,lease_intent_id,2,'sandbox.lease-intent.cancelled-before-provision',
+			jsonb_build_object('run_id',run_id,'runtime_attempt_id',runtime_attempt_id,'request_digest',request_digest)
+			FROM sandbox_lease_intents WHERE generation=1`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := testRepository(t)
+			ctx := context.Background()
+			in := sampleIntent()
+			if _, _, err := repo.Create(ctx, in); err != nil {
+				t.Fatal(err)
+			}
+			injectPreexistingLeaseCorruption(t, repo, tc.tamper)
+			migration, err := os.ReadFile(filepath.Join("..", "migrations", "0003_lease_outbox_immutable.sql"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := repo.pool.Exec(ctx, string(migration)); err == nil {
+				t.Fatal("migration sealed corrupted existing lease history")
+			}
+		})
+	}
+}
+
+func TestLeaseOutboxMigrationSafeToReplayOnValidHistory(t *testing.T) {
+	repo := testRepository(t)
+	ctx := context.Background()
+	in := sampleIntent()
+	if _, _, err := repo.Create(ctx, in); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CancelBeforeProvision(ctx, in.TenantID, in.LeaseIntentID, 1); err != nil {
+		t.Fatal(err)
+	}
+	migration, err := os.ReadFile(filepath.Join("..", "migrations", "0003_lease_outbox_immutable.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.pool.Exec(ctx, string(migration)); err != nil {
+		t.Fatalf("idempotent additive migration rejected consistent history: %v", err)
+	}
+	if events(t, repo) != 2 {
+		t.Fatal("idempotent migration changed historical event count")
+	}
+	if _, err := repo.Get(ctx, in.TenantID, in.LeaseIntentID); err != nil {
+		t.Fatalf("valid history unreadable after migration replay: %v", err)
+	}
+	if _, err := repo.pool.Exec(ctx, "DELETE FROM sandbox_lease_intent_events WHERE generation=1"); err == nil {
+		t.Fatal("replayed migration lost append-only trigger")
 	}
 }
