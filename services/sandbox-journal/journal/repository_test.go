@@ -44,8 +44,34 @@ func setup(t *testing.T) *Repository {
 	if _, err = pool.Exec(context.Background(), string(raw)); err != nil {
 		t.Fatal("sandbox-only migration:", err)
 	}
-	if _, err = pool.Exec(context.Background(), "TRUNCATE sandbox_journal_outbox,sandbox_journal_commands CASCADE"); err != nil {
+	// Disposable, owner-only test reset. Migration 0004 forbids ordinary
+	// UPDATE/DELETE/TRUNCATE; tests must never use this DDL as a service API.
+	ctx := context.Background()
+	tx, err := pool.Begin(ctx)
+	if err != nil {
 		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	for _, statement := range []string{
+		"ALTER TABLE sandbox_journal_outbox DISABLE TRIGGER USER",
+		"ALTER TABLE sandbox_journal_commands DISABLE TRIGGER USER",
+		"TRUNCATE sandbox_journal_outbox,sandbox_journal_commands CASCADE",
+		"ALTER TABLE sandbox_journal_commands ENABLE TRIGGER USER",
+		"ALTER TABLE sandbox_journal_outbox ENABLE TRIGGER USER",
+	} {
+		if _, err := tx.Exec(ctx, statement); err != nil {
+			t.Fatal("isolated Journal test reset:", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal("commit isolated Journal test reset:", err)
+	}
+	immutable, err := os.ReadFile(filepath.Join("..", "migrations", "0004_command_journal_outbox_immutable.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, string(immutable)); err != nil {
+		t.Fatal("journal Outbox append-only migration:", err)
 	}
 	return New(pool)
 }
@@ -196,9 +222,9 @@ func TestReplayRefusesCorruptOrMissingCommittedOutbox(t *testing.T) {
 			if _, created, err := repo.RecordPermitUnavailable(context.Background(), in); err != nil || !created {
 				t.Fatalf("initial atomic command+outbox: created=%v err=%v", created, err)
 			}
-			if _, err := repo.pool.Exec(context.Background(), tc.tamper); err != nil {
-				t.Fatalf("inject isolated DB corruption: %v", err)
-			}
+			// Only the disposable PostgreSQL owner may bypass the immutable
+			// trigger for a historical-corruption negative test.
+			injectPreexistingJournalCorruption(t, repo, tc.tamper)
 			if _, created, err := repo.RecordPermitUnavailable(context.Background(), in); created || !errors.Is(err, ErrCorrupt) {
 				t.Fatalf("replay promoted corrupt outbox: created=%v err=%v", created, err)
 			}
