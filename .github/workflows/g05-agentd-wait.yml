@@ -33,7 +33,12 @@ jobs:
       - name: Verify toolchain and formatting
         run: |
           test "$(go env GOVERSION)" = "go1.27.4"
-          test -z "$(gofmt -l internal/postfault/agentd_wait.go internal/postfault/agentd_wait_test.go)"
+          dirty="$(gofmt -l internal/postfault/agentd_wait.go internal/postfault/agentd_wait_test.go)"
+          if [ -n "$dirty" ]; then
+            printf '%s\n' "$dirty"
+            gofmt -d internal/postfault/agentd_wait.go internal/postfault/agentd_wait_test.go
+            exit 1
+          fi
           go mod verify
       - name: Independent signer + original Wait G05 tests
         run: go test -race -count=1 -run '^TestG05' ./internal/postfault
