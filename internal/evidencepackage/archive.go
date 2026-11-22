@@ -10,12 +10,12 @@ import (
 // ArchiveSchema and ArchiveDomain identify the independent capture-time
 // attestation. Neither ACP nor this verifier may issue this attestation.
 const (
-	ArchiveSchema = "acp.evidence-archive-seal/v1"
-	ArchiveDomain = "acp.evidence-archive-seal/v1\x00"
-	maxArchiveSealBytes = 4096
-	maxArchivePackageBytes = 256 << 10
+	ArchiveSchema           = "acp.evidence-archive-seal/v1"
+	ArchiveDomain           = "acp.evidence-archive-seal/v1\x00"
+	maxArchiveSealBytes     = 4096
+	maxArchivePackageBytes  = 256 << 10
 	maxArchiveExpectedBytes = 8192
-	maxArchiveSealDelay = 2 * time.Minute
+	maxArchiveSealDelay     = 2 * time.Minute
 )
 
 // ArchiveStatement is a signed assertion by a separately trusted archival
@@ -24,18 +24,18 @@ const (
 // Signing alone cannot prevent a compromised issuer from backdating: real
 // deployment also requires independent timestamp logging/notarization.
 type ArchiveStatement struct {
-	Schema string `json:"schema"`
-	ArchiveID string `json:"archive_id"`
-	CapturedAt time.Time `json:"captured_at"`
-	SealedAt time.Time `json:"sealed_at"`
-	PackageDigest string `json:"package_digest"`
-	ExpectedDigest string `json:"expected_digest"`
+	Schema         string    `json:"schema"`
+	ArchiveID      string    `json:"archive_id"`
+	CapturedAt     time.Time `json:"captured_at"`
+	SealedAt       time.Time `json:"sealed_at"`
+	PackageDigest  string    `json:"package_digest"`
+	ExpectedDigest string    `json:"expected_digest"`
 }
 
 // ArchiveSeal retains the exact signed bytes, not a reconstructed JSON view.
 // The raw package and expected bindings are independently hash-pinned.
 type ArchiveSeal struct {
-	PayloadB64 string `json:"payload_b64"`
+	PayloadB64   string `json:"payload_b64"`
 	SignatureB64 string `json:"signature_b64"`
 }
 
@@ -97,4 +97,3 @@ func DecodeArchiveSeal(raw []byte) (ArchiveSeal, bool) {
 	}
 	return seal, true
 }
-
