@@ -3,8 +3,8 @@ package optimizationgate
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
