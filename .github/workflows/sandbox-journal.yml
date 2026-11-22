@@ -88,7 +88,7 @@ jobs:
           CREATE ROLE sandbox_ci_delegated LOGIN PASSWORD 'sandbox-ci-delegated' NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
           GRANT CONNECT ON DATABASE sandbox_journal_ci TO sandbox_ci_reader,sandbox_ci_writer,sandbox_ci_delegated;
           GRANT USAGE ON SCHEMA public TO sandbox_ci_reader,sandbox_ci_writer,sandbox_ci_delegated;
-          GRANT SELECT ON sandbox_lease_intents,sandbox_journal_commands TO sandbox_ci_reader,sandbox_ci_writer,sandbox_ci_delegated;
+          GRANT SELECT ON sandbox_lease_intents,sandbox_journal_commands,sandbox_lease_intent_events,sandbox_journal_outbox TO sandbox_ci_reader,sandbox_ci_writer,sandbox_ci_delegated;
           GRANT UPDATE ON sandbox_journal_commands TO sandbox_ci_writer;
           GRANT sandbox_ci_writer TO sandbox_ci_delegated;
           SQL
