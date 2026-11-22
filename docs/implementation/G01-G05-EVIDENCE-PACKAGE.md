@@ -1,10 +1,10 @@
-# G01–G05 same-Run Evidence Package v1 (Draft)
+# G01–G05 same-Run Evidence Package v2 (Draft)
 
 **Status:** local, read-only consistency validator; **NOT** a production gate acceptance. This is an additive verifier on ACP Draft #91, not a new Run, Decision, Guard, Sandbox or Compute authority.
 
 ## What is checked
 
-The verifier accepts one original ACP/Runtime subject, one real Worker SIGKILL fault and one independently supplied original provider allocation binding. It requires exactly **seven source-signed lifecycle statements** in addition to the **eight original signed before/after observations** already required by `internal/postfault`. Each signed exported observation and its native source receipt are included as separate base64 byte strings and checked against an externally trusted Ed25519 owner key, using the exact domain `acp.evidence-observation/v1\x00`. No source may share a signing key with another authority.
+The verifier accepts one original ACP/Runtime subject, one real Worker SIGKILL fault and one independently supplied original provider allocation binding. It requires exactly **seven source-signed lifecycle statements** in addition to the **eight original signed before/after observations** already required by `internal/postfault`. Each signed exported observation and its native source receipt are included as separate base64 byte strings and checked against an externally trusted Ed25519 owner key, using the exact domain `acp.evidence-observation/v2\x00`. No source may share a signing key with another authority.
 
 | Gate | Signed stages | Consistency checked | Still required for actual gate PASS |
 | --- | --- | --- | --- |
@@ -18,9 +18,9 @@ The verifier accepts one original ACP/Runtime subject, one real Worker SIGKILL f
 
 ## Inputs and contract
 
-- `package.json` has schema `acp.evidence-package/v1`: original `subject`, `run_intent_id`, `request_digest`, `fault`, `postfault_b64` (exact signed postfault bundle bytes), and seven `receipts` with `stage`, `authority`, `payload_b64` (the signed export), `original_b64` (opaque unmodified native receipt bytes), `signature_b64`. The signed export contains `original_digest` equal to SHA256 of `original_b64`. The verifier rejects a missing or altered native receipt, even if the export signature remains valid.
-- Each signed source export JSON has schema `acp.evidence-observation/v1`; it binds the same subject, RunIntent, request digest, source/stage, raw source receipt hash and observation timestamp. Stage-specific fields must match the issuing authority and other receipts. The original opaque receipt is retained byte-for-byte; a separate owner-owned exporter must demonstrate its actual provenance and schema. This checker does not attempt to infer that opaque bytes prove a real provider operation.
-- `expected.json` has schema `acp.evidence-expected/v1`: the same independently accepted subject, RunIntent, request digest, actual fault ID/kind/time and original `allocation_id`, `provider_uid`, `provider_generation`. **It must not be copied from package.json**, the model, an untrusted task payload, or the receipt under verification.
+- `package.json` has schema `acp.evidence-package/v2`: original `subject`, `run_intent_id`, `request_digest`, `fault`, `postfault_b64` (exact signed postfault bundle bytes), and seven `receipts` with `stage`, `authority`, `payload_b64` (the signed export), `original_b64` (opaque unmodified native receipt bytes), `signature_b64`. The signed export contains `original_digest` equal to SHA256 of `original_b64`. The verifier rejects a missing or altered native receipt, even if the export signature remains valid.
+- Each signed source export JSON has schema `acp.evidence-observation/v2`; it binds the same subject, RunIntent, request digest, source/stage, raw source receipt hash and observation timestamp. Stage-specific fields must match the issuing authority and other receipts. The original opaque receipt is retained byte-for-byte; a separate owner-owned exporter must demonstrate its actual provenance and schema. This checker does not attempt to infer that opaque bytes prove a real provider operation.
+- `expected.json` has schema `acp.evidence-expected/v2`: the same independently accepted subject, RunIntent, request digest, actual fault ID/kind/time and original `allocation_id`, `provider_uid`, `provider_generation`. **It must not be copied from package.json**, the model, an untrusted task payload, or the receipt under verification.
 - `trust/` contains seven independent, pinned, hex-encoded Ed25519 **public** keys: `acp.pub`, `decision.pub`, `guard.pub`, `runtime.pub`, `sandbox.pub`, `agentd.pub`, `compute.pub`. Private keys never enter ACP, its CLI, this package or CI logs.
 - The postfault bundle remains bound to the same Run and fault and is verified with the existing `postfault.Verify`. Missing or unresolved UNKNOWN, stale/rotated Permit, changed checkpoint, changed sandbox UID, a different provider generation, absent trust root or incomplete release makes the verdict **BLOCKED**.
 
@@ -35,6 +35,12 @@ go run ./cmd/acp-evidence-verify \
 ```
 
 A local test creates **ephemeral test keys and invented provider facts** solely for the parser's positive and negative assertions. It is not live evidence. The live CI gate MUST require real independently signed records; never add fixture generators, skip flags, cached green receipts or `continue-on-error` to make it pass.
+
+## Receipt head version fencing (candidate, not an authoritative writer)
+
+- Each owner-signed exported statement now includes a positive `source_revision`. The **independently obtained** `expected.json` must contain exactly seven `source_revisions` keyed by lifecycle stage (`run`, `decision`, `permit`, `recovery`, `guard_release`, `sandbox_release`, `compute_release`). The checker rejects missing, older or unexpected future revisions even with a valid owner signature. The v2 package/observation/expected schema and signature domain intentionally reject v1 artifacts; no deployed producer migration is claimed.
+- `CompareReceiptHead(current, incoming)` classifies **INSERT / IDEMPOTENT_REPLAY / ADVANCE** and rejects older revision, same-revision/different-byte digests and tenant/Run/stage/authority rebinding. It is read-only. To actually prevent stale overwrites or double records, the **source-owned writer** must apply this under an atomic database CAS/row lock with a unique identity and append-only original bytes. This ACP library neither writes a record nor proves that a remote writer did so.
+- An expected head snapshot constructed from the submitted package is untrusted and invalid by contract. Valid signatures or transport acknowledgement do not imply a passing business verdict or permission to publish a PR. Receipt provenance, source-owned atomic persistence, external PR-to-original-receipt correlation and independent live verification are still blocking.
 
 ## Limitations and next real integration
 
