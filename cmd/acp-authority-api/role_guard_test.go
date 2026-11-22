@@ -119,6 +119,10 @@ func TestAuthorityDatabaseRoleFailClosed(t *testing.T) {
 			"REVOKE UPDATE ON " + schema + ".run_intents FROM " + role},
 		{"read outbox", "GRANT SELECT ON " + schema + ".outbox_events TO " + role,
 			"REVOKE SELECT ON " + schema + ".outbox_events FROM " + role},
+		{"read outbox column only", "GRANT SELECT (payload) ON " + schema + ".outbox_events TO " + role,
+			"REVOKE SELECT (payload) ON " + schema + ".outbox_events FROM " + role},
+		{"update intent column only", "GRANT UPDATE (updated_at) ON " + schema + ".run_intents TO " + role,
+			"REVOKE UPDATE (updated_at) ON " + schema + ".run_intents FROM " + role},
 		{"create schema objects", "GRANT CREATE ON SCHEMA " + schema + " TO " + role,
 			"REVOKE CREATE ON SCHEMA " + schema + " FROM " + role},
 	} {
