@@ -12,7 +12,8 @@ var ErrEvidenceReaderUntrusted = errors.New("AgentD evidence reader database ide
 // verifyEvidenceReaderLogin rejects owner, migrator, superuser, BYPASSRLS and
 // broadly privileged connections before a read endpoint touches source rows.
 // The connection must be an authenticated LOGIN inheriting only the dedicated
-// NOLOGIN evidence-reader role; tenant RLS is then bound with SET LOCAL GUC.
+// NOLOGIN evidence-reader role; RLS uses an owner-managed LOGIN/OID binding.
+// The caller's mutable app.tenant_id GUC is never treated as authentication.
 func verifyEvidenceReaderLogin(ctx context.Context, tx pgx.Tx) error {
 	if tx == nil {
 		return ErrEvidenceReaderUntrusted
@@ -28,6 +29,7 @@ SELECT COALESCE((
      AND NOT r.rolcreatedb
      AND NOT r.rolreplication
      AND pg_has_role(r.oid, 'sandbox_agentd_evidence_reader', 'USAGE')
+     AND public.sandbox_agentd_authenticated_reader_tenant() IS NOT NULL
      AND has_schema_privilege(r.oid, 'public', 'USAGE')
      AND NOT has_schema_privilege(r.oid, 'public', 'CREATE')
      AND NOT has_database_privilege(r.oid, current_database(), 'CREATE')
@@ -107,6 +109,7 @@ SELECT COALESCE((
          AND n.nspname NOT LIKE 'pg_temp_%'
          AND has_schema_privilege(r.oid,n.oid,'USAGE')
          AND has_function_privilege(r.oid,f.oid,'EXECUTE')
+         AND f.oid IS DISTINCT FROM to_regprocedure('public.sandbox_agentd_authenticated_reader_tenant()')
      )
      AND NOT EXISTS (
        SELECT 1
