@@ -205,4 +205,71 @@ REVOKE ALL ON FUNCTION public.sandbox_revoke_lease_login(name, oid)
   FROM PUBLIC, acp_sandbox_lease_writer, acp_sandbox_lease_reader,
        acp_sandbox_command_writer, acp_sandbox_command_reader;
 
+-- The upstream 0010 verifier intentionally audits Lease identity/ACLs only.
+-- After 0011 extends the revoker to Command, the *combined* source-owned
+-- post-COMMIT proof MUST refuse residual direct Command object rights even
+-- when the original Lease-only verifier succeeds. The operator calls this
+-- on an independent connection, after the exact LOGIN/OID revoke commits.
+-- This is a read-only LOCAL DB observation, never Guard/AgentD authority.
+CREATE OR REPLACE FUNCTION public.sandbox_verify_command_login_revocation(
+  p_login name, p_expected_oid oid
+)
+RETURNS boolean LANGUAGE plpgsql SECURITY INVOKER
+SET search_path = pg_catalog, public
+AS $
+BEGIN
+  IF NOT public.sandbox_verify_lease_login_revocation(p_login, p_expected_oid) THEN
+    RAISE EXCEPTION 'upstream Lease LOGIN revocation proof did not succeed'
+      USING ERRCODE = '23514';
+  END IF;
+
+  -- Effective Command table/column grants can outlive NOLOGIN, revoked
+  -- Command Writer/Reader memberships and the tenant-OID mapping. They
+  -- become dangerous if a future DBA re-enables or re-enrols this OID.
+  IF EXISTS (
+    SELECT 1
+    FROM pg_catalog.pg_roles AS r
+    CROSS JOIN (
+      VALUES
+        ('public.sandbox_journal_commands'::regclass),
+        ('public.sandbox_journal_outbox'::regclass)
+    ) AS protected(table_oid)
+    WHERE r.oid = p_expected_oid
+      AND (
+        pg_catalog.has_table_privilege(
+          r.oid, protected.table_oid,
+          'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER'
+        )
+        OR pg_catalog.has_any_column_privilege(
+          r.oid, protected.table_oid, 'SELECT,INSERT,UPDATE,REFERENCES'
+        )
+      )
+  ) THEN
+    RAISE EXCEPTION 'revoked LOGIN retains source-owned Command object privileges'
+      USING ERRCODE = '23514';
+  END IF;
+
+  -- A direct (or PUBLIC) EXECUTE grant to this privileged operator
+  -- verifier must also invalidate the proof if the LOGIN still exists.
+  IF EXISTS (
+    SELECT 1 FROM pg_catalog.pg_roles AS r
+    WHERE r.oid = p_expected_oid
+      AND pg_catalog.has_function_privilege(
+        r.oid,
+        'public.sandbox_verify_command_login_revocation(name,oid)'::regprocedure,
+        'EXECUTE'
+      )
+  ) THEN
+    RAISE EXCEPTION 'revoked LOGIN retains Command verification EXECUTE'
+      USING ERRCODE = '23514';
+  END IF;
+
+  RETURN TRUE;
+END;
+$;
+
+REVOKE ALL ON FUNCTION public.sandbox_verify_command_login_revocation(name, oid)
+  FROM PUBLIC, acp_sandbox_lease_writer, acp_sandbox_lease_reader,
+       acp_sandbox_command_writer, acp_sandbox_command_reader;
+
 COMMIT;
