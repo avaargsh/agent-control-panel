@@ -37,7 +37,10 @@ func (s *AttemptStore) ReconcileReviewAttempt(
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	receipt, err := VerifyReviewEvidenceWithAssets(ctx, trusted, signedReceipt, keys, reader)
+	// Authenticate the bounded signed claim before inspecting the journal.
+	// Do not download external evidence until PostgreSQL proves that this
+	// exact attempt was issued and consumed.
+	receipt, err := VerifyReviewEvidence(trusted, signedReceipt, keys)
 	if err != nil {
 		return "", err
 	}
@@ -46,9 +49,9 @@ func (s *AttemptStore) ReconcileReviewAttempt(
 		return "", err
 	}
 
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
 	if err != nil {
-		return "", fmt.Errorf("%w: begin read-only reconciliation: %v", ErrAttemptUnconfigured, err)
+		return "", fmt.Errorf("%w: begin read-only reconciliation: %w", ErrAttemptUnconfigured, err)
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
 	if err := bindAttemptScope(ctx, tx, trusted); err != nil {
@@ -86,6 +89,11 @@ func (s *AttemptStore) ReconcileReviewAttempt(
 		candidateDigest != receipt.CandidateEvidenceDigest ||
 		verifierRunID != receipt.VerifierRunID {
 		return "", ErrAttemptConflict
+	}
+	// Only a consumed row with an exact receipt match justifies re-reading
+	// the original content-addressed blobs to reconcile an uncertain commit.
+	if _, err := VerifyReviewEvidenceWithAssets(ctx, trusted, signedReceipt, keys, reader); err != nil {
+		return "", err
 	}
 	return AttemptConsumed, nil
 }
