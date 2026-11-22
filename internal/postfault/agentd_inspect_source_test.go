@@ -42,13 +42,13 @@ func g05SourceFixture(t *testing.T) (Bundle, map[string]ed25519.PublicKey, Expec
 	})
 	before := AgentDInspectEvent{
 		Schema: AgentDInspectSchema, Source: "agentd.inspect",
-		Ref: wait.Ref, ObservedAt: b.Fault.At.Add(-2*time.Second).Format(time.RFC3339Nano),
+		Ref: wait.Ref, ObservedAt: b.Fault.At.Add(-2 * time.Second).Format(time.RFC3339Nano),
 		InspectCount: 1, JournalVersion: 1,
 		State: "UNKNOWN", NextAction: "HOLD", DispatchCount: 1,
 	}
 	first := signedInspectSource(t, before, signers["agentd"])
 	after := before
-	after.ObservedAt = b.Fault.At.Add(750*time.Millisecond).Format(time.RFC3339Nano)
+	after.ObservedAt = b.Fault.At.Add(750 * time.Millisecond).Format(time.RFC3339Nano)
 	after.InspectCount, after.JournalVersion = 2, 2
 	after.PreviousDigest = inspectDigest(first.Payload)
 	after.State = "EXITED"
