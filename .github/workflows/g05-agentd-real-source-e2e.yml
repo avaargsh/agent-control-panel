@@ -67,7 +67,7 @@ jobs:
           go mod verify
           (cd source-pinned/services/sandbox-journal && go mod verify)
       - name: Compose real ACP and pinned source Go modules WITHOUT modifying checked-in deps
-        run: go work init . ./source-pinned/services/sandbox-journal
+        run: go work init . ./integration/agentdsourcee2e ./source-pinned/services/sandbox-journal
       - name: Real PG16 journal, Linux Wait, mTLS source Handler and ACP G05
         run: go test -p 1 -race -count=1 -v -run '^TestAgentDRealCrossModule' ./integration/agentdsourcee2e
       - name: Vet complete two-module integration
