@@ -165,7 +165,7 @@ func TestLeaseRuntimeDatabaseRolesDenyEscalationAndPreserveCAS(t *testing.T) {
 		t.Fatalf("tenant-b unable to cancel own intent: %+v %v", got, err)
 	}
 
-	// A role grant by itself is NOT a tenant binding. An authenticated, 
+	// A role grant by itself is NOT a tenant binding. An authenticated,
 	// otherwise valid LOGIN without a DBA-owned mapping sees no rows and
 	// cannot create even a syntactically valid lease intent.
 	const unboundLogin = "sandbox_lease_ci_unbound_login"
