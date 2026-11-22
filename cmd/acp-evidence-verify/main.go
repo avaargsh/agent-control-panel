@@ -46,9 +46,14 @@ func run(args []string) error {
 	pkgPath := flags.String("package", "", "bounded signed evidence package")
 	expectedPath := flags.String("expected", "", "independently sourced exact Run/fault/provider binding")
 	trustDir := flags.String("trust-dir", "", "out-of-band service public keys")
+	archivePath := flags.String("archive-seal", "", "optional independently signed historical capture-time assertion")
+	archivePublicPath := flags.String("archive-pub", "", "optional independently trusted archival issuer public key")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 ||
 		*pkgPath == "" || *expectedPath == "" || *trustDir == "" {
 		return errors.New("--package, --expected and --trust-dir are mandatory")
+	}
+	if (*archivePath == "") != (*archivePublicPath == "") {
+		return errors.New("--archive-seal and --archive-pub must be provided together")
 	}
 	rawPackage, err := readRegular(*pkgPath, maxInput)
 	if err != nil {
@@ -75,6 +80,26 @@ func run(args []string) error {
 		}
 		keys[authority] = ed25519.PublicKey(decoded)
 	}
+	if *archivePath != "" {
+		archiveRaw, err := readRegular(*archivePath, 4096)
+		if err != nil {
+			return errors.New("signed archival time attestation unavailable")
+		}
+		seal, ok := evidencepackage.DecodeArchiveSeal(archiveRaw)
+		if !ok {
+			return errors.New("invalid archival seal JSON")
+		}
+		keyRaw, err := readRegular(*archivePublicPath, 128)
+		if err != nil {
+			return errors.New("independent archival issuer key unavailable")
+		}
+		archiveKey, err := hex.DecodeString(strings.TrimSpace(string(keyRaw)))
+		if err != nil || len(archiveKey) != ed25519.PublicKeySize {
+			return errors.New("invalid archival issuer key")
+		}
+		return evidencepackage.VerifyArchive(rawPackage, rawExpected, seal, keys, archiveKey, time.Now().UTC())
+	}
+	// The default path never accepts a historical capture-time override.
 	return evidencepackage.Verify(pkg, expected, keys, time.Now().UTC())
 }
 
