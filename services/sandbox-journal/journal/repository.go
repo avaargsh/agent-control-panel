@@ -149,22 +149,25 @@ type queryRow interface {
 // binding must remain an error; no repair-by-resend is attempted.
 func verifyCommittedOutbox(ctx context.Context, q queryRow, rec Record) error {
 	var generation int64
-	var eventType, runID, attemptID, requestDigest string
+	var eventType string
+	var payloadExact bool
 	err := q.QueryRow(ctx, `SELECT generation,event_type,
- payload->>'run_id',payload->>'runtime_attempt_id',payload->>'request_digest'
+ payload = jsonb_build_object(
+   'run_id',$5::text,
+   'runtime_attempt_id',$6::text,
+   'request_digest',$7::text)
  FROM sandbox_journal_outbox
  WHERE tenant_id=$1 AND sandbox_uid=$2 AND command_id=$3 AND generation=$4`,
 		rec.Identity.TenantID, rec.Identity.SandboxUID, rec.Identity.CommandID, rec.Generation,
-	).Scan(&generation, &eventType, &runID, &attemptID, &requestDigest)
+		rec.Identity.RunID, rec.Identity.RuntimeAttemptID, rec.Identity.RequestDigest,
+	).Scan(&generation, &eventType, &payloadExact)
 	if err != nil {
-		// Includes a missing event, NULL/invalid typed field or an unavailable
-		// Outbox. Caller must fail closed, never turn this into an idempotent PASS.
+		// Includes missing rows, unexpected NULL values and database errors.
+		// In all cases a missing original fact is NOT authorization to retry.
 		return ErrCorrupt
 	}
 	if generation != int64(rec.Generation) ||
-		eventType != "sandbox.command.permit-unavailable" ||
-		runID != rec.Identity.RunID || attemptID != rec.Identity.RuntimeAttemptID ||
-		requestDigest != rec.Identity.RequestDigest {
+		eventType != "sandbox.command.permit-unavailable" || !payloadExact {
 		return ErrCorrupt
 	}
 	return nil
