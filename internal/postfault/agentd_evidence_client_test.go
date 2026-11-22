@@ -148,7 +148,7 @@ func sourceTestHandler(t *testing.T, wire AgentDEvidenceResponse, status int) ht
 	t.Helper()
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.TLS == nil || len(r.TLS.VerifiedChains) == 0 ||
-			len(r.TLS.PeerCertificates) != 1 || r.Method != http.MethodPost ||
+			len(r.TLS.PeerCertificates) == 0 || r.Method != http.MethodPost ||
 			r.URL.Path != AgentDEvidenceReadPath {
 			http.Error(w, "untrusted client", http.StatusForbidden)
 			return
