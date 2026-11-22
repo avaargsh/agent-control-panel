@@ -226,6 +226,25 @@ func newHandler(reader Reader, publisher *Publisher, peer, tenant string, readGu
 			fail(http.StatusServiceUnavailable, "RUN_AUTHORITY_UNAVAILABLE")
 			return
 		}
+		// A privileged DCL actor may commit GRANT/REVOKE between the first
+		// role attestation and the repository's SQL query. Re-attest after
+		// the catalog read, before emitting an authority response or
+		// constructing/signing a Decision Publication. Never return the
+		// fetched catalog result if this second observation fails.
+		//
+		// This reduces a proven between-check-and-read window. It is NOT
+		// atomic with response emission, a defense against privileged DCL
+		// after the final check, or a substitute for tenant RLS.
+		if readGuard != nil {
+			if err := readGuard(ctx); err != nil {
+				if publication {
+					fail(http.StatusServiceUnavailable, "PUBLICATION_UNAVAILABLE")
+				} else {
+					fail(http.StatusServiceUnavailable, "RUN_AUTHORITY_UNAVAILABLE")
+				}
+				return
+			}
+		}
 		snapshot := Snapshot{
 			SchemaVersion: "acp.run-authority.v1", TenantID: tenant, RunIntentID: ref.RunIntentID,
 			RunID: ref.RunID, RequestDigest: ref.RequestDigest, ProjectID: current.Snapshot.ProjectID,
