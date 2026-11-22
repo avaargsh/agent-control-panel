@@ -20,6 +20,7 @@ func fixture() (BaselinePolicy, EvaluationReceipt, ed25519.PrivateKey, map[strin
 		WorkloadDigest:         "sha256:" + strings.Repeat("e", 64),
 		EnvironmentDigest:      "sha256:" + strings.Repeat("f", 64),
 		VerifierKeyID:          "independent-v1",
+		VerificationNonce:      strings.Repeat("1", 64),
 		ExpectedWorkItems:      100, MinimumQualityPasses: 100, MinimumOutputTokens: 2000,
 	}
 	r := EvaluationReceipt{
@@ -28,6 +29,9 @@ func fixture() (BaselinePolicy, EvaluationReceipt, ed25519.PrivateKey, map[strin
 		IntegrationBaselineSHA: p.IntegrationBaselineSHA, EvaluationDigest: p.EvaluationDigest,
 		WorkloadDigest: p.WorkloadDigest, BaselineEnvironmentDigest: p.EnvironmentDigest,
 		CandidateEnvironmentDigest: p.EnvironmentDigest, VerifierRunID: "independent-run-1",
+		VerificationNonce: p.VerificationNonce,
+		BaselineEvidenceDigest: "sha256:" + strings.Repeat("2", 64),
+		CandidateEvidenceDigest: "sha256:" + strings.Repeat("3", 64),
 		BaselineWorkItems: 100, CandidateWorkItems: 100,
 		BaselineOutputTokens: 2050, CandidateOutputTokens: 2050,
 		BaselineQualityPasses: 100, CandidateQualityPasses: 100,
@@ -60,6 +64,9 @@ func TestValidIndependentEvidenceIsEligibleForReviewOnly(t *testing.T) {
 func TestRejectsInvalidIndependentResults(t *testing.T) {
 	cases := map[string]func(*EvaluationReceipt){
 		"wrong tenant":                  func(r *EvaluationReceipt) { r.TenantID = "tenant-other" },
+		"different verification nonce": func(r *EvaluationReceipt) { r.VerificationNonce = strings.Repeat("2", 64) },
+		"missing baseline evidence": func(r *EvaluationReceipt) { r.BaselineEvidenceDigest = "" },
+		"malformed candidate evidence": func(r *EvaluationReceipt) { r.CandidateEvidenceDigest = "sha256:bad" },
 		"changed candidate sha":         func(r *EvaluationReceipt) { r.CandidateSHA = strings.Repeat("1", 40) },
 		"changed experiment baseline":   func(r *EvaluationReceipt) { r.ExperimentBaselineSHA = strings.Repeat("2", 40) },
 		"changed integration baseline":  func(r *EvaluationReceipt) { r.IntegrationBaselineSHA = strings.Repeat("3", 40) },
@@ -152,11 +159,50 @@ func TestRejectsUnsafeVerifierRunIdentity(t *testing.T) {
 	}
 }
 
+
+func TestRejectsReplayAcrossDistinctVerificationAttempts(t *testing.T) {
+	policy, receipt, key, keys := fixture()
+	oldReceipt := signed(receipt, key)
+	policy.VerificationNonce = strings.Repeat("4", 64)
+	if _, err := VerifyReviewEvidence(policy, oldReceipt, keys); !errors.Is(err, ErrEvaluationFailed) {
+		t.Fatalf("signed result from older attempt was accepted: %v", err)
+	}
+	// The verifier may legitimately re-sign a new result, but it must bind
+	// the specific challenge issued by the trusted attempt authority.
+	receipt.VerificationNonce = strings.Repeat("5", 64)
+	if _, err := VerifyReviewEvidence(policy, signed(receipt, key), keys); !errors.Is(err, ErrEvaluationFailed) {
+		t.Fatalf("wrong signed attempt nonce was accepted: %v", err)
+	}
+}
+
+func TestRejectsNegativeOutputCountsWithoutTokenFloor(t *testing.T) {
+	for name, value := range map[string]int64{"baseline": -1, "candidate": -2} {
+		t.Run(name, func(t *testing.T) {
+			policy, receipt, key, keys := fixture()
+			policy.MinimumOutputTokens = 0
+			if name == "baseline" {
+				receipt.BaselineOutputTokens = value
+			} else {
+				receipt.CandidateOutputTokens = value
+			}
+			if _, err := VerifyReviewEvidence(policy, signed(receipt, key), keys); !errors.Is(err, ErrEvaluationFailed) {
+				t.Fatalf("negative output counts accepted: %v", err)
+			}
+		})
+	}
+}
+
 func TestRejectsUnpinnedBaselinePolicy(t *testing.T) {
 	p, r, k, keys := fixture()
 	p.EvaluationDigest = "main"
 	if _, err := VerifyReviewEvidence(p, signed(r, k), keys); !errors.Is(err, ErrInvalidContract) {
 		t.Fatalf("untrusted rule digest: %v", err)
+	}
+
+	p, r, k, keys = fixture()
+	p.VerificationNonce = "not-an-authority-generated-nonce"
+	if _, err := VerifyReviewEvidence(p, signed(r, k), keys); !errors.Is(err, ErrInvalidContract) {
+		t.Fatalf("unpinned attempt nonce: %v", err)
 	}
 	p, r, k, keys = fixture()
 	p.ExpectedWorkItems = 0
