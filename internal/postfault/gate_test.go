@@ -291,3 +291,31 @@ func TestPostfaultRequiresFreshGuardPermitAndUnchangedRuntimeBreakerEpoch(t *tes
 		})
 	}
 }
+
+func TestStrictDecodeRejectsCaseFoldedDuplicateKeys(t *testing.T) {
+	// encoding/json applies case-insensitive struct-field matching even when
+	// an exact spelling exists. Distinct object keys may therefore overwrite
+	// the same authorization/evidence field across decoders.
+	type commandState struct {
+		Status string `json:"status"`
+	}
+	raw := []byte(`{"status":"UNKNOWN","STATUS":"EXITED"}`)
+	var permissive commandState
+	if err := json.Unmarshal(raw, &permissive); err != nil || permissive.Status != "EXITED" {
+		t.Fatalf("fixture failed to exercise Go case-folded field collision: got=%+v err=%v", permissive, err)
+	}
+	for _, raw := range []string{
+		`{"status":"UNKNOWN","STATUS":"EXITED"}`,
+		`{"runtime":{"recovered":true,"RECOVERED":false}}`,
+		`{"run_id":"run-a","\\u0052un_id":"run-b"}`,
+	} {
+		var decoded any
+		if StrictDecode([]byte(raw), &decoded) {
+			t.Fatalf("signed evidence parser accepted case-insensitive duplicate key: %s", raw)
+		}
+	}
+	var decoded any
+	if !StrictDecode([]byte(`{"status":"UNKNOWN","source":"agentd.inspect"}`), &decoded) {
+		t.Fatal("normal distinct JSON fields unexpectedly rejected")
+	}
+}
