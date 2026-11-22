@@ -73,6 +73,12 @@ func TestAuthorityDatabaseRoleFailClosed(t *testing.T) {
 	if _, err := admin.Exec(ctx, "INSERT INTO "+foreignSchema+".secret VALUES (1, 'foreign-schema-canary')"); err != nil {
 		t.Fatal(err)
 	}
+	// A sequence is not a table/view. USAGE and UPDATE can both grant
+	// nextval() mutation without any table DML privilege.
+	foreignSequence := pgx.Identifier{foreignSchema, "privilege_probe_seq"}.Sanitize()
+	if _, err := admin.Exec(ctx, "CREATE SEQUENCE "+foreignSequence); err != nil {
+		t.Fatal(err)
+	}
 
 	passwordBytes := make([]byte, 24)
 	if _, err := rand.Read(passwordBytes); err != nil {
@@ -126,6 +132,144 @@ func TestAuthorityDatabaseRoleFailClosed(t *testing.T) {
 			t.Fatalf("authority database guard: allowed=%v want=%v err=%v", err == nil, wantAllowed, err)
 		}
 	}
+	check(t, true)
+	// A dedicated login may have no direct SELECT on a sensitive relation
+	// yet read it through a SECURITY DEFINER function. PostgreSQL grants
+	// EXECUTE on new functions to PUBLIC by default; schema USAGE suffices
+	// for this otherwise underprivileged LOGIN to invoke the function.
+	t.Run("callable SECURITY DEFINER cannot bypass readonly role fence", func(t *testing.T) {
+		probe := pgx.Identifier{foreignSchema, "reader_privilege_probe"}.Sanitize()
+		if _, err := admin.Exec(ctx, "CREATE FUNCTION "+probe+
+			"() RETURNS text LANGUAGE sql SECURITY DEFINER SET search_path=pg_catalog AS 'SELECT payload FROM "+
+			pgx.Identifier{foreignSchema, "secret"}.Sanitize()+" LIMIT 1'"); err != nil {
+			t.Fatal(err)
+		}
+		defer admin.Exec(context.Background(), "DROP FUNCTION "+probe+"()")
+		var leaked string
+		if err := reader.QueryRow(ctx, "SELECT "+probe+"()").Scan(&leaked); err != nil || leaked != "foreign-schema-canary" {
+			t.Fatalf("probe did not exercise actual SECURITY DEFINER privilege escalation: value=%q err=%v", leaked, err)
+		}
+		// The role has no direct SELECT on foreignSchema.secret. A callable
+		// definer function must still be rejected at startup.
+		check(t, false)
+		// Test effective access, not the mere existence of a routine:
+		// removing PUBLIC EXECUTE must restore this dedicated reader.
+		if _, err := admin.Exec(ctx, "REVOKE EXECUTE ON FUNCTION "+probe+"() FROM PUBLIC"); err != nil {
+			t.Fatal(err)
+		}
+		check(t, true)
+		// A direct grant must fail again even without PUBLIC EXECUTE.
+		if _, err := admin.Exec(ctx, "GRANT EXECUTE ON FUNCTION "+probe+"() TO "+role); err != nil {
+			t.Fatal(err)
+		}
+		check(t, false)
+		if _, err := admin.Exec(ctx, "REVOKE EXECUTE ON FUNCTION "+probe+"() FROM "+role); err != nil {
+			t.Fatal(err)
+		}
+		check(t, true)
+	})
+	check(t, true)
+	t.Run("foreign sequence grants bypass table-only reader guard", func(t *testing.T) {
+		for _, right := range []string{"USAGE", "UPDATE", "SELECT"} {
+			t.Run(right, func(t *testing.T) {
+				if _, err := admin.Exec(ctx, "GRANT "+right+" ON SEQUENCE "+foreignSequence+" TO "+role); err != nil {
+					t.Fatal(err)
+				}
+				query := "SELECT nextval($1::regclass)"
+				if right == "SELECT" {
+					query = "SELECT last_value FROM " + foreignSequence
+				}
+				var value int64
+				var err error
+				if right == "SELECT" {
+					err = reader.QueryRow(ctx, query).Scan(&value)
+				} else {
+					err = reader.QueryRow(ctx, query, foreignSequence).Scan(&value)
+				}
+				if err != nil || value < 1 {
+					t.Fatalf("actual independently authenticated reader cannot exercise %s sequence privilege: value=%d err=%v", right, value, err)
+				}
+				// Any effective foreign sequence right is outside the
+				// seven-table authority reader's read-only contract.
+				check(t, false)
+				if _, err := admin.Exec(ctx, "REVOKE "+right+" ON SEQUENCE "+foreignSequence+" FROM "+role); err != nil {
+					t.Fatal(err)
+				}
+				check(t, true)
+				if right == "SELECT" {
+					err = reader.QueryRow(ctx, query).Scan(&value)
+				} else {
+					err = reader.QueryRow(ctx, query, foreignSequence).Scan(&value)
+				}
+				var pgErr *pgconn.PgError
+				if !errors.As(err, &pgErr) || pgErr.Code != "42501" {
+					t.Fatalf("sequence %s must fail with SQLSTATE 42501 after revoke: err=%v", right, err)
+				}
+			})
+		}
+	})
+	// Effective PostgreSQL sequence privileges include grants to PUBLIC,
+	// not just direct grants to this LOGIN. Enforce the same deny/revoke
+	// behavior for a PUBLIC-granted side-effectful nextval operation.
+	// A sequence inside the configured application schema has independent ACLs
+	// too. Verify real grant, deny, revoke and SQLSTATE with the separate LOGIN.
+	t.Run("configured schema sequence rights deny dedicated reader", func(t *testing.T) {
+		seq := pgx.Identifier{schema, "privilege_probe_seq"}.Sanitize()
+		if _, err := admin.Exec(ctx, "CREATE SEQUENCE "+seq); err != nil {
+			t.Fatal(err)
+		}
+		defer admin.Exec(context.Background(), "DROP SEQUENCE "+seq)
+		for _, right := range []string{"USAGE", "SELECT", "UPDATE"} {
+			t.Run(right, func(t *testing.T) {
+				if _, err := admin.Exec(ctx, "GRANT "+right+" ON SEQUENCE "+seq+" TO "+role); err != nil {
+					t.Fatal(err)
+				}
+				var value int64
+				var readErr error
+				if right == "SELECT" {
+					readErr = reader.QueryRow(ctx, "SELECT last_value FROM "+seq).Scan(&value)
+				} else {
+					readErr = reader.QueryRow(ctx, "SELECT nextval($1::regclass)", seq).Scan(&value)
+				}
+				if readErr != nil || value < 1 {
+					t.Fatalf("configured schema reader %s right was not effective: value=%d err=%v", right, value, readErr)
+				}
+				check(t, false)
+				if _, err := admin.Exec(ctx, "REVOKE "+right+" ON SEQUENCE "+seq+" FROM "+role); err != nil {
+					t.Fatal(err)
+				}
+				check(t, true)
+				if right == "SELECT" {
+					readErr = reader.QueryRow(ctx, "SELECT last_value FROM "+seq).Scan(&value)
+				} else {
+					readErr = reader.QueryRow(ctx, "SELECT nextval($1::regclass)", seq).Scan(&value)
+				}
+				var pgErr *pgconn.PgError
+				if !errors.As(readErr, &pgErr) || pgErr.Code != "42501" {
+					t.Fatalf("configured schema sequence %s was still accessible after REVOKE: %v", right, readErr)
+				}
+			})
+		}
+	})
+	t.Run("public sequence usage is not read-only authority", func(t *testing.T) {
+		if _, err := admin.Exec(ctx, "GRANT USAGE ON SEQUENCE "+foreignSequence+" TO PUBLIC"); err != nil {
+			t.Fatal(err)
+		}
+		var advanced int64
+		if err := reader.QueryRow(ctx, "SELECT nextval($1::regclass)", foreignSequence).Scan(&advanced); err != nil || advanced < 1 {
+			t.Fatalf("actual PUBLIC-granted sequence mutation not observed: value=%d err=%v", advanced, err)
+		}
+		check(t, false)
+		if _, err := admin.Exec(ctx, "REVOKE USAGE ON SEQUENCE "+foreignSequence+" FROM PUBLIC"); err != nil {
+			t.Fatal(err)
+		}
+		check(t, true)
+		var denied *pgconn.PgError
+		err := reader.QueryRow(ctx, "SELECT nextval($1::regclass)", foreignSequence).Scan(&advanced)
+		if !errors.As(err, &denied) || denied.Code != "42501" {
+			t.Fatalf("PUBLIC sequence usage must deny after revocation: %v", err)
+		}
+	})
 	check(t, true)
 	var databaseName string
 	if err := admin.QueryRow(ctx, "SELECT current_database()").Scan(&databaseName); err != nil {
@@ -208,123 +352,6 @@ func TestAuthorityDatabaseRoleFailClosed(t *testing.T) {
 			check(t, true)
 		})
 	}
-	// PostgreSQL sequences use a distinct privilege model (USAGE/SELECT/UPDATE),
-	// not table SELECT/UPDATE or column grants. Assert both configured and
-	// unrelated application schemas with the independently authenticated LOGIN.
-	for _, seqSchema := range []string{schema, foreignSchema} {
-		seq := seqSchema + ".authority_gate_probe_seq"
-		if _, err := admin.Exec(ctx, "CREATE SEQUENCE "+seq); err != nil {
-			t.Fatal(err)
-		}
-		for _, privilege := range []string{"USAGE", "SELECT", "UPDATE"} {
-			t.Run("sequence/"+seqSchema+"/"+privilege, func(t *testing.T) {
-				if _, err := admin.Exec(ctx, "GRANT "+privilege+" ON SEQUENCE "+seq+" TO "+role); err != nil {
-					t.Fatal(err)
-				}
-				readSequence := func() error {
-					var value int64
-					if privilege == "SELECT" {
-						return reader.QueryRow(ctx, "SELECT last_value FROM "+seq).Scan(&value)
-					}
-					return reader.QueryRow(ctx, "SELECT nextval($1::regclass)", seq).Scan(&value)
-				}
-				if err := readSequence(); err != nil {
-					t.Fatalf("sequence privilege was not effective as reader: %v", err)
-				}
-				check(t, false)
-				if _, err := admin.Exec(ctx, "REVOKE "+privilege+" ON SEQUENCE "+seq+" FROM "+role); err != nil {
-					t.Fatal(err)
-				}
-				var pgErr *pgconn.PgError
-				if err := readSequence(); !errors.As(err, &pgErr) || pgErr.Code != "42501" {
-					t.Fatalf("sequence privilege revoke must deny with SQLSTATE 42501: %v", err)
-				}
-				check(t, true)
-			})
-		}
-	}
-
-	// PUBLIC receives any sequence ACL grant made to everybody, not only
-	// privileges given directly to the independently authenticated LOGIN.
-	// A successful guard after REVOKE also exercises a pg_class catalog
-	// containing both ordinary relations and sequence relkinds.
-	t.Run("public sequence USAGE remains planner-safe", func(t *testing.T) {
-		sequence := foreignSchema + ".authority_gate_probe_seq"
-		if _, err := admin.Exec(ctx, "GRANT USAGE ON SEQUENCE "+sequence+" TO PUBLIC"); err != nil {
-			t.Fatal(err)
-		}
-		var advanced int64
-		if err := reader.QueryRow(ctx, "SELECT nextval($1::regclass)", sequence).Scan(&advanced); err != nil || advanced < 1 {
-			t.Fatalf("PUBLIC sequence USAGE was not effective: value=%d err=%v", advanced, err)
-		}
-		check(t, false)
-		if _, err := admin.Exec(ctx, "REVOKE USAGE ON SEQUENCE "+sequence+" FROM PUBLIC"); err != nil {
-			t.Fatal(err)
-		}
-		var pgErr *pgconn.PgError
-		err := reader.QueryRow(ctx, "SELECT nextval($1::regclass)", sequence).Scan(&advanced)
-		if !errors.As(err, &pgErr) || pgErr.Code != "42501" {
-			t.Fatalf("sequence privilege should be revoked with SQLSTATE 42501: %v", err)
-		}
-		check(t, true)
-	})
-
-	// SECURITY DEFINER functions execute as their owner and are callable by
-	// PUBLIC by default. A read-only LOGIN with EXECUTE can therefore disclose
-	// data it cannot SELECT directly. Probe both the current schema and an
-	// unrelated application schema using real PostgreSQL role credentials.
-	for _, functionSchema := range []string{schema, foreignSchema} {
-		t.Run("security-definer/"+functionSchema, func(t *testing.T) {
-			functionName := functionSchema + ".authority_privilege_probe"
-			create := "CREATE FUNCTION " + functionName + "() RETURNS text " +
-				"LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog " +
-				"AS $acl$ SELECT payload FROM " + foreignSchema + ".secret WHERE id=1 $acl$"
-			if _, err := admin.Exec(ctx, create); err != nil {
-				t.Fatal(err)
-			}
-			defer admin.Exec(context.Background(), "DROP FUNCTION "+functionName+"()")
-			call := func() (string, error) {
-				var value string
-				err := reader.QueryRow(ctx, "SELECT "+functionName+"()").Scan(&value)
-				return value, err
-			}
-			// This is the default PUBLIC EXECUTE grant on newly defined
-			// functions, not an explicit grant to the tested principal.
-			if value, err := call(); err != nil || value != "foreign-schema-canary" {
-				t.Fatalf("default PUBLIC EXECUTE did not expose owner-only data: value=%q err=%v", value, err)
-			}
-			check(t, false)
-			if _, err := admin.Exec(ctx, "REVOKE EXECUTE ON FUNCTION "+functionName+"() FROM PUBLIC"); err != nil {
-				t.Fatal(err)
-			}
-			assertDenied := func() {
-				t.Helper()
-				_, err := call()
-				var pgErr *pgconn.PgError
-				if !errors.As(err, &pgErr) || pgErr.Code != "42501" {
-					t.Fatalf("revoked SECURITY DEFINER EXECUTE should return 42501: %v", err)
-				}
-			}
-			assertDenied()
-			check(t, true)
-
-			// Explicit EXECUTE grant can re-open the same bypass after
-			// PUBLIC was revoked. Verify actual execution, denial, recovery.
-			if _, err := admin.Exec(ctx, "GRANT EXECUTE ON FUNCTION "+functionName+"() TO "+role); err != nil {
-				t.Fatal(err)
-			}
-			if value, err := call(); err != nil || value != "foreign-schema-canary" {
-				t.Fatalf("explicit SECURITY DEFINER grant did not expose owner-only data: value=%q err=%v", value, err)
-			}
-			check(t, false)
-			if _, err := admin.Exec(ctx, "REVOKE EXECUTE ON FUNCTION "+functionName+"() FROM "+role); err != nil {
-				t.Fatal(err)
-			}
-			assertDenied()
-			check(t, true)
-		})
-	}
-
 	if _, err := admin.Exec(ctx, "REVOKE SELECT ON "+schema+".admission_sessions FROM "+role); err != nil {
 		t.Fatal(err)
 	}

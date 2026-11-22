@@ -55,6 +55,41 @@ SELECT COALESCE((
               AND s.nspname NOT LIKE 'pg_temp_%'
               AND has_schema_privilege(s.oid, 'CREATE')
        )
+       -- PostgreSQL grants EXECUTE on new functions to PUBLIC by default.
+       -- A LOGIN without SELECT on foreign business tables can still call an
+       -- owner-privileged SECURITY DEFINER routine and read or write through
+       -- that owner's privileges. A dedicated reader may not execute any
+       -- reachable non-system SECURITY DEFINER function or procedure.
+       -- Both effective schema USAGE and effective routine EXECUTE matter.
+       AND NOT EXISTS (
+           SELECT 1 FROM pg_catalog.pg_proc f
+             JOIN pg_catalog.pg_namespace s ON s.oid = f.pronamespace
+            WHERE f.prosecdef
+              AND s.nspname NOT IN ('pg_catalog', 'information_schema')
+              AND s.nspname NOT LIKE 'pg_toast%'
+              AND s.nspname NOT LIKE 'pg_temp_%'
+              AND has_schema_privilege(s.oid, 'USAGE')
+              AND has_function_privilege(f.oid, 'EXECUTE')
+       )
+       -- Sequence ACLs are independent of table/column privileges.
+       -- USAGE or UPDATE permits nextval() to advance persisted state;
+       -- SELECT permits inspecting sequence state outside this reader's
+       -- exact seven-table allowlist. Reject effective rights anywhere
+       -- in non-system namespaces, including grants through PUBLIC.
+       AND NOT EXISTS (
+           SELECT 1
+             FROM pg_catalog.pg_class c
+             JOIN pg_catalog.pg_namespace s ON s.oid = c.relnamespace
+            WHERE c.relkind = 'S'
+              AND s.nspname NOT IN ('pg_catalog', 'information_schema')
+              AND s.nspname NOT LIKE 'pg_toast%'
+              AND s.nspname NOT LIKE 'pg_temp_%'
+              -- SQL planner may reorder AND predicates: protect the
+              -- sequence-only ACL function from non-sequence relkinds.
+              AND CASE WHEN c.relkind = 'S'
+                       THEN has_sequence_privilege(c.oid, 'SELECT,USAGE,UPDATE')
+                       ELSE false END
+       )
        AND NOT pg_has_role(a.oid, n.nspowner, 'MEMBER')
        -- Even NOINHERIT memberships may permit SET ROLE to a privileged
        -- identity after startup. This dedicated service login must belong
@@ -97,40 +132,6 @@ SELECT COALESCE((
                       'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
                   OR has_any_column_privilege(c.oid, 'SELECT,INSERT,UPDATE,REFERENCES')
               )
-       )
-       -- SECURITY DEFINER routines execute under an owner identity, not
-       -- the caller's table ACL. Default PUBLIC EXECUTE and explicit grants
-       -- are both effective; never allow this authority reader to invoke
-       -- elevated application routines in any non-system schema.
-       AND NOT EXISTS (
-           SELECT 1
-             FROM pg_catalog.pg_proc p
-             JOIN pg_catalog.pg_namespace s ON s.oid = p.pronamespace
-            WHERE p.prosecdef
-              AND s.nspname NOT IN ('pg_catalog', 'information_schema')
-              AND s.nspname NOT LIKE 'pg_toast%'
-              AND s.nspname NOT LIKE 'pg_temp_%'
-              AND has_function_privilege(p.oid, 'EXECUTE')
-       )
-       -- Sequence USAGE/SELECT/UPDATE are not relation or column ACLs.
-       -- A reader with nextval/setval or sequence-reading access can mutate
-       -- or inspect independently scoped state even with no table grants.
-       -- Deny effective sequence privileges in every application schema,
-       -- including the configured catalog schema.
-       AND NOT EXISTS (
-           SELECT 1
-             FROM pg_catalog.pg_class c
-             JOIN pg_catalog.pg_namespace s ON s.oid = c.relnamespace
-            WHERE c.relkind = 'S'
-              AND s.nspname NOT IN ('pg_catalog', 'information_schema')
-              AND s.nspname NOT LIKE 'pg_toast%'
-              AND s.nspname NOT LIKE 'pg_temp_%'
-              -- PostgreSQL may reorder AND predicates during planning;
-              -- never evaluate sequence-only ACL functions on a table,
-              -- view or other non-sequence pg_class entry.
-              AND CASE WHEN c.relkind = 'S'
-                       THEN has_sequence_privilege(c.oid, 'SELECT,USAGE,UPDATE')
-                       ELSE false END
        )
        AND NOT EXISTS (
            SELECT 1 FROM pg_catalog.pg_class c
