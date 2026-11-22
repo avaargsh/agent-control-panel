@@ -117,14 +117,15 @@ func testRepository(t *testing.T) *Repository {
 	if _, err := pool.Exec(ctx, string(revokeMigration)); err != nil {
 		t.Fatal("tenant LOGIN revocation migration:", err)
 	}
-	// The upstream #83 committed-state revocation verifier is installed
-	// after its exact-OID revoker (0009), never substituted with a mock.
+	// The operator must independently verify committed revocation facts
+	// and *actual* authenticated PostgreSQL role/backend state. Never
+	// substitute the revoker's own uncommitted SQL transaction for this.
 	verifyMigration, err := os.ReadFile(filepath.Join("..", "migrations", "0010_tenant_revoke_postcommit_verify.sql"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, string(verifyMigration)); err != nil {
-		t.Fatal("tenant LOGIN independent post-commit verify migration:", err)
+		t.Fatal("tenant LOGIN post-commit verification migration:", err)
 	}
 	return New(pool)
 }
