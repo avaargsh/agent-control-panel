@@ -66,7 +66,7 @@ func VerifyReviewEvidenceWithAssets(
 		// never materialize an unbounded object in the verifier process.
 		// The extra byte distinguishes an exactly-full valid artifact
 		// from an oversized stream, even if the remote reader never EOFs.
-		size, readErr := io.CopyN(hash, stream, int64(maxEvidenceBytes)+1)
+		size, readErr := io.CopyN(hash, contextCheckedEvidenceReader{ctx: ctx, source: stream}, int64(maxEvidenceBytes)+1)
 		closeErr := stream.Close()
 		if err := ctx.Err(); err != nil {
 			return EvaluationReceipt{}, err
@@ -93,4 +93,18 @@ func evidenceReaderConfigured(reader any) bool {
 	default:
 		return true
 	}
+}
+// contextCheckedEvidenceReader checks for cancellation before each source read.
+// A provider must still support cancellation of an already-blocked Read itself;
+// this wrapper prevents additional network or disk reads after cancellation.
+type contextCheckedEvidenceReader struct {
+	ctx    context.Context
+	source io.Reader
+}
+
+func (r contextCheckedEvidenceReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.source.Read(p)
 }
