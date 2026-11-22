@@ -137,6 +137,7 @@ func scan(row pgx.Row) (Record, error) {
 	rec.Generation = uint64(generation)
 	return rec, nil
 }
+
 // queryRow is implemented by both pgx.Tx and pgxpool.Pool. Checks never
 // authorize an effect; they only reject a disconnected historical record.
 type queryRow interface {
