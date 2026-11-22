@@ -209,7 +209,12 @@ func verifySandboxReadRole(ctx context.Context, pool *pgxpool.Pool) error {
 		    WHERE (r.rolname = session_user OR pg_has_role(session_user, r.oid, 'MEMBER'))
 		      AND (
 		        r.rolsuper OR r.rolcreatedb OR r.rolcreaterole OR r.rolreplication OR r.rolbypassrls
-		        OR r.rolname IN ('pg_read_all_data', 'pg_write_all_data', 'pg_monitor')
+		        -- Predefined PostgreSQL roles can signal backends, read/write
+		        -- server files or execute server-side programs despite having
+		        -- no table DML privileges. Deny ALL pg_* capability groups,
+		        -- including ones added by future server versions, rather than
+		        -- maintaining an incomplete hard-coded list.
+		        OR left(r.rolname, 3) = 'pg_'
 		        OR has_database_privilege(r.oid, current_database(), 'CREATE')
 		        OR has_schema_privilege(r.oid, 'public', 'CREATE')
 		        OR has_table_privilege(r.oid, 'public.sandbox_lease_intents'::regclass, 'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
