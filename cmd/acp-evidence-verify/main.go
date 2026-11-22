@@ -3,14 +3,11 @@
 package main
 
 import (
-	"bytes"
 	"crypto/ed25519"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -42,12 +39,6 @@ func readRegular(path string, limit int64) ([]byte, error) {
 	return raw, nil
 }
 
-func strictDecode(raw []byte, target any) bool {
-	d := json.NewDecoder(bytes.NewReader(raw))
-	d.DisallowUnknownFields()
-	return d.Decode(target) == nil && d.Decode(new(any)) == io.EOF
-}
-
 func run(args []string) error {
 	flags := flag.NewFlagSet("acp-evidence-verify", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
@@ -68,7 +59,7 @@ func run(args []string) error {
 	}
 	var pkg evidencepackage.Package
 	var expected evidencepackage.Expected
-	if !strictDecode(rawPackage, &pkg) || !strictDecode(rawExpected, &expected) {
+	if !evidencepackage.StrictDecode(rawPackage, &pkg) || !evidencepackage.StrictDecode(rawExpected, &expected) {
 		return errors.New("invalid strict evidence JSON")
 	}
 	keys := make(map[string]ed25519.PublicKey)
