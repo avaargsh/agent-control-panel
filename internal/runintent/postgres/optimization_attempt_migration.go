@@ -49,6 +49,37 @@ func verifyOptimizationAttemptSchema(ctx context.Context, tx pgx.Tx, source []by
 	if !relation {
 		return ErrSchemaDrift
 	}
+	// A tenant-scoped app.* GUC is not authentication. Until issuer/consumer
+	// service role provisioning is separately approved, migration v13 grants
+	// no table/column/function access to any non-owner, including PUBLIC.
+	// Reject later out-of-band grants on EVERY startup; names and RLS flags
+	// alone cannot detect ACL escalation.
+	var nonOwnerGrants bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM pg_class c
+			CROSS JOIN LATERAL aclexplode(coalesce(c.relacl,acldefault('r',c.relowner))) acl
+			WHERE c.oid=to_regclass('optimization_verification_attempts')
+			  AND acl.grantee<>c.relowner
+		) OR EXISTS (
+			SELECT 1 FROM pg_class c
+			JOIN pg_attribute a ON a.attrelid=c.oid
+			CROSS JOIN LATERAL aclexplode(a.attacl) acl
+			WHERE c.oid=to_regclass('optimization_verification_attempts')
+			  AND a.attnum>0 AND NOT a.attisdropped
+			  AND acl.grantee<>c.relowner
+		) OR EXISTS (
+			SELECT 1 FROM pg_proc p
+			CROSS JOIN LATERAL aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) acl
+			WHERE p.oid=to_regprocedure('reject_optimization_attempt_mutation()')
+			  AND acl.grantee<>p.proowner
+		)
+	`).Scan(&nonOwnerGrants); err != nil {
+		return fmt.Errorf("verify optimization attempt privilege grants: %w", err)
+	}
+	if nonOwnerGrants {
+		return ErrSchemaDrift
+	}
 	var keys bool
 	if err := tx.QueryRow(ctx, `SELECT
 		EXISTS (SELECT 1 FROM pg_constraint c WHERE c.conrelid=to_regclass('optimization_verification_attempts')
