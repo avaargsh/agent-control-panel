@@ -41,6 +41,9 @@ type Expected struct {
 	AllocationID       string            `json:"allocation_id"`
 	ProviderUID        string            `json:"provider_uid"`
 	ProviderGeneration uint64            `json:"provider_generation"`
+	// SourceRevisions is an independently captured, authoritative head for
+	// each stage. A signature without this head does not prevent stale replay.
+	SourceRevisions    map[string]uint64 `json:"source_revisions"`
 }
 
 type Receipt struct {
@@ -74,6 +77,7 @@ type Statement struct {
 	RunIntentID        string            `json:"run_intent_id"`
 	RequestDigest      string            `json:"request_digest"`
 	OriginalDigest     string            `json:"original_digest"`
+	SourceRevision     uint64            `json:"source_revision"`
 	ObservedAt         time.Time         `json:"observed_at"`
 	Status             string            `json:"status"`
 	DecisionID         string            `json:"decision_id,omitempty"`
@@ -185,6 +189,14 @@ func StrictDecode(data []byte, target any) bool {
 	return d.Decode(new(any)) == io.EOF
 }
 func expectedValid(e Expected) bool {
+	if len(e.SourceRevisions) != len(stages) {
+		return false
+	}
+	for _, stage := range stages {
+		if e.SourceRevisions[stage.stage] == 0 {
+			return false
+		}
+	}
 	return e.Schema == ExpectedSchema &&
 		identifier(e.Subject.TenantID) && identifier(e.Subject.RunID) &&
 		identifier(e.Subject.SessionID) && identifier(e.Subject.WorkflowID) &&
@@ -292,7 +304,8 @@ func Verify(p Package, e Expected, keys map[string]ed25519.PublicKey, now time.T
 		}
 		native, err := base64.StdEncoding.Strict().DecodeString(r.OriginalB64)
 		if err != nil || len(native) == 0 || len(native) > maxReceiptBytes ||
-			!digest(s.OriginalDigest) || DigestRaw(native) != s.OriginalDigest {
+			!digest(s.OriginalDigest) || DigestRaw(native) != s.OriginalDigest ||
+			s.SourceRevision != e.SourceRevisions[r.Stage] {
 			return reject("source-native original receipt bytes do not match signed digest")
 		}
 		if r.Stage == "run" || r.Stage == "decision" || r.Stage == "permit" {
