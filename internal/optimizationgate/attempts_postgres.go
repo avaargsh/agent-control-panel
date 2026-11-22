@@ -26,6 +26,9 @@ var (
 // It does not provide any public issue/verify route or release authority.
 type AttemptStore struct {
 	pool *pgxpool.Pool
+	// beginConsume is an internal injection point for commit-outcome tests.
+	// Production NewAttemptStore always uses pool.Begin until this is set.
+	beginConsume func(context.Context) (pgx.Tx, error)
 }
 
 func NewAttemptStore(pool *pgxpool.Pool) *AttemptStore {
