@@ -117,7 +117,6 @@ func TestPostgresReconcileExpiredAttemptFromDatabaseClock(t *testing.T) {
 	}
 }
 
-
 // A journal read failure must retain the underlying PostgreSQL error for
 // callers that distinguish schema/transport failures with errors.As.
 func TestPostgresReconcilePreservesJournalReadError(t *testing.T) {
