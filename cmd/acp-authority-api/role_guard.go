@@ -43,6 +43,12 @@ SELECT COALESCE((
        AND has_schema_privilege(n.oid, 'USAGE')
        AND NOT has_schema_privilege(n.oid, 'CREATE')
        AND NOT pg_has_role(a.oid, n.nspowner, 'MEMBER')
+       -- Even NOINHERIT memberships may permit SET ROLE to a privileged
+       -- identity after startup. This dedicated service login must belong
+       -- to no other database role, including group/NOLOGIN roles.
+       AND NOT EXISTS (
+           SELECT 1 FROM pg_catalog.pg_auth_members m WHERE m.member=a.oid
+       )
        AND (
            SELECT count(*) = (SELECT count(*) FROM required)
               AND COALESCE(bool_and(
