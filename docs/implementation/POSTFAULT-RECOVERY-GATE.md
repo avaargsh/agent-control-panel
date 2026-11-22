@@ -66,3 +66,39 @@ At the time of this change the pinned workflow does not build SandboxService/Age
 - All external repositories and images must be pinned to exact SHA/digest, and a separate reviewer must validate the trust roots, fault transcript and complete negative matrix before any main or production promotion.
 
 **Claim boundary:** A Green contract unit suite means the *checker* works. Only externally signed real Sandbox/AgentD/Guard evidence for the same Run can turn the **full** Golden Path GREEN.
+
+
+## Local physical workspace crash precursor (PR #92)
+
+Draft [#92](https://github.com/avaargsh/agent-control-panel/pull/92) adds a **real Linux OS-process SIGKILL experiment** inside the disposable Go test binary. It is a necessary lower-level storage/process continuity check, **not** the full SandboxService integration required above.
+
+The first fresh process opens an owner-private workspace directory using Linux `openat` and `O_NOFOLLOW`, creates a sentinel file and a durable workspace-binding JSON record with exclusive creation, flushes file contents and directory metadata to disk, then emits its observation. The parent process sends actual SIGKILL and verifies the OS termination signal. A second independent process opens the same directory, verifies the original device/inode, re-reads the durable metadata and physical sentinel bytes, and compares SHA256 plus Tenant/Run/Lease/SandboxUID/Workspace/generation bindings against the original observation.
+
+The negative matrix deliberately modifies the real filesystem or expected authority binding between processes: changed sentinel bytes, replacing the directory while copying identical files, replacing a sentinel with a symlink, wrong RunID, stale generation and wrong SandboxUID must all fail. No mock provider response or in-memory replay can satisfy these assertions.
+
+Reproduce this **local-only** precursor using:
+
+```sh
+go test -race -count=1 -v -run '^TestPhysicalWorkspace(SurvivesWorkerSIGKILL|RecoveryRejectsCorruptionAndStaleBinding)$' ./internal/postfault
+```
+
+The existing ACP Temporal Golden Path CI now also invokes this specific test explicitly **before** the mandatory source-signed full recovery gate. A local PASS does **not** create Sandbox/AgentD/Guard authority receipts, attest a KVM/Pod mount, prove UID lease renewal, reconcile a real externally executed command, or revalidate a genuine Guard Permit. The final step must still report **BLOCKED** until #70/#71/#72 deliver those real producers.
+
+
+### Disposable local filesystem boundary regressions (2026-11-22)
+
+The **test-only** Linux workspace inspector now resolves the absolute root one directory component at a time via directory handles and `O_NOFOLLOW`, rejecting parent symlinks and non-canonical `..` components. Its child-file read only accepts a single relative filename, denying absolute paths, `../`, embedded separators and symlink substitution. An additional concurrent symlink-swap test asserts that a successful read never returns bytes from an external file. The readback also rejects multi-link regular files (`st_nlink != 1`): a sibling tenant's hard-linked inode must not be read merely because `O_NOFOLLOW` accepts it. These checks exercise a local disposable helper, **not** a deployed AgentD filesystem API, a mount-namespace sandbox or a source-signed producer. The real SandboxService/AgentD egress, filesystem traversal and execution permissions remain a separate blocked acceptance gate.
+
+
+## Disposable external OS-command lost-ACK precursor (PR #92)
+
+This **Linux test-only** experiment extends the physical workspace SIGKILL probe without creating or forging an AgentD authority. A fresh child of the Go test binary first persists an explicit `UNKNOWN`, `dispatch_count=1` local record (with Tenant/Run/SandboxUID/CommandID/AttemptID, original workspace device/inode and expected SHA256), fsyncs it, and invokes a real disposable `/bin/sh -c 'printf ...'` process. The command's actual stdout is written once into an owner-private workspace file, then file and directory are fsynced. A harness readiness line is **not a trusted command terminal ACK**. The outer test sends SIGKILL to the actual child process and verifies the kernel-reported termination signal.
+
+A newly launched, separate OS inspector process opens the original workspace through the existing `openat`/`O_NOFOLLOW` path, re-reads both the durable local journal and actual command side-effect bytes, verifies the exact original identities/digest, and **continues to return UNKNOWN, no terminal receipt, can_retry=false, can_declare_success=false**. It does not launch a second command or advance a source-owned journal. Negative cases reject a missing or duplicated side effect, forged terminal receipt, forged second dispatch, wrong Run/Attempt/CommandID, swapped directory with identical file bytes and symlinked effect. The acceptance requires both positive and negative assertions, in addition to prior workspace-only checks.
+
+Reproduce:
+```sh
+go test -race -count=1 -v -run '^(TestLocalUnknownCommandAfterSIGKILLRemainsBlocked|TestLocalUnknownCommandRejectsForgedReconciliation)$' ./internal/postfault
+```
+
+**Do not promote this precursor as a full recovery proof.** The local file named journal is test-generated and unauthenticated; actual external process exit may have occurred, but no independent AgentD/Guard signed terminal receipt exists. It proves the conservative rule: visible side effects following a lost ACK do **not** authorize blind retry or success declaration. Production requires a real SandboxService-owned journal and separately authenticated AgentD InspectCommand response for the same Run, fresh Guard epoch/Permit and independent evidence authority. The Golden Path's mandatory final step remains **BLOCKED** until these are available.

@@ -45,6 +45,7 @@ jobs:
         with:
           path: acp
           persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           repository: avaargsh/agent-control-panel
@@ -70,7 +71,11 @@ jobs:
           path: guard
           persist-credentials: false
       - name: Verify immutable external source pins
+        env:
+          EXPECTED_ACP_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
+          test "$(git -C acp rev-parse HEAD)" = "$EXPECTED_ACP_SOURCE_SHA"
+          printf 'VERIFIED_ACP_SOURCE_HEAD=%s\n' "$EXPECTED_ACP_SOURCE_SHA"
           test "$(git -C issuer-fixture rev-parse HEAD)" = '5b0109cbafcf659f2230f7a38fc560b8644332a9'
           test "$(git -C runtime-api rev-parse HEAD)" = '8e0c25a77f9e17e944e34f836bf83bdbac85ed56'
           test "$(git -C decision rev-parse HEAD)" = '975a052995e1f779413dfe2a7fadba7abafafabc'
@@ -130,6 +135,17 @@ jobs:
           ACP_RUNTIME_TEMPORAL_TEST_BIN: ${{ runner.temp }}/runtime-temporal-acceptance
           PGTEST_DSN: postgres://postgres:acp-test-only@127.0.0.1:5432/acp_golden?sslmode=disable
         run: bash ../issuer-fixture/scripts/test-real-oidc-admission.sh golden-path
+      - name: Real Linux process SIGKILL and physical workspace re-read (local-only precursor)
+        working-directory: acp
+        run: |
+          set -euo pipefail
+          go test -race -count=1 -v -run '^(TestPhysicalWorkspace|TestLocalWorkspaceRejects|TestLocalWorkspaceReadRejects|TestLocalUnknownCommandAfterSIGKILLRemainsBlocked|TestLocalUnknownCommandRejectsForgedReconciliation)' ./internal/postfault | tee "$RUNNER_TEMP/acp-local-workspace.log"
+          grep -q -- '--- PASS: TestPhysicalWorkspaceSurvivesWorkerSIGKILL ' "$RUNNER_TEMP/acp-local-workspace.log"
+          grep -q -- '--- PASS: TestPhysicalWorkspaceRecoveryRejectsCorruptionAndStaleBinding ' "$RUNNER_TEMP/acp-local-workspace.log"
+          grep -q -- '--- PASS: TestLocalWorkspaceRejectsHardLinkedSiblingTenantFile ' "$RUNNER_TEMP/acp-local-workspace.log"
+          grep -q -- '--- PASS: TestLocalUnknownCommandAfterSIGKILLRemainsBlocked ' "$RUNNER_TEMP/acp-local-workspace.log"
+          grep -q -- '--- PASS: TestLocalUnknownCommandRejectsForgedReconciliation ' "$RUNNER_TEMP/acp-local-workspace.log"
+          grep -q -- 'LOCAL_UNKNOWN_COMMAND_SIGKILL_HOLD_CONFIRMED' "$RUNNER_TEMP/acp-local-workspace.log"
       - name: Compile independent post-fault continuity verifier
         working-directory: acp
         run: go build -trimpath -o "$RUNNER_TEMP/acp-postfault-verify" ./cmd/acp-postfault-verify
