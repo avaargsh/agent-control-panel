@@ -3,6 +3,7 @@ package optimizationgate
 import (
 	"context"
 	"crypto/ed25519"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -73,7 +74,7 @@ func attemptFixture(t *testing.T, store *AttemptStore) (BaselinePolicy, []byte, 
 	receipt.BaselineEvidenceDigest = evidenceSHA(baseline)
 	receipt.CandidateEvidenceDigest = evidenceSHA(candidate)
 	return issued, signed(receipt, key), keys, testEvidenceReader{
-		receipt.BaselineEvidenceDigest: baseline,
+		receipt.BaselineEvidenceDigest:  baseline,
 		receipt.CandidateEvidenceDigest: candidate,
 	}
 }
@@ -118,12 +119,20 @@ func TestPostgresAttemptConsumesExactlyOnceUnderConcurrency(t *testing.T) {
 func TestPostgresAttemptRejectsUnknownOrForgedScope(t *testing.T) {
 	store, _ := disposableAttemptStore(t)
 	policy, wire, keys, reader := attemptFixture(t, store)
-	unknown, receipt, key, _ := fixture()
+	unknown := policy
 	unknown.VerificationNonce = strings.Repeat("e", 64)
+	var envelope SignedReceipt
+	if err := json.Unmarshal(wire, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	var receipt EvaluationReceipt
+	if err := json.Unmarshal(envelope.Payload, &receipt); err != nil {
+		t.Fatal(err)
+	}
 	receipt.VerificationNonce = unknown.VerificationNonce
-	raw := signed(receipt, key)
-	if _, err := store.ConsumeReviewEvidence(context.Background(), unknown, raw, keys, reader); !errors.Is(err, ErrAttemptUnavailable) && !errors.Is(err, ErrEvidenceInvalid) {
-		t.Fatalf("unissued attempt was accepted: %v", err)
+	_, _, key, _ := fixture()
+	if _, err := store.ConsumeReviewEvidence(context.Background(), unknown, signed(receipt, key), keys, reader); !errors.Is(err, ErrAttemptUnavailable) {
+		t.Fatalf("unissued but otherwise valid signed attempt should be rejected by PostgreSQL: %v", err)
 	}
 	policy.ProjectID = "project-foreign"
 	if _, err := store.ConsumeReviewEvidence(context.Background(), policy, wire, keys, reader); err == nil {
