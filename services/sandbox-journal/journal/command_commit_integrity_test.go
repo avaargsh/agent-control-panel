@@ -17,6 +17,37 @@ func assertCommandCommitDenied(t *testing.T, err error) {
 	}
 }
 
+// setup() deliberately initializes only the minimal Journal tables. An
+// 0011 installation must respect the whole source-owned migration stack,
+// including 0010's separate Command roles, exactly as the disposable demo.
+func installCommandCommitMigrations(t *testing.T, repo *Repository) []byte {
+	t.Helper()
+	var commitSQL []byte
+	for _, name := range []string{
+		"0002_lease_intents.sql",
+		"0003_lease_outbox_immutable.sql",
+		"0004_lease_runtime_roles.sql",
+		"0006_lease_commit_integrity.sql",
+		"0007_tenant_login_rls.sql",
+		"0008_tenant_login_oid_fence.sql",
+		"0009_tenant_login_revoke_evict.sql",
+		"0010_command_tenant_login_rls.sql",
+		"0011_command_commit_integrity.sql",
+	} {
+		sql, err := os.ReadFile("../migrations/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := repo.pool.Exec(context.Background(), string(sql)); err != nil {
+			t.Fatalf("apply source-owned %s: %v", name, err)
+		}
+		if name == "0011_command_commit_integrity.sql" {
+			commitSQL = sql
+		}
+	}
+	return commitSQL
+}
+
 // An independently authorized Command writer has SQL INSERT rights, but that
 // must not allow it to commit an orphan or forged Outbox by bypassing the Go
 // RecordPermitUnavailable transaction. This negative intentionally fails
@@ -24,18 +55,11 @@ func assertCommandCommitDenied(t *testing.T, err error) {
 func TestCommandCommitRejectsOrphanAndForgedOutbox(t *testing.T) {
 	repo := setup(t)
 	ctx := context.Background()
-	// The real DB migration is applied against the existing committed
-	// Journal history, not replaced with a mocked repository check.
-	migration, err := os.ReadFile("../migrations/0011_command_commit_integrity.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := repo.pool.Exec(ctx, string(migration)); err != nil {
-		t.Fatalf("install owner-only deferred command barrier: %v", err)
-	}
+	// Run the real owner-only migrations, not a mocked Go validation.
+	installCommandCommitMigrations(t, repo)
 	orphan := sample()
 	orphan.CommandID = "direct-sql-orphan"
-	_, err = repo.pool.Exec(ctx, `INSERT INTO public.sandbox_journal_commands
+	_, err := repo.pool.Exec(ctx, `INSERT INTO public.sandbox_journal_commands
 	  (tenant_id,sandbox_uid,command_id,run_id,runtime_attempt_id,request_digest)
 	  VALUES($1,$2,$3,$4,$5,$6)`,
 		orphan.TenantID, orphan.SandboxUID, orphan.CommandID,
@@ -91,10 +115,8 @@ func TestCommandCommitMigrationRefusesHistoricalOrphan(t *testing.T) {
 	ctx := context.Background()
 	legacy := sample()
 	legacy.CommandID = "historical-orphan"
-	raw, err := os.ReadFile("../migrations/0011_command_commit_integrity.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
+	raw := installCommandCommitMigrations(t, repo)
+	var err error
 
 	inject := func(disable bool) {
 		t.Helper()
