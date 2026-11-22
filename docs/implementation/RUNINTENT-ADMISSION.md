@@ -118,6 +118,49 @@ DDL or schema ownership. A dedicated LOGIN and actual write denial are
 tested in the isolated live CI; production grants/rotation/RLS remain
 deployment gates.
 
+The authority service now additionally **fails at startup** if its actual
+PostgreSQL LOGIN is privileged (superuser, BYPASSRLS, role/database creator),
+can create objects in the selected schema, owns or inherits ownership of its
+schema/tables, lacks any of its seven required SELECT grants, or has write
+privileges or additional application-table reads in that schema. The separate
+`TestAuthorityDatabaseRoleFailClosed` uses a real, independently authenticated
+LOGIN in an isolated PostgreSQL test database, then adds and revokes excessive
+grants to prove the gate changes its decision. It requires `PGTEST_DSN` and is
+**not** a production deployment or a substitute for tenant-specific RLS.
+A compromised authority service with this read-only role could still read
+other tenants' rows in its granted tables via raw SQL: the mTLS service's
+server-side configured tenant and exact predicates protect its public
+response, not arbitrary SQL issued by a compromised process.
+
+### Multi-tenant isolation: release-blocking acceptance matrix
+
+| Boundary | Existing ACP authority | Required closure / negative proof |
+| --- | --- | --- |
+| Identity and resources | OAuth introspection, exact issuer/subject/client, tenant/project/agent/release/session catalog joins, transactional admission recheck | A and B have real memberships and duplicate logical selectors; A cannot submit, replay, inspect or mutate B; no caller/header/URL-derived tenant authority; dedicated migrations and DB role hardening |
+| Run state | ACP holds RunIntent and verified Run references; Runtime owns Run, Temporal workflows, checkpoints and context | Runtime independently binds Tenant+Project+AgentRelease+Session+Run to persisted state; reject foreign workflow lookup, checkpoint restore, TaskQueue dispatch and session replay; test restarted Worker with both tenants present |
+| Tool and protected actions | ACP publishes release-bound capability evidence; no ACP model-selected permit | Decision/EngageGuard validates exact action scope, resource, Run, policy revision and authorization epoch before every protected effect; revoked and foreign-tenant permits must fail after a paused/recovered Run; UNKNOWN remains unresolved until authoritative reconciliation |
+| Execution substrate | ACP contracts only; Sandbox/AgentD and Compute own physical isolation and operations | Namespace/workload identity, secrets broker, egress deny-by-default, workspace/object-store key policies, quota, independent tenant credentials and post-SIGKILL cleanup; prove tenant A cannot read B files, secrets, network endpoints or GPU allocations using real enforcement |
+| Evidence, logs and usage | Scoped RunIntent/Outbox identity and signed publication references; no unified tenant audit reader | Tenant-aware authorization at query/export paths (not frontend filtering), redaction, encryption, audit of denied reads, immutable correlation and isolation of billing aggregates; prove cross-tenant query, cursor, trace, object-store and export denial |
+
+A database `tenant_id` predicate is not itself RLS. Existing scoped
+Workspace/lock tables have targeted policies, but this repository does **not**
+claim row-level isolation of every RunIntent, Outbox, catalog or telemetry table.
+Do not roll out global `FORCE ROW LEVEL SECURITY` without first giving
+admission/dispatcher/publisher distinct non-owner roles, transaction-scoped
+trusted authorization context, and regression tests for async workers. An
+application-settable `app.tenant_id` is not an authentication boundary.
+
+The minimum **two-tenant Golden Path** is: provision independently authenticated
+A/B identities and identical user-visible resource names; admit A; spoof B
+in headers, payloads, Run and checkpoint IDs, tool arguments, approval epochs,
+sandbox paths, observability queries and exported evidence. Every foreign
+operation must return 403/404 or another documented fail-closed result with
+zero foreign rows/bytes and no protected side effect, while legitimate same-
+tenant work, replay and Worker recovery continue to succeed. Record the
+exact ACP/Runtime/Guard/Sandbox commit SHAs, actual role identities, test
+artifacts and denied-operation audits. No G01–G05 or production multi-tenant
+security certification is implied by this single ACP-side role gate.
+
 `GET /internal/v1/run-authority/{run_intent_id}?run_id=...&request_digest=...`
 requires verified TLS 1.3 and the exact configured SPIFFE peer. Tenant is
 never a request field. It returns version `acp.run-authority.v1` with
