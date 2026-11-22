@@ -64,6 +64,27 @@ SELECT COALESCE((
             WHERE c.relnamespace = n.oid
               AND c.relname IN (SELECT name FROM required)
        )
+       -- Reject effective grants on application relations outside the
+       -- configured catalog schema as well. Checking current_schema()
+       -- alone lets a read-only login keep unrelated cross-schema access.
+       -- Built-in catalog and ephemeral PostgreSQL namespaces are not
+       -- business data schemas and have their own system ACL semantics.
+       AND NOT EXISTS (
+           SELECT 1
+             FROM pg_catalog.pg_class c
+             JOIN pg_catalog.pg_namespace s ON s.oid = c.relnamespace
+            WHERE s.oid <> n.oid
+              AND s.nspname NOT IN ('pg_catalog', 'information_schema')
+              AND s.nspname NOT LIKE 'pg_toast%'
+              AND s.nspname NOT LIKE 'pg_temp_%'
+              AND c.relkind IN ('r','p','v','m','f')
+              AND (
+                  has_table_privilege(c.oid, 'SELECT')
+                  OR has_table_privilege(c.oid,
+                      'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+                  OR has_any_column_privilege(c.oid, 'SELECT,INSERT,UPDATE,REFERENCES')
+              )
+       )
        AND NOT EXISTS (
            SELECT 1 FROM pg_catalog.pg_class c
             WHERE c.relnamespace = n.oid
