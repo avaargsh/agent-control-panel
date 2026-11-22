@@ -24,6 +24,8 @@ func hash(letter string) string { return "sha256:" + strings.Repeat(letter, 64) 
 
 func signStatement(t *testing.T, s Statement, private ed25519.PrivateKey) Receipt {
 	t.Helper()
+	original := []byte("fixture-native:" + s.Authority + ":" + s.Stage)
+	s.OriginalDigest = DigestRaw(original)
 	raw, err := json.Marshal(s)
 	if err != nil {
 		t.Fatal(err)
@@ -31,6 +33,7 @@ func signStatement(t *testing.T, s Statement, private ed25519.PrivateKey) Receip
 	return Receipt{
 		Stage: s.Stage, Authority: s.Authority,
 		PayloadB64:   base64.StdEncoding.EncodeToString(raw),
+		OriginalB64:  base64.StdEncoding.EncodeToString(original),
 		SignatureB64: base64.StdEncoding.EncodeToString(ed25519.Sign(private, append([]byte(SignatureDomain), raw...))),
 	}
 }
@@ -240,6 +243,10 @@ func TestEvidencePackageRejectsMissingForgedOrUntrustedReceipts(t *testing.T) {
 		name string
 		edit func(*fixture)
 	}{
+		{"tampered_original_bytes", func(f *fixture) {
+			f.p.Receipts[0].OriginalB64 = base64.StdEncoding.EncodeToString([]byte("changed native receipt"))
+		}},
+		{"missing_original_bytes", func(f *fixture) { f.p.Receipts[0].OriginalB64 = "" }},
 		{"missing_release", func(f *fixture) { f.p.Receipts = f.p.Receipts[:len(f.p.Receipts)-1] }},
 		{"duplicate_stage", func(f *fixture) { f.p.Receipts[0] = f.p.Receipts[1] }},
 		{"forged_signature", func(f *fixture) {
