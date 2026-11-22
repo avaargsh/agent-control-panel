@@ -307,7 +307,7 @@ func TestStrictDecodeRejectsCaseFoldedDuplicateKeys(t *testing.T) {
 	for _, raw := range []string{
 		`{"status":"UNKNOWN","STATUS":"EXITED"}`,
 		`{"runtime":{"recovered":true,"RECOVERED":false}}`,
-		`{"run_id":"run-a","\\u0052un_id":"run-b"}`,
+		`{"run_id":"run-a","\u0052un_id":"run-b"}`,
 	} {
 		var decoded any
 		if StrictDecode([]byte(raw), &decoded) {
