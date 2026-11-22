@@ -106,6 +106,7 @@ func TestCommandJournalReaderCannotReadOtherTenantWithOwnLogin(t *testing.T) {
 		"CREATE ROLE " + writerLogin + " LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD '" + writerPassword + "'",
 		"GRANT CONNECT ON DATABASE sandbox_journal_ci TO " + writerLogin,
 		"GRANT acp_sandbox_command_writer TO " + writerLogin,
+		"GRANT acp_sandbox_command_reader TO " + writerLogin,
 	} {
 		if _, err := owner.pool.Exec(ctx, sql); err != nil {
 			t.Fatalf("create tenant-B command writer role: %v", err)
@@ -201,9 +202,31 @@ func TestCommandJournalReaderCannotReadOtherTenantWithOwnLogin(t *testing.T) {
 	if err := owner.pool.QueryRow(ctx, "SELECT oid FROM pg_catalog.pg_roles WHERE rolname=$1", writerLogin).Scan(&writerOID); err != nil {
 		t.Fatal(err)
 	}
+	// A revoked LOGIN must not retain any inherited Command capabilities.
+	// NOLOGIN plus RLS is necessary, but stale memberships must also be
+	// removed so future DBA re-enrolment cannot resurrect implicit grants.
+	var commandWriterMember, commandReaderMember bool
+	if err := owner.pool.QueryRow(ctx, `SELECT
+		pg_catalog.pg_has_role($1::name,'acp_sandbox_command_writer'::name,'MEMBER'),
+		pg_catalog.pg_has_role($1::name,'acp_sandbox_command_reader'::name,'MEMBER')`, writerLogin).
+		Scan(&commandWriterMember, &commandReaderMember); err != nil {
+		t.Fatal(err)
+	}
+	if !commandWriterMember || !commandReaderMember {
+		t.Fatalf("test fixture must begin with both Command role grants, writer=%t reader=%t", commandWriterMember, commandReaderMember)
+	}
 	var terminated int
 	if err := owner.pool.QueryRow(ctx, `SELECT public.sandbox_revoke_lease_login($1::name,$2::oid)`, writerLogin, writerOID).Scan(&terminated); err != nil {
 		t.Fatalf("source-owned exact LOGIN/OID revocation failed: %v", err)
+	}
+	if err := owner.pool.QueryRow(ctx, `SELECT
+		pg_catalog.pg_has_role($1::name,'acp_sandbox_command_writer'::name,'MEMBER'),
+		pg_catalog.pg_has_role($1::name,'acp_sandbox_command_reader'::name,'MEMBER')`, writerLogin).
+		Scan(&commandWriterMember, &commandReaderMember); err != nil {
+		t.Fatal(err)
+	}
+	if commandWriterMember || commandReaderMember {
+		t.Fatalf("revocation retained dangerous Command role grants: writer=%t reader=%t", commandWriterMember, commandReaderMember)
 	}
 	if _, err := New(writer).Get(ctx, inB.TenantID, inB.SandboxUID, inB.CommandID); err == nil {
 		t.Fatal("revoked Command writer continued reading tenant facts")
