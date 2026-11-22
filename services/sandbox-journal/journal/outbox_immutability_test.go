@@ -82,7 +82,7 @@ func TestJournalOutboxMigrationRefusesInconsistentHistoricalFacts(t *testing.T) 
 				t.Fatal(err)
 			}
 			injectPreexistingJournalCorruption(t, repo, tc.tamper)
-			migration, err := os.ReadFile(filepath.Join("..", "migrations", "0004_command_journal_outbox_immutable.sql"))
+			migration, err := os.ReadFile(filepath.Join("..", "migrations", "0005_command_journal_outbox_immutable.sql"))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -100,7 +100,7 @@ func TestJournalOutboxMigrationReplayPreservesValidHistoricalFacts(t *testing.T)
 	if _, created, err := repo.RecordPermitUnavailable(ctx, in); err != nil || !created {
 		t.Fatalf("create receipt: created=%t err=%v", created, err)
 	}
-	migration, err := os.ReadFile(filepath.Join("..", "migrations", "0004_command_journal_outbox_immutable.sql"))
+	migration, err := os.ReadFile(filepath.Join("..", "migrations", "0005_command_journal_outbox_immutable.sql"))
 	if err != nil {
 		t.Fatal(err)
 	}
