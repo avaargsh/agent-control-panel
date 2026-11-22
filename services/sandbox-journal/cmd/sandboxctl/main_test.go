@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -140,6 +141,17 @@ func TestSandboxctlRejectsShadowSchemaReadRoleBypass(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer owner.Close()
+	// The cmd package is run before the journal/lease packages in CI; install
+	// the same source-owned base tables before setting up the real grant fixture.
+	for _, name := range []string{"0001_command_journal.sql", "0002_lease_intents.sql"} {
+		sql, err := os.ReadFile(filepath.Join("..", "..", "migrations", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := owner.Exec(ctx, string(sql)); err != nil {
+			t.Fatalf("install source-owned Sandbox schema %s: %v", name, err)
+		}
+	}
 	const schema = "sandboxctl_shadow_schema"
 	const username = "sandboxctl_shadow_login"
 	statements := []string{
@@ -156,6 +168,8 @@ func TestSandboxctlRejectsShadowSchemaReadRoleBypass(t *testing.T) {
 	}
 	defer func() {
 		_, _ = owner.Exec(context.Background(), "REVOKE UPDATE ON public.sandbox_lease_intents FROM "+username)
+		_, _ = owner.Exec(context.Background(), "REVOKE ALL ON DATABASE sandbox_journal_ci FROM "+username)
+		_, _ = owner.Exec(context.Background(), "REVOKE ALL ON SCHEMA public,"+schema+" FROM "+username)
 		_, _ = owner.Exec(context.Background(), "DROP SCHEMA IF EXISTS "+schema+" CASCADE")
 		_, _ = owner.Exec(context.Background(), "DROP ROLE IF EXISTS "+username)
 	}()
