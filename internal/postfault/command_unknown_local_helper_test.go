@@ -58,7 +58,7 @@ func prepareLocalUnknownCommand(root string) (localUnknownReceipt, error) {
 	defer syscall.Close(dirfd)
 	sum := sha256.Sum256([]byte(localUnknownEffectBytes))
 	record := localUnknownReceipt{
-		Source: "LOCAL_UNTRUSTED_PROCESS_FIXTURE",
+		Source:   "LOCAL_UNTRUSTED_PROCESS_FIXTURE",
 		TenantID: "tenant-local", RunID: "run-local-1",
 		SandboxUID: "sandbox-local-1", CommandID: "command-local-1",
 		AttemptID: "attempt-local-1", RootDevice: uint64(stat.Dev),
