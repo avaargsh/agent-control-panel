@@ -489,8 +489,21 @@ func TestAuthorityHTTPRejectsRuntimeRoleDrift(t *testing.T) {
 					}
 					return response.StatusCode, body
 				}
-				if status, body := request(); status != http.StatusOK || len(body) < 30 {
-					t.Fatalf("valid accepted Run %s baseline: HTTP %d body=%s", name, status, body)
+				baselineStatus, baselineBody := request()
+				if baselineStatus != http.StatusOK || len(baselineBody) < 30 {
+					t.Fatalf("valid accepted Run %s baseline: HTTP %d body=%s", name, baselineStatus, baselineBody)
+				}
+				if publication {
+					// Require a real cryptographically valid signed publication as
+					// positive control; a generic HTTP 200 is insufficient evidence.
+					var signed authorityhttp.SignedPublication
+					if err := json.Unmarshal(baselineBody, &signed); err != nil {
+						t.Fatalf("decode positive signed publication: %v", err)
+					}
+					publicKey := ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey)
+					if len(signed.Payload) == 0 || !ed25519.Verify(publicKey, signed.Payload, signed.Signature) {
+						t.Fatal("baseline Decision Publication signature is not authentic")
+					}
 				}
 				armed.Store(true)
 				status, body := request()
@@ -499,6 +512,9 @@ func TestAuthorityHTTPRejectsRuntimeRoleDrift(t *testing.T) {
 				}
 				if status != http.StatusServiceUnavailable {
 					t.Fatalf("P0 TOCTOU %s: expected 503, got HTTP %d with %d response bytes after committed GRANT between attestation and read", name, status, len(body))
+				}
+				if strings.Contains(string(body), "\"signature\"") || strings.Contains(string(body), "\"payload\"") {
+					t.Fatal("denied DCL-race request leaked signed publication fields")
 				}
 			})
 		}
