@@ -134,8 +134,8 @@ func TestAuthorityDatabaseRoleFailClosed(t *testing.T) {
 	t.Run("callable SECURITY DEFINER cannot bypass readonly role fence", func(t *testing.T) {
 		probe := pgx.Identifier{foreignSchema, "reader_privilege_probe"}.Sanitize()
 		if _, err := admin.Exec(ctx, "CREATE FUNCTION "+probe+
-			"() RETURNS text LANGUAGE sql SECURITY DEFINER SET search_path=pg_catalog AS $ SELECT payload FROM "+
-			pgx.Identifier{foreignSchema, "secret"}.Sanitize()+" LIMIT 1 $"); err != nil {
+			"() RETURNS text LANGUAGE sql SECURITY DEFINER SET search_path=pg_catalog AS 'SELECT payload FROM "+
+			pgx.Identifier{foreignSchema, "secret"}.Sanitize()+" LIMIT 1'"); err != nil {
 			t.Fatal(err)
 		}
 		defer admin.Exec(context.Background(), "DROP FUNCTION "+probe+"()")
