@@ -128,6 +128,7 @@ func TestAgentDEvidenceClientFetchesAndVerifiesSameRunOverMutualTLS(t *testing.T
 		if !bytes.Equal(bytes.TrimSpace(raw), canonical) {
 			t.Errorf("request JSON was not canonical: %q", raw)
 		}
+		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(response)
 	}))
@@ -160,7 +161,8 @@ func TestAgentDEvidenceClientRejectsResponseIdentityAndHeadDrift(t *testing.T) {
 			response := agentDEvidenceResponseFixture(t, expected, waitRaw, waitSig, events, head, "EXITED")
 			tc.edit(&response)
 			server, client := newAgentDEvidenceMTLSServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Content-Type", "application/json")
 				_ = json.NewEncoder(w).Encode(response)
 			}))
 			defer server.Close()
@@ -185,6 +187,7 @@ func TestAgentDEvidenceClientKeepsUnknownHoldUnresolved(t *testing.T) {
 	response := agentDEvidenceResponseFixture(t, expected, waitRaw, waitSig, events, head, "UNKNOWN")
 	response.Terminal = nil
 	server, client := newAgentDEvidenceMTLSServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(response)
 	}))
