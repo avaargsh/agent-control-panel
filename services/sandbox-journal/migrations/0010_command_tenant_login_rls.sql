@@ -157,6 +157,21 @@ BEGIN
   EXECUTE format('REVOKE acp_sandbox_command_writer FROM %I', p_login);
   EXECUTE format('REVOKE acp_sandbox_command_reader FROM %I', p_login);
 
+  -- A direct REVOKE cannot remove a membership inherited through a
+  -- different NOLOGIN group. Never issue a successful revocation receipt
+  -- while the exact LOGIN can still inherit any Sandbox service role.
+  -- Raise inside the same transaction: NOLOGIN, grants and tenant binding
+  -- all roll back, and the operator must retain the external deny gate
+  -- until a DBA fixes the unexpected role graph and retries.
+  IF pg_catalog.pg_has_role(p_login, 'acp_sandbox_lease_writer'::name, 'MEMBER')
+     OR pg_catalog.pg_has_role(p_login, 'acp_sandbox_lease_reader'::name, 'MEMBER')
+     OR pg_catalog.pg_has_role(p_login, 'acp_sandbox_command_writer'::name, 'MEMBER')
+     OR pg_catalog.pg_has_role(p_login, 'acp_sandbox_command_reader'::name, 'MEMBER')
+  THEN
+    RAISE EXCEPTION 'unresolved inherited Sandbox role membership; revocation not confirmed'
+      USING ERRCODE = '23514';
+  END IF;
+
   DELETE FROM public.sandbox_lease_db_principals
   WHERE login_name = p_login AND login_role_oid = p_expected_oid;
   IF NOT FOUND THEN
