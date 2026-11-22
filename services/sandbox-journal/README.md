@@ -45,3 +45,16 @@ Before installing UPDATE/DELETE/TRUNCATE barriers, the migration takes a Postgre
 Real PostgreSQL negative tests first demonstrate that ordinary SQL could mutate these facts before migration. Post-migration tests assert that no-op UPDATE, DELETE and TRUNCATE are rejected, that valid history survives an idempotent migration rerun, and that a historical corruption injection causes the migration preflight to fail. Only isolated database-owner test transactions temporarily disable the mutation triggers to model past compromise; this is **not** an application repair method.
 
 **Security boundary:** an actual table owner/superuser can disable or replace database triggers. Production requires a separate least-privilege Sandbox writer role without DDL/table-owner privileges, source-minted signing keys and an independent audit stream. This migration proves only local DB DML immutability, **not** real Guard Permit, AgentD dispatch, UNKNOWN Inspect, physical release or independent evidence provenance.
+
+## Database runtime roles (candidate 0004, independent Sandbox DB only)
+
+After `0001`–`0003`, a **DBA or migration owner**, never a Sandbox runtime credential, runs `migrations/0004_lease_runtime_roles.sql`. It creates or validates two **NOLOGIN, non-owner** group roles:
+
+- `acp_sandbox_lease_writer`: schema USAGE; `SELECT, INSERT` on lease-intent and lease-event tables; `UPDATE` only on the intent's `state`, `generation`, `updated_at` columns
+- `acp_sandbox_lease_reader`: `SELECT` on those two lease tables only
+
+The script withdraws any broader table grants from these group roles before applying the explicit allowlist. It rejects existing login/superuser/CREATEROLE/owner/member-role escalation and a database where `PUBLIC` can CREATE in the shared `public` schema. **An operator provisions an independent LOGIN and securely grants only the intended group role**; the database role script intentionally includes no LOGIN, passwords, connection string or live credential.
+
+The hosted PostgreSQL 16 regression opens **separate authenticated LOGIN connections** and proves the writer can create/replay/cancel and the reader can inspect, while attempting direct event UPDATE/DELETE/TRUNCATE, identity rewrite, cross-module journal inspection, table creation, trigger disable and role escalation. A reader's write attempts must fail. This is **not** an authentication or authorization boundary for tenant identifiers: the Sandbox API must independently authenticate the caller, bind tenant/Run to trusted identity, and prevent cross-tenant SQL access. A compromised authorized writer still has narrowly scoped INSERT/UPDATE rights; these grants and append-only triggers alone do **not** make source facts cryptographically immutable or prove Permit/PEP authority.
+
+Operational constraints: never run migrations with a runtime LOGIN; never share a table-owner or superuser credential with the app. Review existing role memberships and `PUBLIC`/default privileges separately before deploying. This is a candidate privilege contract in a disposable CI database, not evidence of a production service principal or real AgentD commands.
