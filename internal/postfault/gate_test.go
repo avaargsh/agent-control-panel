@@ -132,6 +132,8 @@ func TestPostfaultRejectsAmbiguousSignedDuplicateJSON(t *testing.T) {
 		{"duplicate_top_level_fault", `"fault_id":"sigkill-worker-1"`, `"fault_id":"foreign-fault","fault_id":"sigkill-worker-1"`},
 		{"duplicate_nested_recovery", `"recovered":true`, `"recovered":false,"recovered":true`},
 		{"escaped_duplicate_key_alias", `"recovered":true`, `"\u0072ecovered":false,"recovered":true`},
+		{"case_folded_signed_runtime_recovery", `"recovered":true`, `"RECOVERED":false,"recovered":true`},
+		{"case_folded_signed_fault_binding", `"fault_id":"sigkill-worker-1"`, `"FAULT_ID":"foreign-fault","fault_id":"sigkill-worker-1"`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
