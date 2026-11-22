@@ -55,6 +55,22 @@ SELECT COALESCE((
               AND s.nspname NOT LIKE 'pg_temp_%'
               AND has_schema_privilege(s.oid, 'CREATE')
        )
+       -- PostgreSQL grants EXECUTE on new functions to PUBLIC by default.
+       -- A LOGIN without SELECT on foreign business tables can still call an
+       -- owner-privileged SECURITY DEFINER routine and read or write through
+       -- that owner's privileges. A dedicated reader may not execute any
+       -- reachable non-system SECURITY DEFINER function or procedure.
+       -- Both effective schema USAGE and effective routine EXECUTE matter.
+       AND NOT EXISTS (
+           SELECT 1 FROM pg_catalog.pg_proc f
+             JOIN pg_catalog.pg_namespace s ON s.oid = f.pronamespace
+            WHERE f.prosecdef
+              AND s.nspname NOT IN ('pg_catalog', 'information_schema')
+              AND s.nspname NOT LIKE 'pg_toast%'
+              AND s.nspname NOT LIKE 'pg_temp_%'
+              AND has_schema_privilege(s.oid, 'USAGE')
+              AND has_function_privilege(f.oid, 'EXECUTE')
+       )
        AND NOT pg_has_role(a.oid, n.nspowner, 'MEMBER')
        -- Even NOINHERIT memberships may permit SET ROLE to a privileged
        -- identity after startup. This dedicated service login must belong
