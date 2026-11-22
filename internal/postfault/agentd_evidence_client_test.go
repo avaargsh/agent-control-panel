@@ -3,8 +3,6 @@ package postfault
 import (
 	"bytes"
 	"context"
-	"errors"
-	"io"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/tls"
@@ -12,6 +10,8 @@ import (
 	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"io"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -27,9 +27,9 @@ func agentDEvidenceResponseFixture(t *testing.T, expected ExpectedAgentDWait,
 	records := make([]AgentDEvidenceRecord, 0, len(events))
 	for _, event := range events {
 		records = append(records, AgentDEvidenceRecord{
-			PayloadB64: base64.StdEncoding.EncodeToString(event.Payload),
+			PayloadB64:   base64.StdEncoding.EncodeToString(event.Payload),
 			SignatureB64: base64.StdEncoding.EncodeToString(event.Signature),
-			Digest: inspectSourceDigest(event.Payload),
+			Digest:       inspectSourceDigest(event.Payload),
 		})
 	}
 	response := AgentDEvidenceReadResponse{
@@ -39,9 +39,9 @@ func agentDEvidenceResponseFixture(t *testing.T, expected ExpectedAgentDWait,
 	}
 	if state == "EXITED" || state == "FAILED_CONFIRMED" {
 		response.Terminal = &AgentDEvidenceRecord{
-			PayloadB64: base64.StdEncoding.EncodeToString(waitRaw),
+			PayloadB64:   base64.StdEncoding.EncodeToString(waitRaw),
 			SignatureB64: base64.StdEncoding.EncodeToString(waitSig),
-			Digest: inspectSourceDigest(waitRaw),
+			Digest:       inspectSourceDigest(waitRaw),
 		}
 	}
 	return response
@@ -74,7 +74,7 @@ func newAgentDEvidenceMTLSServer(t *testing.T, handler http.Handler) (*httptest.
 	server := httptest.NewUnstartedServer(handler)
 	server.TLS = &tls.Config{
 		ClientAuth: tls.RequireAndVerifyClientCert,
-		ClientCAs: roots,
+		ClientCAs:  roots,
 		MinVersion: tls.VersionTLS13,
 	}
 	server.StartTLS()
@@ -88,7 +88,7 @@ func newAgentDEvidenceMTLSServer(t *testing.T, handler http.Handler) (*httptest.
 		SerialNumber: big.NewInt(102), Subject: pkix.Name{CommonName: "agentd-evidence-reader"},
 		NotBefore: now.Add(-time.Minute), NotAfter: now.Add(time.Hour),
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
-		KeyUsage: x509.KeyUsageDigitalSignature,
+		KeyUsage:    x509.KeyUsageDigitalSignature,
 	}
 	clientDER, err := x509.CreateCertificate(rand.Reader, clientTemplate, caCert, clientKey.Public(), caKey)
 	if err != nil {
@@ -162,7 +162,7 @@ func TestAgentDEvidenceClientRejectsResponseIdentityAndHeadDrift(t *testing.T) {
 			tc.edit(&response)
 			server, client := newAgentDEvidenceMTLSServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("Cache-Control", "no-store")
-		w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("Content-Type", "application/json")
 				_ = json.NewEncoder(w).Encode(response)
 			}))
 			defer server.Close()
