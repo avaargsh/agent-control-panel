@@ -191,7 +191,6 @@ func TestIndependentEvidenceStopsReadingWhenContextCanceledMidStream(t *testing.
 	}
 }
 
-
 type noProgressEvidenceStream struct {
 	reads  int
 	closed bool
