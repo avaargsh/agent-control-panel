@@ -9,7 +9,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"testing"
+	"time"
 )
 
 type testEvidenceReader map[string][]byte
@@ -186,5 +188,59 @@ func TestIndependentEvidenceStopsReadingWhenContextCanceledMidStream(t *testing.
 	if stream.reads != 1 || !stream.closed || reader.opens != 1 {
 		t.Fatalf("evidence verifier continued reading after cancellation: reads=%d closed=%v opens=%d",
 			stream.reads, stream.closed, reader.opens)
+	}
+}
+
+
+type noProgressEvidenceStream struct {
+	reads  int
+	closed bool
+}
+
+func (s *noProgressEvidenceStream) Read([]byte) (int, error) {
+	s.reads++
+	return 0, nil
+}
+
+func (s *noProgressEvidenceStream) Close() error {
+	s.closed = true
+	return nil
+}
+
+func TestIndependentEvidenceRejectsReaderThatMakesNoProgress(t *testing.T) {
+	policy, wire, keys, _ := evidenceFixture(t)
+	stream := &noProgressEvidenceStream{}
+	reader := &streamingEvidenceProbe{streamOverride: stream}
+	// The deadline is only a safety net: the verifier should stop after its
+	// bounded no-progress threshold, not spin until the caller times out.
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_, err := VerifyReviewEvidenceWithAssets(ctx, policy, wire, keys, reader)
+	if !errors.Is(err, ErrEvidenceInvalid) {
+		t.Fatalf("reader that repeatedly returns (0,nil) was not rejected as invalid evidence: %v", err)
+	}
+	if stream.reads != 100 || !stream.closed {
+		t.Fatalf("no-progress reader was not bounded and closed: reads=%d closed=%v", stream.reads, stream.closed)
+	}
+}
+
+type failingEvidenceReader struct {
+	err error
+}
+
+func (r failingEvidenceReader) OpenEvidence(context.Context, string) (io.ReadCloser, error) {
+	return nil, r.err
+}
+
+func TestIndependentEvidenceDoesNotExposeObjectStoreErrorDetails(t *testing.T) {
+	policy, wire, keys, _ := evidenceFixture(t)
+	secret := "s3://private-bucket/path?X-Amz-Credential=secret-token"
+	_, err := VerifyReviewEvidenceWithAssets(context.Background(), policy, wire, keys,
+		failingEvidenceReader{err: errors.New(secret)})
+	if !errors.Is(err, ErrEvidenceInvalid) {
+		t.Fatalf("object-store failure should remain an invalid-evidence error: %v", err)
+	}
+	if strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), "secret-token") {
+		t.Fatalf("object-store location or credentials leaked in returned error: %v", err)
 	}
 }
