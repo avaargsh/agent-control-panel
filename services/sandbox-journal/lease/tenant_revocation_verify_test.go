@@ -100,8 +100,18 @@ func TestLeaseRevocationVerificationRequiresCommittedState(t *testing.T) {
 	}
 	// Re-enrolling the same OID is a new authorization and must invalidate
 	// the old revocation result, even if the old receipt remains append-only.
+	// The existing 0008 DBA enrollment trigger refuses a NOLOGIN
+	// principal. A dangerous operator must first re-enable the account;
+	// even if subsequently disabled, that restored tenant mapping invalidates
+	// the former revocation proof.
+	if _, err := owner.pool.Exec(ctx, "ALTER ROLE "+login+" LOGIN"); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := owner.pool.Exec(ctx, `INSERT INTO public.sandbox_lease_db_principals
 		(login_name,tenant_id) VALUES ($1,'tenant-a')`, login); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := owner.pool.Exec(ctx, "ALTER ROLE "+login+" NOLOGIN"); err != nil {
 		t.Fatal(err)
 	}
 	if err := verifyCommittedRevocation(ctx, independent, login, oid); err == nil {
