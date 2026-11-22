@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"testing"
 	"time"
+	"strings"
 
 	"github.com/avaargsh/agent-control-panel/internal/postfault"
 )
@@ -78,8 +79,9 @@ func TestEvidencePackageRejectsSettlementBeforeSignedRecoveryObservations(t *tes
 			// post-recovery observation is moved to fault+7s, after even
 			// the downstream Sandbox/Compute release receipts.
 			shiftSignedPostfaultObservation(t, &f, owner, f.e.Fault.At.Add(7*time.Second))
-			if err := Verify(f.p, f.e, f.pub, f.now); err == nil {
-				t.Fatalf("G03/G04 accepted settlement before %s recovery proof", owner)
+			if err := Verify(f.p, f.e, f.pub, f.now); err == nil ||
+				!strings.Contains(err.Error(), "settlement predates signed postfault recovery proof") {
+				t.Fatalf("G03/G04 must reject premature settlement for %s, got: %v", owner, err)
 			}
 		})
 	}
@@ -95,8 +97,9 @@ func TestEvidencePackageRejectsRecoveredRunBeforeSourceRecoveryProof(t *testing.
 			// that observation, so this specifically tests G05 recovery
 			// ordering rather than the G03/G04 settlement fence.
 			shiftSignedPostfaultObservation(t, &f, owner, f.e.Fault.At.Add(3500*time.Millisecond))
-			if err := Verify(f.p, f.e, f.pub, f.now); err == nil {
-				t.Fatalf("G05 accepted recovered Run before %s postfault source proof", owner)
+			if err := Verify(f.p, f.e, f.pub, f.now); err == nil ||
+				!strings.Contains(err.Error(), "recovered Run predates signed postfault source proof") {
+				t.Fatalf("G05 must reject premature recovery for %s, got: %v", owner, err)
 			}
 		})
 	}
@@ -129,8 +132,9 @@ func TestEvidencePackageRejectsSignedLifecycleStagesOutOfOrder(t *testing.T) {
 			mutate(t, &f, tc.stage, func(s *Statement) {
 				s.ObservedAt = f.e.Fault.At.Add(-15 * time.Second)
 			})
-			if err := Verify(f.p, f.e, f.pub, f.now); err == nil {
-				t.Fatal("G01/G03 accepted signed pre-fault lifecycle causal inversion")
+			if err := Verify(f.p, f.e, f.pub, f.now); err == nil ||
+				!strings.Contains(err.Error(), "signed Run, Decision and Permit stages out of order") {
+				t.Fatalf("G01/G03 must reject signed causal inversion, got: %v", err)
 			}
 		})
 	}
