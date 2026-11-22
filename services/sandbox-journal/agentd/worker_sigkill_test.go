@@ -69,7 +69,7 @@ func TestOriginalAgentDWorkerChild(t *testing.T) {
 func TestRealAgentDWorkerSIGKILLBeforeAndAfterTerminalCommit(t *testing.T) {
 	for _, mode := range []string{"committed", "uncommitted"} {
 		t.Run(mode, func(t *testing.T) {
-			pool := testDatabase(t)
+			testDatabase(t) // source schema + disposable owner fixture, not a mock
 			pub, priv, err := ed25519.GenerateKey(rand.Reader)
 			if err != nil {
 				t.Fatal(err)
