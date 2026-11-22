@@ -253,7 +253,7 @@ func TestAuthorityDatabaseRoleFailClosed(t *testing.T) {
 			functionName := functionSchema + ".authority_privilege_probe"
 			create := "CREATE FUNCTION " + functionName + "() RETURNS text " +
 				"LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog " +
-				"AS $ SELECT payload FROM " + foreignSchema + ".secret WHERE id=1 $"
+				"AS $acl$ SELECT payload FROM " + foreignSchema + ".secret WHERE id=1 $acl$"
 			if _, err := admin.Exec(ctx, create); err != nil {
 				t.Fatal(err)
 			}
