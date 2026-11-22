@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/avaargsh/agent-control-panel/services/sandbox-journal/internal/identity"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -215,6 +216,60 @@ func TestCommandJournalReaderCannotReadOtherTenantWithOwnLogin(t *testing.T) {
 	if !commandWriterMember || !commandReaderMember {
 		t.Fatalf("test fixture must begin with both Command role grants, writer=%t reader=%t", commandWriterMember, commandReaderMember)
 	}
+	// A shared NOLOGIN delegation can retain an effective Command grant after
+	// direct grants are revoked. The owner-only revoker must refuse to claim
+	// successful eviction when that indirect membership cannot be removed.
+	const nestedGroup = "sandbox_ci_command_nested_readers"
+	for _, statement := range []string{
+		"CREATE ROLE " + nestedGroup + " NOLOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS",
+		"GRANT acp_sandbox_command_reader TO " + nestedGroup,
+		"GRANT " + nestedGroup + " TO " + writerLogin,
+	} {
+		if _, err := owner.pool.Exec(ctx, statement); err != nil {
+			t.Fatalf("setup delegated Command role: %v", err)
+		}
+	}
+	defer func() {
+		_, _ = owner.pool.Exec(context.Background(), "REVOKE "+nestedGroup+" FROM "+writerLogin)
+		_, _ = owner.pool.Exec(context.Background(), "REVOKE acp_sandbox_command_reader FROM "+nestedGroup)
+		_, _ = owner.pool.Exec(context.Background(), "DROP ROLE IF EXISTS "+nestedGroup)
+	}()
+	var nestedAttempt int
+	nestedErr := owner.pool.QueryRow(ctx,
+		`SELECT public.sandbox_revoke_lease_login($1::name,$2::oid)`,
+		writerLogin, writerOID).Scan(&nestedAttempt)
+	var nestedPgErr *pgconn.PgError
+	if !errors.As(nestedErr, &nestedPgErr) || nestedPgErr.Code != "23514" {
+		t.Fatalf("nested Command membership must fail closed with SQLSTATE 23514, got %v", nestedErr)
+	}
+	var loginEnabled, stillBound, receiptMinted bool
+	if err := owner.pool.QueryRow(ctx, `SELECT rolcanlogin FROM pg_catalog.pg_roles WHERE oid=$1`, writerOID).Scan(&loginEnabled); err != nil {
+		t.Fatal(err)
+	}
+	if err := owner.pool.QueryRow(ctx, `SELECT EXISTS(
+		SELECT 1 FROM public.sandbox_lease_db_principals
+		WHERE login_name=$1 AND login_role_oid=$2)`, writerLogin, writerOID).Scan(&stillBound); err != nil {
+		t.Fatal(err)
+	}
+	if err := owner.pool.QueryRow(ctx, `SELECT EXISTS(
+		SELECT 1 FROM public.sandbox_lease_login_revocations
+		WHERE login_role_oid=$1)`, writerOID).Scan(&receiptMinted); err != nil {
+		t.Fatal(err)
+	}
+	if !loginEnabled || !stillBound || receiptMinted {
+		t.Fatalf("failed revocation claimed a partial success: login=%t bound=%t receipt=%t", loginEnabled, stillBound, receiptMinted)
+	}
+	for _, statement := range []string{
+		"REVOKE " + nestedGroup + " FROM " + writerLogin,
+		"REVOKE acp_sandbox_command_reader FROM " + nestedGroup,
+		"DROP ROLE " + nestedGroup,
+	} {
+		if _, err := owner.pool.Exec(ctx, statement); err != nil {
+			t.Fatalf("remove delegated grant before ordinary revocation: %v", err)
+		}
+	}
+	// After the DBA removes the offending delegation, the original precise
+	// revoke path must still succeed and preserve immutable receipts.
 	var terminated int
 	if err := owner.pool.QueryRow(ctx, `SELECT public.sandbox_revoke_lease_login($1::name,$2::oid)`, writerLogin, writerOID).Scan(&terminated); err != nil {
 		t.Fatalf("source-owned exact LOGIN/OID revocation failed: %v", err)
