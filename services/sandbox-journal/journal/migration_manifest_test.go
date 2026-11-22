@@ -38,6 +38,19 @@ func TestSandboxMigrationVersionsAndDisposableDemoAreComplete(t *testing.T) {
 		versionByName[name] = version
 		versions = append(versions, version)
 	}
+	// PR #83 introduced owner-only post-COMMIT tenant-revocation proof as
+	// migration 0010. Descendant PR #102 must preserve that exact version
+	// and shift Command RLS/commit integrity to 0011/0012, respectively.
+	// A green isolated branch cannot excuse an upstream migration collision.
+	for version, expected := range map[int]string{
+		10: "0010_tenant_revoke_postcommit_verify.sql",
+		11: "0011_command_tenant_login_rls.sql",
+		12: "0012_command_commit_integrity.sql",
+	} {
+		if got := nameByVersion[version]; got != expected {
+			t.Errorf("stacked Sandbox migration %04d must be %s, got %q", version, expected, got)
+		}
+	}
 	sort.Ints(versions)
 	for i, version := range versions {
 		if version != i+1 {
