@@ -51,3 +51,10 @@ func InspectAndJournal(ctx context.Context, db *pgxpool.Pool, ref Ref,
 func VerifyInspectChain(events []JournaledInspection, expected Ref, key ed25519.PublicKey, now time.Time) error {
 	return nil
 }
+
+// LoadInspectChain will verify every source-owned durable event from a new DB
+// connection and reject missing/tampered source history.
+func LoadInspectChain(ctx context.Context, db *pgxpool.Pool, expected Ref,
+	key ed25519.PublicKey, now time.Time) ([]JournaledInspection, error) {
+	return nil, ErrUnverified
+}
