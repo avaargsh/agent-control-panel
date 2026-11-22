@@ -158,15 +158,15 @@ func FetchAndVerifyAgentDEvidence(ctx context.Context, endpoint string, credenti
 		return failure("cannot serialize original AgentD attempt")
 	}
 	transport := &http.Transport{
-		TLSClientConfig: credentials.Clone(),
-		Proxy: nil,
-		DisableKeepAlives: true,
+		TLSClientConfig:     credentials.Clone(),
+		Proxy:               nil,
+		DisableKeepAlives:   true,
 		TLSHandshakeTimeout: 5 * time.Second,
 	}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{
 		Transport: transport,
-		Timeout: 10 * time.Second,
+		Timeout:   10 * time.Second,
 		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
