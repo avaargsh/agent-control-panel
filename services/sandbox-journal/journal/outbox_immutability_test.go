@@ -10,7 +10,7 @@ import (
 // independent PostgreSQL 16 Sandbox database, not ACP's RunIntent database.
 func TestJournalAndOutboxRejectOrdinaryMutation(t *testing.T) {
 	for _, tc := range []struct {
-		name string
+		name      string
 		statement string
 	}{
 		{"outbox_noop_update", "UPDATE sandbox_journal_outbox SET payload=payload WHERE generation=1"},
