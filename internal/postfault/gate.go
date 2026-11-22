@@ -145,7 +145,63 @@ func validDigest(s string) bool {
 	return true
 }
 
+// decodeStrict rejects ambiguous JSON, including duplicate keys encoded
+// with different Unicode escapes. DisallowUnknownFields alone does not
+// reject duplicates: encoding/json silently accepts the last field value.
+// Check the entire token tree before interpreting any signed observation.
+// StrictDecode is shared by the standalone postfault CLI and the signed
+// observation validator, so outer bundle/independent expected bindings use
+// the same duplicate-key rejection as nested signed receipts.
+func StrictDecode(data []byte, dst any) bool {
+	return decodeStrict(data, dst)
+}
+
 func decodeStrict(data []byte, dst any) bool {
+	tokens := json.NewDecoder(bytes.NewReader(data))
+	var walk func() error
+	walk = func() error {
+		token, err := tokens.Token()
+		if err != nil {
+			return err
+		}
+		delim, ok := token.(json.Delim)
+		if !ok {
+			return nil
+		}
+		switch delim {
+		case '{':
+			seen := make(map[string]bool)
+			for tokens.More() {
+				rawKey, err := tokens.Token()
+				if err != nil {
+					return err
+				}
+				key, ok := rawKey.(string)
+				if !ok || seen[key] {
+					return errors.New("duplicate or invalid JSON key")
+				}
+				seen[key] = true
+				if err := walk(); err != nil {
+					return err
+				}
+			}
+			_, err := tokens.Token()
+			return err
+		case '[':
+			for tokens.More() {
+				if err := walk(); err != nil {
+					return err
+				}
+			}
+			_, err := tokens.Token()
+			return err
+		default:
+			return errors.New("unexpected JSON delimiter")
+		}
+	}
+	if walk() != nil || tokens.Decode(new(any)) != io.EOF {
+		return false
+	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if decoder.Decode(dst) != nil {

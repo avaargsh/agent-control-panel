@@ -4,10 +4,8 @@
 package main
 
 import (
-	"bytes"
 	"crypto/ed25519"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -65,9 +63,7 @@ func run(args []string) error {
 		return errors.New("no bounded external postfault bundle available")
 	}
 	var bundle postfault.Bundle
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if decoder.Decode(&bundle) != nil || decoder.Decode(new(any)) != io.EOF {
+	if !postfault.StrictDecode(data, &bundle) {
 		return errors.New("postfault bundle is invalid")
 	}
 	bindingBytes, err := privateBoundedInput(*expectedPath)
@@ -75,9 +71,7 @@ func run(args []string) error {
 		return errors.New("independent authoritative Run/fault binding unavailable")
 	}
 	var expected expectedBinding
-	expectedDecoder := json.NewDecoder(bytes.NewReader(bindingBytes))
-	expectedDecoder.DisallowUnknownFields()
-	if expectedDecoder.Decode(&expected) != nil || expectedDecoder.Decode(new(any)) != io.EOF ||
+	if !postfault.StrictDecode(bindingBytes, &expected) ||
 		expected.Schema != expectedBindingVersion || expected.FaultID == "" || expected.FaultAt.IsZero() {
 		return errors.New("independent authoritative Run/fault binding is invalid")
 	}

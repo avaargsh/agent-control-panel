@@ -55,6 +55,46 @@ func TestPostfaultCLIRefusesMalformedPayloadWithoutLeakingBytes(t *testing.T) {
 	}
 }
 
+// Parsing must reject duplicate JSON keys *before* any trust-key lookup.
+// Otherwise the normal CLI would report missing keys, masking a bundle or
+// independent Expected binding interpreted differently by other parsers.
+func TestPostfaultCLIRejectsDuplicateBundleAndExpectedKeys(t *testing.T) {
+	root := t.TempDir()
+	const bundleOK = `{"schema":"acp.postfault-bundle/v1","subject":{},"fault":{"id":"worker-fault-1","kind":"worker_sigkill","at":"2026-11-22T04:00:00Z"},"receipts":[]}`
+	const expectedOK = `{"schema":"acp.postfault-expected/v1","subject":{},"fault_id":"worker-fault-1","fault_at":"2026-11-22T04:00:00Z"}`
+	cases := []struct {
+		name, bundleJSON, expectedJSON, wantError string
+	}{
+		{
+			name:         "duplicate_bundle_schema",
+			bundleJSON:   `{"schema":"untrusted","schema":"acp.postfault-bundle/v1","subject":{},"fault":{"id":"worker-fault-1","kind":"worker_sigkill","at":"2026-11-22T04:00:00Z"},"receipts":[]}`,
+			expectedJSON: expectedOK, wantError: "postfault bundle is invalid",
+		},
+		{
+			name:         "escaped_duplicate_expected_schema",
+			bundleJSON:   bundleOK,
+			expectedJSON: `{"\u0073chema":"untrusted","schema":"acp.postfault-expected/v1","subject":{},"fault_id":"worker-fault-1","fault_at":"2026-11-22T04:00:00Z"}`,
+			wantError:    "independent authoritative Run/fault binding is invalid",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			bundle := filepath.Join(root, tc.name+"-bundle.json")
+			expected := filepath.Join(root, tc.name+"-expected.json")
+			if err := os.WriteFile(bundle, []byte(tc.bundleJSON), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(expected, []byte(tc.expectedJSON), 0600); err != nil {
+				t.Fatal(err)
+			}
+			err := run([]string{"--bundle", bundle, "--expected", expected, "--trust-dir", root})
+			if err == nil || !strings.Contains(err.Error(), tc.wantError) {
+				t.Fatalf("duplicate input was not rejected at the parsing boundary: %v", err)
+			}
+		})
+	}
+}
+
 func TestExpectedBindingRejectsUnrelatedHistoricalRunAndFault(t *testing.T) {
 	subject := postfault.Subject{
 		TenantID: "tenant-1", RunID: "runtime-run-1",
