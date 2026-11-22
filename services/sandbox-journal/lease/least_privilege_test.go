@@ -28,18 +28,22 @@ func TestLeaseRuntimeDatabaseRolesDenyEscalationAndPreserveCAS(t *testing.T) {
 			t.Fatalf("provision isolated test login: %v", err)
 		}
 	}
-	// The runtime role grants are DBA-owned, repeatable provisioning SQL.
-	// Without them, the first genuine writer INSERT below fails, the RED.
-	if sql, err := os.ReadFile(filepath.Join("..", "migrations", "0004_lease_runtime_roles.sql")); err == nil {
+	// The owner-only role grant script must exist and be safely replayable.
+	// Missing SQL or a changed existing role is a failed acceptance, not a skip.
+	sql, err := os.ReadFile(filepath.Join("..", "migrations", "0004_lease_runtime_roles.sql"))
+	if err != nil {
+		t.Fatal("required Sandbox runtime role policy missing:", err)
+	}
+	for i := 0; i < 2; i++ {
 		if _, err := owner.pool.Exec(ctx, string(sql)); err != nil {
-			t.Fatalf("apply owner-only runtime grants: %v", err)
+			t.Fatalf("apply/replay owner-only runtime role grants (iteration %d): %v", i, err)
 		}
-		if _, err := owner.pool.Exec(ctx, "GRANT acp_sandbox_lease_writer TO "+writerLogin); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := owner.pool.Exec(ctx, "GRANT acp_sandbox_lease_reader TO "+readerLogin); err != nil {
-			t.Fatal(err)
-		}
+	}
+	if _, err := owner.pool.Exec(ctx, "GRANT acp_sandbox_lease_writer TO "+writerLogin); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := owner.pool.Exec(ctx, "GRANT acp_sandbox_lease_reader TO "+readerLogin); err != nil {
+		t.Fatal(err)
 	}
 	connect := func(user, password string) *pgxpool.Pool {
 		t.Helper()
