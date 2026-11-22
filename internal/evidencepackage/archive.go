@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"encoding/base64"
-	"encoding/json"
 	"time"
 )
 
@@ -12,7 +11,7 @@ import (
 // attestation. Neither ACP nor this verifier may issue this attestation.
 const (
 	ArchiveSchema = "acp.evidence-archive-seal/v1"
-	ArchiveDomain = "acp.evidence-archive-seal/v1\\x00"
+	ArchiveDomain = "acp.evidence-archive-seal/v1\x00"
 	maxArchiveSealBytes = 4096
 	maxArchivePackageBytes = 256 << 10
 	maxArchiveExpectedBytes = 8192
@@ -99,4 +98,3 @@ func DecodeArchiveSeal(raw []byte) (ArchiveSeal, bool) {
 	return seal, true
 }
 
-var _ = json.Valid
