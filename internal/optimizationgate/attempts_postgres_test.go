@@ -14,6 +14,7 @@ import (
 
 	runpostgres "github.com/avaargsh/agent-control-panel/internal/runintent/postgres"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -207,5 +208,54 @@ func TestPostgresAttemptExpiresOnDatabaseClock(t *testing.T) {
 	}
 	if _, err := store.ConsumeReviewEvidence(context.Background(), issued, signed(receipt, key), keys, assets); !errors.Is(err, ErrAttemptUnavailable) {
 		t.Fatalf("expired attempt was consumed: %v", err)
+	}
+}
+
+
+// Issue errors must preserve the PostgreSQL cause as well as the package-level
+// fail-closed classification so operators can distinguish schema drift.
+func TestPostgresIssuePreservesJournalWriteError(t *testing.T) {
+	store, pool := disposableAttemptStore(t)
+	if _, err := pool.Exec(context.Background(),
+		"ALTER TABLE optimization_verification_attempts RENAME TO optimization_verification_attempts_missing"); err != nil {
+		t.Fatalf("inject missing attempt journal: %v", err)
+	}
+	policy, _, _, _ := fixture()
+	policy.VerificationNonce = ""
+	_, err := store.IssueReviewAttempt(context.Background(), policy, time.Minute)
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "42P01" {
+		t.Fatalf("issue did not preserve PostgreSQL undefined-table error: pgErr=%v err=%v", pgErr, err)
+	}
+	if !errors.Is(err, ErrAttemptUnconfigured) {
+		t.Fatalf("issue lost fail-closed classification: %v", err)
+	}
+}
+
+// A trigger failure after the preflight and evidence read exercises the final
+// atomic consume UPDATE, not the earlier read-only nonce check.
+func TestPostgresConsumePreservesJournalWriteError(t *testing.T) {
+	store, pool := disposableAttemptStore(t)
+	policy, wire, keys, reader := attemptFixture(t, store)
+	if _, err := pool.Exec(context.Background(), `CREATE FUNCTION reject_test_attempt_consume()
+		RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			RAISE EXCEPTION 'injected attempt journal write failure' USING ERRCODE='P0001';
+		END;
+		$$`); err != nil {
+		t.Fatalf("create failure injection function: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `CREATE TRIGGER reject_test_attempt_consume
+		BEFORE UPDATE ON optimization_verification_attempts
+		FOR EACH ROW EXECUTE FUNCTION reject_test_attempt_consume()`); err != nil {
+		t.Fatalf("create failure injection trigger: %v", err)
+	}
+	_, err := store.ConsumeReviewEvidence(context.Background(), policy, wire, keys, reader)
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "P0001" {
+		t.Fatalf("consume did not preserve PostgreSQL trigger error: pgErr=%v err=%v", pgErr, err)
+	}
+	if !errors.Is(err, ErrAttemptUnconfigured) {
+		t.Fatalf("consume lost fail-closed classification: %v", err)
 	}
 }
