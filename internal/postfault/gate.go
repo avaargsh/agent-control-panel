@@ -149,6 +149,13 @@ func validDigest(s string) bool {
 // with different Unicode escapes. DisallowUnknownFields alone does not
 // reject duplicates: encoding/json silently accepts the last field value.
 // Check the entire token tree before interpreting any signed observation.
+// StrictDecode is shared by the standalone postfault CLI and the signed
+// observation validator, so outer bundle/independent expected bindings use
+// the same duplicate-key rejection as nested signed receipts.
+func StrictDecode(data []byte, dst any) bool {
+	return decodeStrict(data, dst)
+}
+
 func decodeStrict(data []byte, dst any) bool {
 	tokens := json.NewDecoder(bytes.NewReader(data))
 	var walk func() error
