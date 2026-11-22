@@ -46,41 +46,7 @@ if "${compose[@]}" exec -T -e PGPASSWORD=demo-reader-only db \
   echo "DEMO_ASSERTION_FAILED: database reader has write privileges" >&2
   exit 1
 fi
-SANDBOX_JOURNAL_READ_DSN="$dsn" go test -count=1 -v -run '^TestSandboxctlRealScopedReaderFixture  --tenant sandboxctl-smoke --lease-intent lease-smoke-1 \
-  --sandbox-uid sandbox-smoke-1 --command-id command-smoke-1 --format json)"
-text_report="$(SANDBOX_JOURNAL_READ_DSN="$dsn" go run ./cmd/sandboxctl inspect \
-  --tenant sandboxctl-smoke --lease-intent lease-smoke-1 --format text)"
-
-# Behavioral assertions against real ephemeral PostgreSQL rows.
-for marker in \
-  '"source": "UNATTESTED_DB_SNAPSHOT"' \
-  '"state": "WAITING_FOR_PERMIT"' \
-  '"state": "PERMIT_UNAVAILABLE"' \
-  '"next_action": "HOLD"' \
-  '"can_dispatch": false' \
-  '"can_retry": false' \
-  '"can_declare_success": false' \
-  '"can_declare_released": false'; do
-  if [[ "$json" != *"$marker"* ]]; then
-    echo "DEMO_ASSERTION_FAILED: missing $marker" >&2
-    exit 1
-  fi
-done
-if [[ "$text_report" != *"Dispatch: DENIED"* || "$text_report" != *"Release: UNVERIFIED"* ]]; then
-  echo "DEMO_ASSERTION_FAILED: text report promoted effect or finality" >&2
-  exit 1
-fi
-# Unknown lease must fail closed.
-if SANDBOX_JOURNAL_READ_DSN="$dsn" go run ./cmd/sandboxctl inspect \
-  --tenant sandboxctl-smoke --lease-intent missing-lease --format json >/dev/null 2>&1; then
-  echo "DEMO_ASSERTION_FAILED: missing lease incorrectly accepted" >&2
-  exit 1
-fi
-
-printf '%s\n' "=== Safe Sandbox inspection (unattested, read-only) ==="
-printf '%s\n' "$json" "$text_report"
-printf '%s\n' "SANDBOX_DEMO_PASS: no dispatch, retry, success or release authority"
- ./cmd/sandboxctl
+SANDBOX_JOURNAL_READ_DSN="$dsn" go test -count=1 -v -run '^TestSandboxctlRealScopedReaderFixture$' ./cmd/sandboxctl
 json="$(SANDBOX_JOURNAL_READ_DSN="$dsn" go run ./cmd/sandboxctl inspect \
   --tenant sandboxctl-smoke --lease-intent lease-smoke-1 \
   --sandbox-uid sandbox-smoke-1 --command-id command-smoke-1 --format json)"

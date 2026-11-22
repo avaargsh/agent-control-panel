@@ -56,7 +56,10 @@ jobs:
         run: go mod verify
       - name: Sandbox journal PostgreSQL replay and rollback tests
         working-directory: services/sandbox-journal
-        run: go test -race -count=1 -v ./...
+        # All Go packages share one disposable PostgreSQL database. Serializing
+        # package execution avoids concurrent DDL/role migrations while -race
+        # still instruments every test and its internal concurrent goroutines.
+        run: go test -p 1 -race -count=1 -v ./...
       - name: Vet independent sandbox module
         working-directory: services/sandbox-journal
         run: go vet ./...
