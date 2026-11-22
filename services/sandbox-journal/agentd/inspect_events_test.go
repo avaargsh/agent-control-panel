@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
