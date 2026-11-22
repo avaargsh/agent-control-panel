@@ -2,6 +2,8 @@ package lease
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -45,6 +47,13 @@ func TestLeaseRuntimeDatabaseRolesDenyEscalationAndPreserveCAS(t *testing.T) {
 	if _, err := owner.pool.Exec(ctx, "GRANT acp_sandbox_lease_reader TO "+readerLogin); err != nil {
 		t.Fatal(err)
 	}
+	// Only the owner/DBA can bind an authenticated LOGIN to a trusted tenant.
+	// A caller-supplied tenant field or SET ROLE must never change this.
+	if _, err := owner.pool.Exec(ctx, `INSERT INTO public.sandbox_lease_db_principals
+		(login_name, tenant_id) VALUES ($1,'tenant-a'),($2,'tenant-a')`,
+		writerLogin, readerLogin); err != nil {
+		t.Fatal("DBA tenant binding:", err)
+	}
 	connect := func(user, password string) *pgxpool.Pool {
 		t.Helper()
 		config, err := pgxpool.ParseConfig(os.Getenv("SANDBOX_JOURNAL_TEST_DSN"))
@@ -74,6 +83,171 @@ func TestLeaseRuntimeDatabaseRolesDenyEscalationAndPreserveCAS(t *testing.T) {
 	if _, err := New(reader).Get(ctx, in.TenantID, in.LeaseIntentID); err != nil {
 		t.Fatalf("least privileged reader cannot inspect: %v", err)
 	}
+	// Two authenticated non-owner DB sessions must not cross tenant
+	// boundaries even if a caller supplies another tenant_id directly. A
+	// tenant-scoped WHERE parameter in Go is not database authorization.
+	foreign := in
+	foreign.TenantID = "tenant-b"
+	foreign.LeaseIntentID = "foreign-lease-1"
+	if _, created, err := owner.Create(ctx, foreign); err != nil || !created {
+		t.Fatalf("owner fixture failed to create foreign tenant: created=%t err=%v", created, err)
+	}
+	for _, tc := range []struct {
+		name string
+		run  func() error
+	}{
+		{"writer_foreign_read", func() error {
+			_, err := New(writer).Get(ctx, foreign.TenantID, foreign.LeaseIntentID)
+			if errors.Is(err, ErrNotFound) {
+				return nil
+			}
+			return fmt.Errorf("cross-tenant writer read result=%v, want NotFound", err)
+		}},
+		{"reader_foreign_read", func() error {
+			_, err := New(reader).Get(ctx, foreign.TenantID, foreign.LeaseIntentID)
+			if errors.Is(err, ErrNotFound) {
+				return nil
+			}
+			return fmt.Errorf("cross-tenant reader read result=%v, want NotFound", err)
+		}},
+		{"writer_foreign_create", func() error {
+			bad := foreign
+			bad.LeaseIntentID = "foreign-lease-new"
+			_, created, err := New(writer).Create(ctx, bad)
+			if err != nil && !created {
+				return nil
+			}
+			return fmt.Errorf("writer inserted across tenant: created=%t err=%v", created, err)
+		}},
+		{"writer_foreign_cancel", func() error {
+			_, err := New(writer).CancelBeforeProvision(ctx, foreign.TenantID, foreign.LeaseIntentID, 1)
+			if errors.Is(err, ErrNotFound) {
+				return nil
+			}
+			return fmt.Errorf("writer cancelled across tenant: %v", err)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.run(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+	// Prove RLS is not just a blanket deny for unknown tenants: a second
+	// real LOGIN bound by the DBA to tenant-b must succeed on tenant-b, while
+	// the very same principal cannot read or write tenant-a.
+	const bLogin = "sandbox_lease_ci_tenant_b_login"
+	const bPassword = "ci-only-sandbox-tenant-b"
+	if _, err := owner.pool.Exec(ctx, "CREATE ROLE "+bLogin+
+		" LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD '"+bPassword+"'"); err != nil {
+		t.Fatal("DBA test-only tenant-b LOGIN:", err)
+	}
+	if _, err := owner.pool.Exec(ctx, "GRANT acp_sandbox_lease_writer TO "+bLogin); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := owner.pool.Exec(ctx, `INSERT INTO public.sandbox_lease_db_principals
+		(login_name,tenant_id) VALUES ($1,'tenant-b')`, bLogin); err != nil {
+		t.Fatal("DBA bind tenant-b:", err)
+	}
+	writerB := connect(bLogin, bPassword)
+	if got, err := New(writerB).Get(ctx, foreign.TenantID, foreign.LeaseIntentID); err != nil || got.Intent != foreign {
+		t.Fatalf("authorized tenant-b account could not read own state: %+v %v", got, err)
+	}
+	if _, err := New(writerB).Get(ctx, in.TenantID, in.LeaseIntentID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("tenant-b accessed tenant-a: %v", err)
+	}
+	ownB := foreign
+	ownB.LeaseIntentID = "tenant-b-new"
+	if _, created, err := New(writerB).Create(ctx, ownB); err != nil || !created {
+		t.Fatalf("tenant-b unable to create own intent: created=%v err=%v", created, err)
+	}
+	if got, err := New(writerB).CancelBeforeProvision(ctx, ownB.TenantID, ownB.LeaseIntentID, 1); err != nil || got.Generation != 2 {
+		t.Fatalf("tenant-b unable to cancel own intent: %+v %v", got, err)
+	}
+
+	// A role grant by itself is NOT a tenant binding. An authenticated,
+	// otherwise valid LOGIN without a DBA-owned mapping sees no rows and
+	// cannot create even a syntactically valid lease intent.
+	const unboundLogin = "sandbox_lease_ci_unbound_login"
+	const unboundPassword = "ci-only-unbound-tenant"
+	if _, err := owner.pool.Exec(ctx, "CREATE ROLE "+unboundLogin+
+		" LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD '"+unboundPassword+"'"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := owner.pool.Exec(ctx, "GRANT acp_sandbox_lease_writer TO "+unboundLogin); err != nil {
+		t.Fatal(err)
+	}
+	unbound := connect(unboundLogin, unboundPassword)
+	if _, err := New(unbound).Get(ctx, in.TenantID, in.LeaseIntentID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unbound LOGIN read lease data: %v", err)
+	}
+	unboundInput := in
+	unboundInput.LeaseIntentID = "unbound-should-not-write"
+	if _, created, err := New(unbound).Create(ctx, unboundInput); err == nil || created {
+		t.Fatalf("unbound LOGIN created lease: created=%v err=%v", created, err)
+	}
+
+	// Arbitrary session variables are caller-controlled and cannot change
+	// the database's authenticated LOGIN -> Tenant binding.
+	txGUC, err := writer.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := txGUC.Exec(ctx, "SET LOCAL app.tenant_id='tenant-b'"); err != nil {
+		t.Fatal(err)
+	}
+	var foreignRows int
+	if err := txGUC.QueryRow(ctx, `SELECT count(*) FROM public.sandbox_lease_intents
+		WHERE tenant_id='tenant-b'`).Scan(&foreignRows); err != nil {
+		t.Fatal(err)
+	}
+	_ = txGUC.Rollback(ctx)
+	if foreignRows != 0 {
+		t.Fatalf("caller-controlled session tenant GUC bypassed RLS: %d", foreignRows)
+	}
+	// INSERT and the three mutable UPDATE columns are intentionally granted
+	// to the writer; PostgreSQL must still block malformed partial transactions
+	// at COMMIT, not rely on a permission error at the statement boundary.
+	for _, tc := range []struct {
+		name string
+		sql  string
+	}{
+		{
+			name: "writer_cannot_cancel_without_event",
+			sql: `UPDATE public.sandbox_lease_intents
+				SET state='CANCELLED_BEFORE_PROVISION', generation=2, updated_at=clock_timestamp()
+				WHERE tenant_id='tenant-a' AND lease_intent_id='sandbox-intent-1'`,
+		},
+		{
+			name: "writer_cannot_preseed_future_cancellation",
+			sql: `INSERT INTO public.sandbox_lease_intent_events
+				(tenant_id,lease_intent_id,generation,event_type,payload)
+				SELECT tenant_id, lease_intent_id, 2,
+				'sandbox.lease-intent.cancelled-before-provision',
+				jsonb_build_object('run_id',run_id,'runtime_attempt_id',runtime_attempt_id,
+				'request_digest',request_digest)
+				FROM public.sandbox_lease_intents
+				WHERE tenant_id='tenant-a' AND lease_intent_id='sandbox-intent-1'`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tx, err := writer.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = tx.Exec(ctx, tc.sql); err != nil {
+				_ = tx.Rollback(ctx)
+				t.Fatalf("test must reach COMMIT under limited writer privileges: %v", err)
+			}
+			if err = tx.Commit(ctx); err == nil {
+				t.Fatal("limited writer committed a partial source-owned fact")
+			}
+			got, inspectErr := New(reader).Get(ctx, in.TenantID, in.LeaseIntentID)
+			if inspectErr != nil || got.Generation != 1 || got.State != WaitingForPermit {
+				t.Fatalf("rejected direct write changed durable lease state: %+v %v", got, inspectErr)
+			}
+		})
+	}
 	for _, tc := range []struct{ name, sql string }{
 		{"disable_update_trigger", "ALTER TABLE public.sandbox_lease_intent_events DISABLE TRIGGER sandbox_lease_outbox_no_update_delete"},
 		{"disable_truncate_trigger", "ALTER TABLE public.sandbox_lease_intent_events DISABLE TRIGGER sandbox_lease_outbox_no_truncate"},
@@ -83,6 +257,8 @@ func TestLeaseRuntimeDatabaseRolesDenyEscalationAndPreserveCAS(t *testing.T) {
 		{"rewrite_run", "UPDATE public.sandbox_lease_intents SET run_id=run_id"},
 		{"delete_intent", "DELETE FROM public.sandbox_lease_intents"},
 		{"read_other_service_journal", "SELECT count(*) FROM public.sandbox_journal_commands"},
+		{"read_dba_tenant_bindings", "SELECT count(*) FROM public.sandbox_lease_db_principals"},
+		{"rewrite_dba_tenant_binding", "UPDATE public.sandbox_lease_db_principals SET tenant_id='tenant-b' WHERE login_name='sandbox_lease_ci_writer_login'"},
 		{"create_table", "CREATE TABLE public.sandbox_lease_ci_escalation (id integer)"},
 		{"escalate_to_owner", "SET ROLE sandbox_ci"},
 	} {
