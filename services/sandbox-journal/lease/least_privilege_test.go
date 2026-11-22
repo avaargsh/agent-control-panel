@@ -2,6 +2,8 @@ package lease
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -73,6 +75,56 @@ func TestLeaseRuntimeDatabaseRolesDenyEscalationAndPreserveCAS(t *testing.T) {
 	}
 	if _, err := New(reader).Get(ctx, in.TenantID, in.LeaseIntentID); err != nil {
 		t.Fatalf("least privileged reader cannot inspect: %v", err)
+	}
+	// Two authenticated non-owner DB sessions must not cross tenant
+	// boundaries even if a caller supplies another tenant_id directly. A
+	// tenant-scoped WHERE parameter in Go is not database authorization.
+	foreign := in
+	foreign.TenantID = "tenant-b"
+	foreign.LeaseIntentID = "foreign-lease-1"
+	if _, created, err := owner.Create(ctx, foreign); err != nil || !created {
+		t.Fatalf("owner fixture failed to create foreign tenant: created=%t err=%v", created, err)
+	}
+	for _, tc := range []struct {
+		name string
+		run  func() error
+	}{
+		{"writer_foreign_read", func() error {
+			_, err := New(writer).Get(ctx, foreign.TenantID, foreign.LeaseIntentID)
+			if errors.Is(err, ErrNotFound) {
+				return nil
+			}
+			return fmt.Errorf("cross-tenant writer read result=%v, want NotFound", err)
+		}},
+		{"reader_foreign_read", func() error {
+			_, err := New(reader).Get(ctx, foreign.TenantID, foreign.LeaseIntentID)
+			if errors.Is(err, ErrNotFound) {
+				return nil
+			}
+			return fmt.Errorf("cross-tenant reader read result=%v, want NotFound", err)
+		}},
+		{"writer_foreign_create", func() error {
+			bad := foreign
+			bad.LeaseIntentID = "foreign-lease-new"
+			_, created, err := New(writer).Create(ctx, bad)
+			if err != nil && !created {
+				return nil
+			}
+			return fmt.Errorf("writer inserted across tenant: created=%t err=%v", created, err)
+		}},
+		{"writer_foreign_cancel", func() error {
+			_, err := New(writer).CancelBeforeProvision(ctx, foreign.TenantID, foreign.LeaseIntentID, 1)
+			if errors.Is(err, ErrNotFound) {
+				return nil
+			}
+			return fmt.Errorf("writer cancelled across tenant: %v", err)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.run(); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 	// INSERT and the three mutable UPDATE columns are intentionally granted
 	// to the writer; PostgreSQL must still block malformed partial transactions
