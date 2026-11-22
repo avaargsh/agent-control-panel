@@ -157,6 +157,32 @@ func TestLeaseRevocationVerificationRequiresCommittedState(t *testing.T) {
 			t.Fatal("revocation verifier accepted residual direct lease SELECT grant")
 		}
 	})
+	t.Run("direct_lease_column_privilege", func(t *testing.T) {
+		if _, err := owner.pool.Exec(ctx,
+			"GRANT UPDATE (state) ON public.sandbox_lease_intents TO "+login); err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			_, _ = owner.pool.Exec(context.Background(),
+				"REVOKE UPDATE (state) ON public.sandbox_lease_intents FROM "+login)
+		}()
+		if err := verifyCommittedRevocation(ctx, independent, login, oid); err == nil {
+			t.Fatal("revocation verifier accepted residual direct lease column UPDATE grant")
+		}
+	})
+	t.Run("direct_governance_receipt_privilege", func(t *testing.T) {
+		if _, err := owner.pool.Exec(ctx,
+			"GRANT SELECT ON TABLE public.sandbox_lease_login_revocations TO "+login); err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			_, _ = owner.pool.Exec(context.Background(),
+				"REVOKE SELECT ON TABLE public.sandbox_lease_login_revocations FROM "+login)
+		}()
+		if err := verifyCommittedRevocation(ctx, independent, login, oid); err == nil {
+			t.Fatal("revocation verifier accepted direct governance receipt SELECT grant")
+		}
+	})
 }
 
 // Test that a receipt alone is not proof. A live authenticated backend must
