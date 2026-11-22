@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/avaargsh/agent-control-panel/internal/runintent"
 	runpg "github.com/avaargsh/agent-control-panel/internal/runintent/postgres"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -145,6 +146,41 @@ func TestTwoTenantCatalogScopesRealPostgres(t *testing.T) {
 			"SELECT (SELECT count(*) FROM run_intents WHERE tenant_id=$1), (SELECT count(*) FROM outbox_events WHERE tenant_id=$1)",
 			tc.tenant).Scan(&intents, &events); err != nil || intents != 1 || events != 1 {
 			t.Fatalf("foreign write or replay escaped tenant partition: intents=%d events=%d err=%v", intents, events, err)
+		}
+	}
+
+	// Test-only ACCEPTED fixture: Runtime alone owns real Run creation and
+	// acceptance receipts. This exercises the actual ACP authority projection,
+	// not the independent Runtime receipt or Temporal state security.
+	runs := []struct {
+		intent runintent.Intent
+		runID  string
+	}{
+		{first, "11111111-1111-4111-8111-111111111111"},
+		{second, "22222222-2222-4222-8222-222222222222"},
+	}
+	for _, run := range runs {
+		if _, err := pool.Exec(ctx, `UPDATE run_intents
+			SET status='ACCEPTED',runtime_run_id=$3,workflow_id=$4,version=version+1
+			WHERE id=$1::uuid AND tenant_id=$2`,
+			run.intent.ID, run.intent.TenantID, run.runID, "agent-run/v1/"+run.runID); err != nil {
+			t.Fatal(err)
+		}
+		ref := runpg.ExecutionAuthorityRef{
+			TenantID: run.intent.TenantID, RunIntentID: run.intent.ID,
+			RunID: run.runID, RequestDigest: run.intent.RequestDigest,
+		}
+		if current, err := repo.GetExecutionAuthority(ctx, ref); err != nil || current.Ref != ref {
+			t.Fatalf("own tenant lost accepted Run authority: %v", err)
+		}
+		foreign := ref
+		if ref.TenantID == actors[0].tenant {
+			foreign.TenantID = actors[1].tenant
+		} else {
+			foreign.TenantID = actors[0].tenant
+		}
+		if _, err := repo.GetExecutionAuthority(ctx, foreign); err != runpg.ErrCatalogDenied {
+			t.Fatalf("foreign tenant acquired an existing Run authority: %v", err)
 		}
 	}
 }
