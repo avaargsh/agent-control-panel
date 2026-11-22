@@ -181,3 +181,41 @@ func TestInspectSourceVerifierDetectsReorderedTamperedAndReboundEvents(t *testin
 		t.Fatal("source inspect events are not append-only")
 	}
 }
+
+func TestConcurrentInspectSourceJournalsOneOriginalAttemptInOrder(t *testing.T) {
+	db := testDatabase(t)
+	cmd, ref := startOwnedTestProcess(t, "10")
+	defer func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }()
+	seedAlreadyAuthorizedAttempt(t, db, ref)
+	pub, priv := testSourceInspectKey(t)
+	const parallel = 6
+	var wg sync.WaitGroup
+	errorsCh := make(chan error, parallel)
+	for i := 0; i < parallel; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			event, err := InspectAndJournal(context.Background(), db, ref, pub, priv)
+			if err != nil {
+				errorsCh <- err
+				return
+			}
+			if event.Result.State != Unknown || event.Result.CanRetry ||
+				event.Result.CanDeclareReleased || event.Event.ExitReceiptDigest != "" {
+				errorsCh <- ErrUnverified
+			}
+		}()
+	}
+	wg.Wait()
+	close(errorsCh)
+	for err := range errorsCh {
+		t.Fatalf("concurrent Inspect incorrectly accepted or failed: %v", err)
+	}
+	events, err := LoadInspectChain(context.Background(), db, ref, pub, time.Now().UTC())
+	if err != nil || len(events) != parallel {
+		t.Fatalf("parallel Inspect failed single-attempt ordered durable count: %d %v", len(events), err)
+	}
+	if events[len(events)-1].Event.JournalVersion != parallel {
+		t.Fatal("parallel inspection did not advance exact journal version")
+	}
+}
