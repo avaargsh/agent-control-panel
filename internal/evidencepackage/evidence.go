@@ -75,6 +75,9 @@ type Statement struct {
 	RunIntentID        string            `json:"run_intent_id"`
 	RequestDigest      string            `json:"request_digest"`
 	OriginalDigest     string            `json:"original_digest"`
+	// ParentExportDigest is a candidate link to an upstream owner-signed export.
+	// It is NOT interpreted by the v2 Verify API; callers must opt into VerifyLinked.
+	ParentExportDigest string            `json:"parent_export_digest,omitempty"`
 	SourceRevision     uint64            `json:"source_revision"`
 	ObservedAt         time.Time         `json:"observed_at"`
 	Status             string            `json:"status"`
