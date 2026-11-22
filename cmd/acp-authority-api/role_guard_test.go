@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -11,6 +12,7 @@ import (
 
 	runpg "github.com/avaargsh/agent-control-panel/internal/runintent/postgres"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -68,6 +70,9 @@ func TestAuthorityDatabaseRoleFailClosed(t *testing.T) {
 	if _, err := admin.Exec(ctx, "CREATE TABLE "+foreignSchema+".secret (id bigint, payload text)"); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := admin.Exec(ctx, "INSERT INTO "+foreignSchema+".secret VALUES (1, 'foreign-schema-canary')"); err != nil {
+		t.Fatal(err)
+	}
 
 	passwordBytes := make([]byte, 24)
 	if _, err := rand.Read(passwordBytes); err != nil {
@@ -88,6 +93,7 @@ func TestAuthorityDatabaseRoleFailClosed(t *testing.T) {
 
 	for _, statement := range []string{
 		"GRANT USAGE ON SCHEMA " + schema + " TO " + role,
+		"GRANT USAGE ON SCHEMA " + foreignSchema + " TO " + role,
 		"GRANT SELECT ON " + schema + "." + strings.Join([]string{
 			"run_intents", "admission_tenants", "admission_projects",
 			"admission_principals", "admission_memberships",
@@ -151,9 +157,25 @@ func TestAuthorityDatabaseRoleFailClosed(t *testing.T) {
 			if _, err := admin.Exec(ctx, tc.grant); err != nil {
 				t.Fatal(err)
 			}
+			if strings.HasPrefix(tc.name, "foreign schema") {
+				// Actual independently authenticated reader proves the grant
+				// is usable, not merely present in pg_catalog metadata.
+				var payload string
+				if err := reader.QueryRow(ctx, "SELECT payload FROM "+foreignSchema+".secret").Scan(&payload); err != nil || payload != "foreign-schema-canary" {
+					t.Fatalf("foreign schema grant was not effectively readable: payload=%q err=%v", payload, err)
+				}
+			}
 			check(t, false)
 			if _, err := admin.Exec(ctx, tc.revoke); err != nil {
 				t.Fatal(err)
+			}
+			if strings.HasPrefix(tc.name, "foreign schema") {
+				var payload string
+				err := reader.QueryRow(ctx, "SELECT payload FROM "+foreignSchema+".secret").Scan(&payload)
+				var pgErr *pgconn.PgError
+				if !errors.As(err, &pgErr) || pgErr.Code != "42501" {
+					t.Fatalf("foreign schema read must deny with SQLSTATE 42501 after revoke: err=%v", err)
+				}
 			}
 			check(t, true)
 		})
