@@ -90,6 +90,9 @@ func (s *AttemptStore) ConsumeReviewEvidence(
 	if ctx == nil || s == nil || s.pool == nil {
 		return EvaluationReceipt{}, ErrAttemptUnconfigured
 	}
+	if err := ctx.Err(); err != nil {
+		return EvaluationReceipt{}, err
+	}
 	// Verify the bounded signed claim before looking up the challenge, so
 	// unsigned callers cannot probe whether a nonce was issued. Do not fetch
 	// external evidence for a missing, expired or already-consumed attempt.
@@ -154,7 +157,7 @@ func (s *AttemptStore) ConsumeReviewEvidence(
 func (s *AttemptStore) preflightPendingAttempt(ctx context.Context, policy BaselinePolicy, policyDigest string) error {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
 	if err != nil {
-		return fmt.Errorf("%w: begin nonce preflight: %v", ErrAttemptUnconfigured, err)
+		return fmt.Errorf("%w: begin nonce preflight: %w", ErrAttemptUnconfigured, err)
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
 	if err := bindAttemptScope(ctx, tx, policy); err != nil {
@@ -168,13 +171,13 @@ func (s *AttemptStore) preflightPendingAttempt(ctx context.Context, policy Basel
 		  AND consumed_at IS NULL AND expires_at>clock_timestamp()
 	)`, policy.VerificationNonce, policy.TenantID, policy.ProjectID,
 		policy.ExperimentID, policyDigest).Scan(&pending); err != nil {
-		return fmt.Errorf("%w: inspect pending attempt: %v", ErrAttemptUnconfigured, err)
+		return fmt.Errorf("%w: inspect pending attempt: %w", ErrAttemptUnconfigured, err)
 	}
 	if !pending {
 		return ErrAttemptUnavailable
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("%w: commit nonce preflight: %v", ErrAttemptUnconfigured, err)
+		return fmt.Errorf("%w: commit nonce preflight: %w", ErrAttemptUnconfigured, err)
 	}
 	return nil
 }
@@ -182,7 +185,7 @@ func (s *AttemptStore) preflightPendingAttempt(ctx context.Context, policy Basel
 func bindAttemptScope(ctx context.Context, tx pgx.Tx, p BaselinePolicy) error {
 	_, err := tx.Exec(ctx, "SELECT set_config('app.tenant_id',$1,true), set_config('app.project_id',$2,true)", p.TenantID, p.ProjectID)
 	if err != nil {
-		return fmt.Errorf("%w: bind trusted DB scope: %v", ErrAttemptUnconfigured, err)
+		return fmt.Errorf("%w: bind trusted DB scope: %w", ErrAttemptUnconfigured, err)
 	}
 	return nil
 }
