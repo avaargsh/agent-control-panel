@@ -4,7 +4,7 @@
 
 ## What is checked
 
-The verifier accepts one original ACP/Runtime subject, one real Worker SIGKILL fault and one independently supplied original provider allocation binding. It requires exactly **seven source-signed lifecycle statements** in addition to the **eight original signed before/after observations** already required by `internal/postfault`. Each original JSON observation is included as base64 bytes and checked against an externally trusted Ed25519 owner key, using the exact domain `acp.evidence-observation/v1\x00`. No source may share a signing key with another authority.
+The verifier accepts one original ACP/Runtime subject, one real Worker SIGKILL fault and one independently supplied original provider allocation binding. It requires exactly **seven source-signed lifecycle statements** in addition to the **eight original signed before/after observations** already required by `internal/postfault`. Each signed exported observation and its native source receipt are included as separate base64 byte strings and checked against an externally trusted Ed25519 owner key, using the exact domain `acp.evidence-observation/v1\x00`. No source may share a signing key with another authority.
 
 | Gate | Signed stages | Consistency checked | Still required for actual gate PASS |
 | --- | --- | --- | --- |
@@ -18,8 +18,8 @@ The verifier accepts one original ACP/Runtime subject, one real Worker SIGKILL f
 
 ## Inputs and contract
 
-- `package.json` has schema `acp.evidence-package/v1`: original `subject`, `run_intent_id`, `request_digest`, `fault`, `postfault_b64` (exact signed postfault bundle bytes), and seven `receipts` with `stage`, `authority`, `payload_b64`, `signature_b64`.
-- Each signed source JSON has schema `acp.evidence-observation/v1`; it binds the same subject, RunIntent, request digest, source/stage and observation timestamp. Stage-specific fields must match the issuing authority and other receipts.
+- `package.json` has schema `acp.evidence-package/v1`: original `subject`, `run_intent_id`, `request_digest`, `fault`, `postfault_b64` (exact signed postfault bundle bytes), and seven `receipts` with `stage`, `authority`, `payload_b64` (the signed export), `original_b64` (opaque unmodified native receipt bytes), `signature_b64`. The signed export contains `original_digest` equal to SHA256 of `original_b64`. The verifier rejects a missing or altered native receipt, even if the export signature remains valid.
+- Each signed source export JSON has schema `acp.evidence-observation/v1`; it binds the same subject, RunIntent, request digest, source/stage, raw source receipt hash and observation timestamp. Stage-specific fields must match the issuing authority and other receipts. The original opaque receipt is retained byte-for-byte; a separate owner-owned exporter must demonstrate its actual provenance and schema. This checker does not attempt to infer that opaque bytes prove a real provider operation.
 - `expected.json` has schema `acp.evidence-expected/v1`: the same independently accepted subject, RunIntent, request digest, actual fault ID/kind/time and original `allocation_id`, `provider_uid`, `provider_generation`. **It must not be copied from package.json**, the model, an untrusted task payload, or the receipt under verification.
 - `trust/` contains seven independent, pinned, hex-encoded Ed25519 **public** keys: `acp.pub`, `decision.pub`, `guard.pub`, `runtime.pub`, `sandbox.pub`, `agentd.pub`, `compute.pub`. Private keys never enter ACP, its CLI, this package or CI logs.
 - The postfault bundle remains bound to the same Run and fault and is verified with the existing `postfault.Verify`. Missing or unresolved UNKNOWN, stale/rotated Permit, changed checkpoint, changed sandbox UID, a different provider generation, absent trust root or incomplete release makes the verdict **BLOCKED**.
