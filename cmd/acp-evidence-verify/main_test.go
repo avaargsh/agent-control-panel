@@ -58,7 +58,6 @@ func TestCLIRequiresPairedIndependentArchiveInputs(t *testing.T) {
 	}
 }
 
-
 func TestCLIRequireLinkedOptInDoesNotSilentlyFallBackOrTrustArchive(t *testing.T) {
 	base := []string{
 		"--package", "missing.json",
