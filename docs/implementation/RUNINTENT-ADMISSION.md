@@ -121,8 +121,11 @@ deployment gates.
 The authority service now additionally **fails at startup** if its actual
 PostgreSQL LOGIN is privileged (superuser, BYPASSRLS, role/database creator),
 can create objects in any non-system schema, has database-level CREATE
-privilege (which permits making new schemas), owns or inherits ownership of its
-schema/tables, lacks any of its seven required SELECT grants, or has write
+privilege (which permits making new schemas), can invoke an owner-privileged
+SECURITY DEFINER routine in a reachable non-system schema through effective
+schema USAGE and routine EXECUTE (including default PUBLIC EXECUTE), owns or
+inherits ownership of its schema/tables, lacks any of its seven required SELECT
+grants, or has write
 privileges or additional application-table reads in that schema. Both table-
 level and effective column-level grants are checked, including `PUBLIC` grants:
 a column-only `SELECT` on Outbox or a column-only `UPDATE` on RunIntent is
@@ -133,9 +136,14 @@ privileges appear limited. The separate
 `TestAuthorityDatabaseRoleFailClosed` uses a real, independently authenticated
 LOGIN in an isolated PostgreSQL test database, then adds and revokes excessive
 grants to prove the gate changes its decision, including actual CREATE TABLE
-in a foreign schema and CREATE SCHEMA using a database-level grant. These
-are executed CI regression cases, not a claim that startup validation
-continuously monitors future grants. It requires `PGTEST_DSN` and is
+in a foreign schema and CREATE SCHEMA using a database-level grant.
+A further negative case creates a real SECURITY DEFINER SQL function that
+reads an otherwise inaccessible foreign table: the independently authenticated
+reader can call it through PostgreSQL's default PUBLIC EXECUTE, but the role
+startup gate now must reject it; revoking PUBLIC/direct EXECUTE restores the
+least-privilege state. This tests **effective callable routines**, not routine
+presence alone. These are executed CI regression cases, not a claim that
+startup validation continuously monitors future grants. It requires `PGTEST_DSN` and is
 **not** a production deployment or a substitute for tenant-specific RLS.
 A compromised authority service with this read-only role could still read
 other tenants' rows in its granted tables via raw SQL: the mTLS service's
