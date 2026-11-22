@@ -94,6 +94,7 @@ func evidenceReaderConfigured(reader any) bool {
 		return true
 	}
 }
+
 // contextCheckedEvidenceReader checks for cancellation before each source read.
 // A provider must still support cancellation of an already-blocked Read itself;
 // this wrapper prevents additional network or disk reads after cancellation.
