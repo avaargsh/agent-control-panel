@@ -18,6 +18,12 @@ SHA = re.compile(r"^[0-9a-f]{40}$")
 REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 SCOPED_SANDBOX = frozenset((81, 83, 84, 102))
 PRODUCTION_GATE = 91
+# Source-pinned stacked lineage, never inferred from a child retarget alone.
+STACK_PARENTS = {
+    83: (81, "a2b6ea8b040180760e81273f16206e0742e86274"),
+    84: (83, "b2bfa21277621d5af0463329b5d19974a59ee00b"),
+    102: (84, "e9d74571b16d1c994037bdb7e13b3af4cfa5ba50"),
+}
 
 
 def evaluate(state, *, expected_head, expected_main=None):
@@ -46,6 +52,21 @@ def evaluate(state, *, expected_head, expected_main=None):
         errors.append("PR #91 real same-Run four-authority postfault/physical evidence remains independently BLOCKED")
     elif number not in SCOPED_SANDBOX:
         errors.append("PR is outside the pinned non-dispatch Sandbox review scope")
+    if number in STACK_PARENTS:
+        parent_number, expected_parent_head = STACK_PARENTS[number]
+        parent = state.get("stack_parent") or {}
+        parent_head = (parent.get("head") or {}).get("sha")
+        parent_base = (parent.get("base") or {}).get("ref")
+        merged_sha = parent.get("merge_commit_sha")
+        if (parent.get("number") != parent_number or parent.get("merged") is not True or
+                parent_head != expected_parent_head or parent_base != "main" or
+                not isinstance(merged_sha, str) or not SHA.fullmatch(merged_sha) or
+                parent.get("on_current_main") is not True):
+            errors.append(
+                f"stack parent #{parent_number} exact reviewed HEAD must already"
+                " be merged into current main with verified commit ancestry"
+            )
+
     if pr.get("state") != "open" or pr.get("merged") is not False:
         errors.append("PR is not verified open and unmerged")
     if pr.get("draft") is not False:
@@ -175,7 +196,24 @@ def collect_live(repo, number, token):
         if login and login.lower() != ((pr.get("user") or {}).get("login") or "").lower():
             perms = _get_json(repo, f"/collaborators/{login}/permission", token)
             permissions[login.lower()] = perms.get("permission")
+    # GitHub's retarget operation does not establish dependency closure.
+    # Verify the exact reviewed parent PR was merged into main, and compare
+    # its real merge commit against the current main commit ancestry.
+    parent = None
+    if number in STACK_PARENTS:
+        parent_number, _ = STACK_PARENTS[number]
+        parent = _get_json(repo, f"/pulls/{parent_number}", token)
+        merge_sha = parent.get("merge_commit_sha")
+        main_sha = (branch.get("commit") or {}).get("sha")
+        parent["on_current_main"] = False
+        if parent.get("merged") is True and isinstance(merge_sha, str) and SHA.fullmatch(merge_sha):
+            compare = _get_json(repo, f"/compare/{merge_sha}...{main_sha}", token)
+            parent["on_current_main"] = (
+                (compare.get("merge_base_commit") or {}).get("sha") == merge_sha
+                and compare.get("behind_by") == 0
+            )
     return {
+        "stack_parent": parent,
         "pr": pr, "branch": branch, "protection": protection,
         "reviews": reviews, "checks": checks, "reviewer_permissions": permissions,
     }
