@@ -3,7 +3,11 @@ package postgres
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
+	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // The version-13 checksum proves what was initially applied. It must not
@@ -58,6 +62,50 @@ func TestOptimizationAttemptMigrationRejectsColumnMetadataDrift(t *testing.T) {
 			}
 			if err := Migrate(ctx, pool); !errors.Is(err, ErrSchemaDrift) {
 				t.Fatalf("weak v13 column metadata accepted: case=%q err=%v", tc.name, err)
+			}
+		})
+	}
+}
+
+// RLS and ACL checks must not implicitly trust a new table or trigger-function
+// owner: owner privileges are not represented as an unexpected non-owner GRANT.
+// A privileged accidental ownership transfer is schema drift and must block
+// the migration gate before the untrusted role can edit the security boundary.
+func TestOptimizationAttemptMigrationRejectsOwnershipDrift(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		object string
+	}{
+		{"attempt table", "TABLE optimization_verification_attempts"},
+		{"mutation trigger function", "FUNCTION reject_optimization_attempt_mutation()"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, pool := testRepository(t)
+			ctx := context.Background()
+			role := fmt.Sprintf("opt_wrong_owner_%d", time.Now().UnixNano())
+			roleID := pgx.Identifier{role}.Sanitize()
+			var migrator string
+			if err := pool.QueryRow(ctx, "SELECT current_user").Scan(&migrator); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := pool.Exec(ctx, "CREATE ROLE "+roleID+" NOLOGIN NOBYPASSRLS"); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				// Restore object ownership before dropping the disposable role.
+				stmt := "ALTER " + tc.object + " OWNER TO " + pgx.Identifier{migrator}.Sanitize()
+				if _, err := pool.Exec(context.Background(), stmt); err != nil {
+					t.Errorf("restore reviewed migration owner: %v", err)
+				}
+				if _, err := pool.Exec(context.Background(), "DROP ROLE "+roleID); err != nil {
+					t.Errorf("drop disposable recipient role: %v", err)
+				}
+			})
+			if _, err := pool.Exec(ctx, "ALTER "+tc.object+" OWNER TO "+roleID); err != nil {
+				t.Fatalf("inject migration object owner drift: %v", err)
+			}
+			if err := Migrate(ctx, pool); !errors.Is(err, ErrSchemaDrift) {
+				t.Fatalf("%s owner transfer accepted as valid v13 security boundary: %v", tc.name, err)
 			}
 		})
 	}
