@@ -75,5 +75,16 @@ jobs:
             echo 'PGTEST_DSN role test was skipped: refuse security receipt' >&2
             exit 1
           fi
+      - name: Prove two-tenant admission and input isolation against PostgreSQL
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(go test -count=1 -v -run TestTwoTenantCatalogScopesRealPostgres ./internal/admission)"
+          printf '%s\n' "$output"
+          grep -F -- '--- PASS: TestTwoTenantCatalogScopesRealPostgres' <<< "$output"
+          if grep -F -- '--- SKIP: TestTwoTenantCatalogScopesRealPostgres' <<< "$output"; then
+            echo 'two-tenant PostgreSQL isolation test was skipped' >&2
+            exit 1
+          fi
       - name: Race-enabled tests
         run: go test -race -count=1 ./...
