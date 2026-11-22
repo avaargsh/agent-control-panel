@@ -3,6 +3,9 @@ package agentd
 import (
 	"context"
 	"errors"
+	"crypto/rand"
+	"encoding/hex"
+	"os"
 	"fmt"
 	"os"
 	"testing"
@@ -16,6 +19,50 @@ import (
 // This test requires a distinct PostgreSQL LOGIN. It must not pass through
 // the owner pool used by the source writer or rely on SET ROLE as a substitute
 // for an independently authenticated reader identity.
+func newEvidenceReaderPool(t *testing.T, owner *pgxpool.Pool) *pgxpool.Pool {
+	t.Helper()
+	role := fmt.Sprintf("acp_agentd_reader_login_%d", time.Now().UnixNano())
+	roleSQL := pgx.Identifier{role}.Sanitize()
+	passwordBytes := make([]byte, 24)
+	if _, err := rand.Read(passwordBytes); err != nil {
+		t.Fatal(err)
+	}
+	password := hex.EncodeToString(passwordBytes)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if _, err := owner.Exec(ctx, "CREATE ROLE "+roleSQL+" LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS PASSWORD '"+password+"'"); err != nil {
+		t.Fatalf("create isolated evidence reader LOGIN: %v", err)
+	}
+	if _, err := owner.Exec(ctx, "GRANT sandbox_agentd_evidence_reader TO "+roleSQL); err != nil {
+		_, _ = owner.Exec(context.Background(), "DROP ROLE "+roleSQL)
+		t.Fatalf("grant the dedicated tenant-scoped evidence reader role: %v", err)
+	}
+	t.Cleanup(func() {
+		if _, err := owner.Exec(context.Background(), "REVOKE sandbox_agentd_evidence_reader FROM "+roleSQL); err != nil {
+			t.Errorf("revoke evidence reader membership: %v", err)
+		}
+		if _, err := owner.Exec(context.Background(), "DROP OWNED BY "+roleSQL); err != nil {
+			t.Errorf("drop evidence reader owned objects: %v", err)
+		}
+		if _, err := owner.Exec(context.Background(), "DROP ROLE "+roleSQL); err != nil {
+			t.Errorf("drop evidence reader LOGIN: %v", err)
+		}
+	})
+	cfg, err := pgxpool.ParseConfig(os.Getenv("SANDBOX_JOURNAL_TEST_DSN"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.ConnConfig.User = role
+	cfg.ConnConfig.Password = password
+	cfg.MaxConns = 2
+	reader, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatalf("connect with separate evidence reader LOGIN: %v", err)
+	}
+	t.Cleanup(reader.Close)
+	return reader
+}
+
 func TestEvidenceReaderLoginIsTenantScopedAndReadOnly(t *testing.T) {
 	owner := testDatabase(t)
 	cmd, ref := startOwnedTestProcess(t, "10")
@@ -32,45 +79,16 @@ func TestEvidenceReaderLoginIsTenantScopedAndReadOnly(t *testing.T) {
 	other.ProviderCommandUID = "provider-command-b"
 	seedAlreadyAuthorizedAttempt(t, owner, other)
 
-	role := fmt.Sprintf("acp_agentd_reader_login_%d", time.Now().UnixNano())
-	roleSQL := pgx.Identifier{role}.Sanitize()
-	password := fmt.Sprintf("test-only-%d-%d", time.Now().UnixNano(), os.Getpid())
+	reader := newEvidenceReaderPool(t, owner)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	if _, err := owner.Exec(ctx, "CREATE ROLE "+roleSQL+" LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS PASSWORD '"+password+"'"); err != nil {
-		t.Fatalf("create isolated evidence reader LOGIN: %v", err)
-	}
-	t.Cleanup(func() {
-		if _, err := owner.Exec(context.Background(), "REVOKE sandbox_agentd_evidence_reader FROM "+roleSQL); err != nil {
-			t.Errorf("revoke evidence reader membership: %v", err)
-		}
-		if _, err := owner.Exec(context.Background(), "DROP OWNED BY "+roleSQL); err != nil {
-			t.Errorf("drop evidence reader owned objects: %v", err)
-		}
-		if _, err := owner.Exec(context.Background(), "DROP ROLE "+roleSQL); err != nil {
-			t.Errorf("drop evidence reader LOGIN: %v", err)
-		}
-	})
-	if _, err := owner.Exec(ctx, "GRANT sandbox_agentd_evidence_reader TO "+roleSQL); err != nil {
-		t.Fatalf("grant the dedicated tenant-scoped evidence reader role: %v", err)
-	}
-
-	cfg, err := pgxpool.ParseConfig(os.Getenv("SANDBOX_JOURNAL_TEST_DSN"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	cfg.ConnConfig.User = role
-	cfg.ConnConfig.Password = password
-	cfg.MaxConns = 2
-	reader, err := pgxpool.NewWithConfig(ctx, cfg)
-	if err != nil {
-		t.Fatalf("connect with separate evidence reader LOGIN: %v", err)
-	}
-	defer reader.Close()
-
 	tx, err := reader.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
 	if err != nil {
 		t.Fatalf("begin reader snapshot: %v", err)
+	}
+	if err := verifyEvidenceReaderLogin(ctx, tx); err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("dedicated read-only login rejected: %v", err)
 	}
 	if _, err := tx.Exec(ctx, "SELECT set_config('app.tenant_id',$1,true)", ref.TenantID); err != nil {
 		_ = tx.Rollback(ctx)
