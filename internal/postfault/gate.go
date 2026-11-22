@@ -375,7 +375,12 @@ func checkContinuity(observed map[string]Observation, faultAt, now time.Time) er
 		cb.Replayed || ca.Replayed || ca.CommandID != cb.CommandID ||
 		ca.AttemptID != cb.AttemptID || ca.ProviderCommandUID != cb.ProviderCommandUID ||
 		ca.DispatchCount != 1 ||
-		ca.JournalVersion <= cb.JournalVersion || ca.InspectCount == 0 ||
+		// A pre-fault inspection can already have been recorded while the
+		// command remained UNKNOWN. Replaying that positive count after a
+		// Worker SIGKILL is NOT evidence of a fresh InspectCommand, even
+		// if a different journal event advanced the journal revision.
+		ca.JournalVersion <= cb.JournalVersion ||
+		ca.InspectCount <= cb.InspectCount ||
 		ca.Source != "agentd.inspect" || !validDigest(ca.ExitReceiptDigest) ||
 		(ca.State != "EXITED" && ca.State != "FAILED_CONFIRMED") {
 		return failure("external command UNKNOWN not authoritatively reconciled")
