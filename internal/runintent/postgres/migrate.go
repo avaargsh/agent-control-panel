@@ -111,6 +111,26 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 		return ErrSchemaDrift
 	}
 
+	// A matching set of object owners is not itself an authenticated trust
+	// anchor: an out-of-band privileged actor could transfer the ledger,
+	// attempt journal and trigger function together. Migrations must run as
+	// the LOGIN that owns the ledger, not via SET ROLE or any untrusted
+	// session; session_user is the PostgreSQL-authenticated identity.
+	// A superuser could also change session authorization, so this guards
+	// accidental/coordinated delegated ownership drift, not hostile DBAs.
+	var migrationLoginOwnsLedger bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (
+		SELECT 1 FROM pg_class c
+		JOIN pg_roles r ON r.oid=c.relowner
+		WHERE c.oid=to_regclass('schema_migrations')
+		  AND r.rolname=session_user
+	)`).Scan(&migrationLoginOwnsLedger); err != nil {
+		return fmt.Errorf("verify authenticated migration ledger owner: %w", err)
+	}
+	if !migrationLoginOwnsLedger {
+		return ErrSchemaDrift
+	}
+
 	// Migration history belongs exclusively to its table owner. Table ACLs
 	// (pg_class.relacl) and column ACLs (pg_attribute.attacl) are independent:
 	// either can give PUBLIC or a named non-owner access to the checksum.
