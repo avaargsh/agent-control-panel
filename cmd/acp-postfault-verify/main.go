@@ -35,13 +35,13 @@ type agentDHeadBinding struct {
 }
 
 type expectedBinding struct {
-	Schema                 string                 `json:"schema"`
-	Subject                postfault.Subject      `json:"subject"`
-	FaultID                string                 `json:"fault_id"`
-	FaultAt                time.Time              `json:"fault_at"`
+	Schema                 string                   `json:"schema"`
+	Subject                postfault.Subject        `json:"subject"`
+	FaultID                string                   `json:"fault_id"`
+	FaultAt                time.Time                `json:"fault_at"`
 	AgentDRef              *postfault.AgentDWaitRef `json:"agentd_ref"`
-	AgentDGuardOperationID string                 `json:"agentd_guard_operation_id"`
-	AgentDHead             *agentDHeadBinding     `json:"agentd_trusted_head"`
+	AgentDGuardOperationID string                   `json:"agentd_guard_operation_id"`
+	AgentDHead             *agentDHeadBinding       `json:"agentd_trusted_head"`
 }
 
 func matchesExpected(bundle postfault.Bundle, expected expectedBinding) error {
@@ -135,9 +135,9 @@ func run(args []string) error {
 		Ref: *expected.AgentDRef, GuardOperationID: expected.AgentDGuardOperationID,
 	}
 	trustedHead := postfault.TrustedAgentDInspectHead{
-		InspectCount: expected.AgentDHead.InspectCount,
+		InspectCount:   expected.AgentDHead.InspectCount,
 		JournalVersion: expected.AgentDHead.JournalVersion,
-		Digest: expected.AgentDHead.Digest,
+		Digest:         expected.AgentDHead.Digest,
 	}
 	if err := sourceClient.Verify(context.Background(), bundle, keys, expectedWait, trustedHead, now); err != nil {
 		return err
