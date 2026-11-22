@@ -42,10 +42,29 @@ A local test creates **ephemeral test keys and invented provider facts** solely 
 - `CompareReceiptHead(current, incoming)` classifies **INSERT / IDEMPOTENT_REPLAY / ADVANCE** and rejects older revision, same-revision/different-byte digests and tenant/Run/stage/authority rebinding. It is read-only. To actually prevent stale overwrites or double records, the **source-owned writer** must apply this under an atomic database CAS/row lock with a unique identity and append-only original bytes. This ACP library neither writes a record nor proves that a remote writer did so.
 - An expected head snapshot constructed from the submitted package is untrusted and invalid by contract. Valid signatures or transport acknowledgement do not imply a passing business verdict or permission to publish a PR. Receipt provenance, source-owned atomic persistence, external PR-to-original-receipt correlation and independent live verification are still blocking.
 
+## Historical, offline re-verification (candidate)
+
+Default `acp-evidence-verify` remains **LIVE ONLY**: it evaluates fresh Permit state, fault age and after-recovery observations against the current clock. Supplying an old `package.json` without an additional trusted archival attestation still fails closed. Do not set the verifier's clock backwards.
+
+`internal/evidencepackage.VerifyArchive` adds an **opt-in, read-only** historical consistency check. A separate archival authority signs the exact original `package.json` and independently sourced `expected.json` bytes by their SHA256 hashes, plus `archive_id`, `captured_at` and `sealed_at`, under the distinct Ed25519 domain `acp.evidence-archive-seal/v1\\x00`. The archive issuer's public key MUST be provisioned outside the package, distinct from all seven service authorities; the signed statement must assert `captured_at ≤ sealed_at ≤ current time`, with at most two minutes between capture and sealing. The verifier then re-applies ALL existing signed lifecycle and postfault continuity checks **at the attested original capture instant**. It never converts a historical Permit into current authorization.
+
+CLI usage with an independently issued `seal.json` (containing base64 `payload_b64`, `signature_b64`) and trusted `archiver.pub`:
+
+```sh
+go run ./cmd/acp-evidence-verify \
+  --package "$ARCHIVE/package.json" \
+  --expected "$ARCHIVE/expected.json" \
+  --trust-dir "$ARCHIVE/owner-public-keys" \
+  --archive-seal "$ARCHIVE/seal.json" \
+  --archive-pub "$ARCHIVE/archiver.pub"
+```
+
+**Crucial time-trust boundary:** an Ed25519 signature can attest what an archival issuer claims but cannot prove when the issuer actually signed. Independent time-source policy and an append-only transparency log or trusted timestamp/notarization are still needed before making an evidentiary retention or non-backdating claim. Ephemeral test keys validate parser behavior only. **No real archival authority, immutable log, or production G01–G05 evidence is claimed.** This feature is never enabled in the live Golden Path CI gate.
+
 ## Limitations and next real integration
 
 1. **Sandbox/AgentD:** Issue #70 must supply a real mTLS SandboxService and AgentD, a durable Journal with exact command/generation and terminal inspect/exit proof; only permit-bound PEP may execute commands. PR #92's local OS SIGKILL readback remains a separate, narrower result.
 2. **G01/G02/G03:** source owners must export real accepted Runtime/Decision/Guard records and prove revoked/expired authorization cannot be replayed. Wire compatibility and actual effect authority cannot be inferred from this parser.
 3. **G04:** after the authoritative command is reconciled, capture *separate* Sandbox and Compute signed inspect/readback observations for absence, credential revocation and cost reconciliation. If Inspect returns UNKNOWN, preserve UNKNOWN; do not mark release FINAL.
-4. **Time/replay:** this v1 uses postfault's short live freshness gate (fault no older than 30 minutes, post-recovery observations no older than five minutes). **It is not yet a durable archival timestamp validator.** Long-term offline re-verification requires a separately trusted, immutable capture-time seal; never change local clock to make historical evidence pass.
+4. **Time/replay:** the live gate retains postfault's 30-minute fault and five-minute post-recovery freshness bounds. Offline archive verification is a separately signed candidate; without independent trusted timestamp anchoring, a signed archive assertion is not proof against backdating. Never change local clock to make live evidence pass.
 5. **Independent review:** a Green CLI result means signatures and cross-links are consistent; complete G01–G05 requires service-owner exact-head experiments, physical checks and an independent security review. Keep #91 and #92 Draft and do not merge or deploy protected writes on this evidence alone.
