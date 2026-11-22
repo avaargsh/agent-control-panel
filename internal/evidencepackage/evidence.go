@@ -127,7 +127,55 @@ func digest(s string) bool {
 	}
 	return true
 }
-func strict(data []byte, target any) bool {
+// StrictDecode rejects duplicate JSON object keys in addition to unknown
+// fields and trailing data. Different service parsers must not disagree on
+// an owner-signed field because of duplicate keys.
+func StrictDecode(data []byte, target any) bool {
+	tokenDecoder := json.NewDecoder(bytes.NewReader(data))
+	var walk func() error
+	walk = func() error {
+		token, err := tokenDecoder.Token()
+		if err != nil {
+			return err
+		}
+		delim, ok := token.(json.Delim)
+		if !ok {
+			return nil
+		}
+		switch delim {
+		case '{':
+			seen := make(map[string]bool)
+			for tokenDecoder.More() {
+				keyToken, err := tokenDecoder.Token()
+				if err != nil {
+					return err
+				}
+				key, ok := keyToken.(string)
+				if !ok || seen[key] {
+					return errors.New("duplicate or invalid JSON key")
+				}
+				seen[key] = true
+				if err := walk(); err != nil {
+					return err
+				}
+			}
+			_, err = tokenDecoder.Token()
+			return err
+		case '[':
+			for tokenDecoder.More() {
+				if err := walk(); err != nil {
+					return err
+				}
+			}
+			_, err := tokenDecoder.Token()
+			return err
+		default:
+			return errors.New("unexpected JSON delimiter")
+		}
+	}
+	if walk() != nil || tokenDecoder.Decode(new(any)) != io.EOF {
+		return false
+	}
 	d := json.NewDecoder(bytes.NewReader(data))
 	d.DisallowUnknownFields()
 	if d.Decode(target) != nil {
@@ -179,7 +227,7 @@ func Verify(p Package, e Expected, keys map[string]ed25519.PublicKey, now time.T
 		return reject("missing bounded postfault evidence")
 	}
 	var recovery postfault.Bundle
-	if !strict(rawRecovery, &recovery) || recovery.Subject != e.Subject ||
+	if !StrictDecode(rawRecovery, &recovery) || recovery.Subject != e.Subject ||
 		recovery.Fault.ID != e.Fault.ID || !recovery.Fault.At.Equal(e.Fault.At) ||
 		recovery.Fault.Kind != e.Fault.Kind {
 		return reject("postfault bundle not bound to expected Run/fault")
@@ -201,7 +249,7 @@ func Verify(p Package, e Expected, keys map[string]ed25519.PublicKey, now time.T
 			return reject("invalid postfault observation bytes")
 		}
 		var o postfault.Observation
-		if !strict(raw, &o) {
+		if !StrictDecode(raw, &o) {
 			return reject("invalid postfault observation")
 		}
 		postfaultAfter[r.Authority] = o
@@ -235,7 +283,7 @@ func Verify(p Package, e Expected, keys map[string]ed25519.PublicKey, now time.T
 			return reject("signed receipt does not match trusted owner")
 		}
 		var s Statement
-		if !strict(raw, &s) || s.Schema != ObservationSchema ||
+		if !StrictDecode(raw, &s) || s.Schema != ObservationSchema ||
 			s.Authority != owner || s.Stage != r.Stage ||
 			s.Subject != e.Subject || s.RunIntentID != e.RunIntentID ||
 			s.RequestDigest != e.RequestDigest ||
@@ -296,14 +344,14 @@ func Verify(p Package, e Expected, keys map[string]ed25519.PublicKey, now time.T
 	}
 	if sandboxReleased.Status != "RELEASED" || !sandboxReleased.ProviderAbsent ||
 		sandboxReleased.SandboxUID != postSandbox.SandboxUID ||
-		sandboxReleased.ObservedAt.Before(resumed.ObservedAt) {
+		sandboxReleased.ObservedAt.Before(guardReleased.ObservedAt) {
 		return reject("G04: Sandbox UID absence not independently observed")
 	}
 	if computeReleased.Status != "RELEASED" || !computeReleased.ProviderAbsent ||
 		computeReleased.AllocationID != e.AllocationID ||
 		computeReleased.ProviderUID != e.ProviderUID ||
 		computeReleased.ProviderGeneration != e.ProviderGeneration ||
-		computeReleased.ObservedAt.Before(resumed.ObservedAt) {
+		computeReleased.ObservedAt.Before(guardReleased.ObservedAt) {
 		return reject("G04: Compute provider identity or absence not confirmed")
 	}
 	return nil
