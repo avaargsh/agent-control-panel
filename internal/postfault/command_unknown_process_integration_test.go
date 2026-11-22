@@ -40,20 +40,28 @@ func TestLocalUnknownCommandAfterSIGKILLRemainsBlocked(t *testing.T) {
 
 func TestLocalUnknownCommandRejectsForgedReconciliation(t *testing.T) {
 	for _, tc := range []struct {
-		name string
+		name   string
 		mutate func(*testing.T, string, *localUnknownReceipt)
 	}{
 		{"wrong_run", func(_ *testing.T, _ string, r *localUnknownReceipt) { r.RunID = "other-run" }},
 		{"wrong_attempt", func(_ *testing.T, _ string, r *localUnknownReceipt) { r.AttemptID = "other-attempt" }},
 		{"wrong_command", func(_ *testing.T, _ string, r *localUnknownReceipt) { r.CommandID = "other-command" }},
 		{"missing_effect", func(t *testing.T, root string, _ *localUnknownReceipt) {
-			if err := os.Remove(filepath.Join(root, localUnknownEffectFile)); err != nil { t.Fatal(err) }
+			if err := os.Remove(filepath.Join(root, localUnknownEffectFile)); err != nil {
+				t.Fatal(err)
+			}
 		}},
 		{"duplicated_effect", func(t *testing.T, root string, _ *localUnknownReceipt) {
 			f, err := os.OpenFile(filepath.Join(root, localUnknownEffectFile), os.O_APPEND|os.O_WRONLY, 0)
-			if err != nil { t.Fatal(err) }
-			if _, err := f.Write([]byte("duplicate-external-effect")); err != nil { t.Fatal(err) }
-			if err := f.Close(); err != nil { t.Fatal(err) }
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := f.Write([]byte("duplicate-external-effect")); err != nil {
+				t.Fatal(err)
+			}
+			if err := f.Close(); err != nil {
+				t.Fatal(err)
+			}
 		}},
 		{"fabricated_terminal", func(t *testing.T, root string, r *localUnknownReceipt) {
 			stored := *r
@@ -68,25 +76,41 @@ func TestLocalUnknownCommandRejectsForgedReconciliation(t *testing.T) {
 		}},
 		{"replaced_workspace_identical_files", func(t *testing.T, root string, _ *localUnknownReceipt) {
 			old := root + "-replaced"
-			if err := os.Rename(root, old); err != nil { t.Fatal(err) }
-			if err := os.Mkdir(root, 0700); err != nil { t.Fatal(err) }
+			if err := os.Rename(root, old); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(root, 0700); err != nil {
+				t.Fatal(err)
+			}
 			for _, name := range []string{localUnknownEffectFile, localUnknownJournalFile} {
 				raw, err := os.ReadFile(filepath.Join(old, name))
-				if err != nil { t.Fatal(err) }
-				if err := os.WriteFile(filepath.Join(root, name), raw, 0600); err != nil { t.Fatal(err) }
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(root, name), raw, 0600); err != nil {
+					t.Fatal(err)
+				}
 			}
 		}},
 		{"symlink_effect", func(t *testing.T, root string, _ *localUnknownReceipt) {
 			effect := filepath.Join(root, localUnknownEffectFile)
-			if err := os.Remove(effect); err != nil { t.Fatal(err) }
+			if err := os.Remove(effect); err != nil {
+				t.Fatal(err)
+			}
 			outside := filepath.Join(filepath.Dir(root), "outside-effect")
-			if err := os.WriteFile(outside, []byte("foreign"), 0600); err != nil { t.Fatal(err) }
-			if err := os.Symlink(outside, effect); err != nil { t.Fatal(err) }
+			if err := os.WriteFile(outside, []byte("foreign"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(outside, effect); err != nil {
+				t.Fatal(err)
+			}
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := filepath.Join(t.TempDir(), "workspace")
-			if err := os.Mkdir(root, 0700); err != nil { t.Fatal(err) }
+			if err := os.Mkdir(root, 0700); err != nil {
+				t.Fatal(err)
+			}
 			expected := killLocalUnknownCommandProcess(t, root)
 			tc.mutate(t, root, &expected)
 			if _, err := inspectLocalUnknownCommandProcess(t, root, expected); err == nil {
@@ -99,6 +123,10 @@ func TestLocalUnknownCommandRejectsForgedReconciliation(t *testing.T) {
 func rewriteLocalUnknownJournal(t *testing.T, root string, receipt localUnknownReceipt) {
 	t.Helper()
 	raw, err := json.Marshal(receipt)
-	if err != nil { t.Fatal(err) }
-	if err := os.WriteFile(filepath.Join(root, localUnknownJournalFile), raw, 0600); err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, localUnknownJournalFile), raw, 0600); err != nil {
+		t.Fatal(err)
+	}
 }
