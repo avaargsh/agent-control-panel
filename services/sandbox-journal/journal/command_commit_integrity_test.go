@@ -18,8 +18,8 @@ func assertCommandCommitDenied(t *testing.T, err error) {
 }
 
 // setup() deliberately initializes only the minimal Journal tables. An
-// 0011 installation must respect the whole source-owned migration stack,
-// including 0010's separate Command roles, exactly as the disposable demo.
+// 0012 installation must respect the full source-owned migration stack,
+// including 0010's upstream revocation verification and 0011 Command roles.
 func installCommandCommitMigrations(t *testing.T, repo *Repository) []byte {
 	t.Helper()
 	var commitSQL []byte
@@ -31,8 +31,9 @@ func installCommandCommitMigrations(t *testing.T, repo *Repository) []byte {
 		"0007_tenant_login_rls.sql",
 		"0008_tenant_login_oid_fence.sql",
 		"0009_tenant_login_revoke_evict.sql",
-		"0010_command_tenant_login_rls.sql",
-		"0011_command_commit_integrity.sql",
+		"0010_tenant_revoke_postcommit_verify.sql",
+		"0011_command_tenant_login_rls.sql",
+		"0012_command_commit_integrity.sql",
 	} {
 		sql, err := os.ReadFile("../migrations/" + name)
 		if err != nil {
@@ -41,7 +42,7 @@ func installCommandCommitMigrations(t *testing.T, repo *Repository) []byte {
 		if _, err := repo.pool.Exec(context.Background(), string(sql)); err != nil {
 			t.Fatalf("apply source-owned %s: %v", name, err)
 		}
-		if name == "0011_command_commit_integrity.sql" {
+		if name == "0012_command_commit_integrity.sql" {
 			commitSQL = sql
 		}
 	}
