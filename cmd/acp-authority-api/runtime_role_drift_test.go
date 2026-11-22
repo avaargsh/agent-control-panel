@@ -337,7 +337,7 @@ func TestAuthorityHTTPRejectsRuntimeRoleDrift(t *testing.T) {
 		const tenant = "tenant-drift"
 		const id = "11111111-1111-4111-8111-111111111111"
 		const runID = "22222222-2222-4222-8222-222222222222"
-		rawInput := []byte("{\\"objective\\":\\"sre_incident_triage\\",\\"service\\":\\"payments\\",\\"signal\\":\\"latency\\"}")
+		rawInput := []byte(`{"objective":"sre_incident_triage","service":"payments","signal":"latency"}`)
 		conf := authorityhttp.ReleaseConfig{
 			SchemaVersion: "acp.release-publication.v1",
 			TenantID: tenant, ProjectID: "project-drift",
