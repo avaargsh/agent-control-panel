@@ -104,7 +104,14 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse --verify HEAD)" = "$EXPECTED_SOURCE_SHA"
           printf 'VERIFIED_SOURCE_ONLY_HEAD=%s\n' "$EXPECTED_SOURCE_SHA"
-          go test -count=1 -v -run '^TestAuthorityDatabaseRoleFailClosed ./cmd/acp-authority-api | tee source-head-role.log
+          go test -count=1 -v -run '^TestAuthorityDatabaseRoleFailClosed | tee source-head-role.log
+          grep -F -- '--- PASS: TestAuthorityDatabaseRoleFailClosed' source-head-role.log
+          if grep -F -- '--- SKIP: TestAuthorityDatabaseRoleFailClosed' source-head-role.log; then
+            echo 'source HEAD real PostgreSQL role security test was skipped' >&2
+            exit 1
+          fi
+          go test -race -count=1 ./cmd/acp-authority-api
+ ./cmd/acp-authority-api | tee source-head-role.log
           grep -F -- '--- PASS: TestAuthorityDatabaseRoleFailClosed' source-head-role.log
           if grep -F -- '--- SKIP: TestAuthorityDatabaseRoleFailClosed' source-head-role.log; then
             echo 'source HEAD real PostgreSQL role security test was skipped' >&2
