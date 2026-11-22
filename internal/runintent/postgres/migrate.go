@@ -49,6 +49,9 @@ const admissionCatalogMigrationName = "0011_admission_catalog.sql"
 const admissionOriginMigrationVersion int64 = 12
 const admissionOriginMigrationName = "0012_run_intent_admission_origin.sql"
 
+const optimizationAttemptMigrationVersion int64 = 13
+const optimizationAttemptMigrationName = "0013_optimization_verification_attempts.sql"
+
 var (
 	ErrSchemaDrift       = errors.New("RunIntent schema migration checksum or relation drift")
 	ErrUnversionedSchema = errors.New("RunIntent schema exists without migration history")
@@ -248,12 +251,17 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 		return fmt.Errorf("read embedded admission origin migration: %w", err)
 	}
 	admissionOriginChecksum := fmt.Sprintf("%x", sha256.Sum256(admissionOriginSource))
+	optimizationAttemptSource, err := migrations.FS.ReadFile(optimizationAttemptMigrationName)
+	if err != nil {
+		return fmt.Errorf("read optimization verification attempt migration: %w", err)
+	}
+	optimizationAttemptChecksum := fmt.Sprintf("%x", sha256.Sum256(optimizationAttemptSource))
 
 	rows, err := tx.Query(ctx, "SELECT version, name, checksum FROM schema_migrations")
 	if err != nil {
 		return fmt.Errorf("read schema migration history: %w", err)
 	}
-	var appliedVersion, conflictApplied, dispositionApplied, principalSnapshotApplied, capabilityLockApplied, workspaceApplied, blobStageApplied, uploadIntentApplied, gcClaimApplied, executionInputApplied, admissionCatalogApplied, admissionOriginApplied bool
+	var appliedVersion, conflictApplied, dispositionApplied, principalSnapshotApplied, capabilityLockApplied, workspaceApplied, blobStageApplied, uploadIntentApplied, gcClaimApplied, executionInputApplied, admissionCatalogApplied, admissionOriginApplied, optimizationAttemptApplied bool
 	for rows.Next() {
 		var version int64
 		var name, appliedChecksum string
@@ -334,6 +342,12 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 				return ErrSchemaDrift
 			}
 			admissionOriginApplied = true
+		case optimizationAttemptMigrationVersion:
+			if name != optimizationAttemptMigrationName || appliedChecksum != optimizationAttemptChecksum || optimizationAttemptApplied {
+				rows.Close()
+				return ErrSchemaDrift
+			}
+			optimizationAttemptApplied = true
 		default:
 			rows.Close()
 			return ErrSchemaDrift
@@ -354,7 +368,8 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 		gcClaimApplied && !uploadIntentApplied ||
 		executionInputApplied && !gcClaimApplied ||
 		admissionCatalogApplied && !executionInputApplied ||
-		admissionOriginApplied && !admissionCatalogApplied {
+		admissionOriginApplied && !admissionCatalogApplied ||
+		optimizationAttemptApplied && !admissionOriginApplied {
 		return ErrSchemaDrift
 	}
 
@@ -395,6 +410,9 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 		if err := ensureAdmissionOriginMigration(ctx, tx, admissionOriginApplied, admissionOriginSource, admissionOriginChecksum); err != nil {
 			return err
 		}
+		if err := ensureOptimizationAttemptMigration(ctx, tx, optimizationAttemptApplied, optimizationAttemptSource, optimizationAttemptChecksum); err != nil {
+			return err
+		}
 		if err := tx.Commit(ctx); err != nil {
 			return fmt.Errorf("commit schema verification: %w", err)
 		}
@@ -424,6 +442,7 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 		OR to_regclass('admission_memberships') IS NOT NULL
 		OR to_regclass('admission_releases') IS NOT NULL
 		OR to_regclass('admission_sessions') IS NOT NULL
+		OR to_regclass('optimization_verification_attempts') IS NOT NULL
 	`).Scan(&anySchemaExists); err != nil {
 		return fmt.Errorf("inspect existing RunIntent schema: %w", err)
 	}
@@ -484,6 +503,9 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 		return err
 	}
 	if err := ensureAdmissionOriginMigration(ctx, tx, false, admissionOriginSource, admissionOriginChecksum); err != nil {
+		return err
+	}
+	if err := ensureOptimizationAttemptMigration(ctx, tx, false, optimizationAttemptSource, optimizationAttemptChecksum); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
