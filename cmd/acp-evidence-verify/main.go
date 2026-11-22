@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"flag"
+	"io"
 	"fmt"
 	"os"
 	"path/filepath"
