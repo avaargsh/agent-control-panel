@@ -34,6 +34,7 @@ type BaselinePolicy struct {
 	EvaluationDigest       string
 	WorkloadDigest         string
 	EnvironmentDigest      string
+	VerifierKeyID          string // selected by trusted tenant/project policy
 	ExpectedWorkItems      int64
 	MinimumQualityPasses   int64
 	MinimumOutputTokens    int64 // 0 for non-token workloads
@@ -90,7 +91,7 @@ func VerifyReviewEvidence(policy BaselinePolicy, wire []byte, verifierKeys map[s
 		return EvaluationReceipt{}, err
 	}
 	publicKey, ok := verifierKeys[envelope.KeyID]
-	if !ok || len(publicKey) != ed25519.PublicKeySize || envelope.KeyID == "" {
+	if envelope.KeyID != policy.VerifierKeyID || !ok || len(publicKey) != ed25519.PublicKeySize || envelope.KeyID == "" {
 		return EvaluationReceipt{}, ErrUntrustedReceipt
 	}
 	signature, err := base64.StdEncoding.Strict().DecodeString(envelope.Signature)
@@ -141,6 +142,7 @@ func decodeCanonical(raw []byte, dst any) error {
 
 func validPolicy(p BaselinePolicy) bool {
 	if p.ExperimentID == "" || p.TenantID == "" || p.ProjectID == "" ||
+		p.VerifierKeyID == "" || strings.TrimSpace(p.VerifierKeyID) != p.VerifierKeyID ||
 		strings.TrimSpace(p.ExperimentID) != p.ExperimentID ||
 		strings.TrimSpace(p.TenantID) != p.TenantID || strings.TrimSpace(p.ProjectID) != p.ProjectID ||
 		!hexString(p.CandidateSHA, 40) || !hexString(p.ExperimentBaselineSHA, 40) ||
