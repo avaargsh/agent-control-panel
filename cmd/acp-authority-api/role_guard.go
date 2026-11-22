@@ -50,6 +50,8 @@ SELECT COALESCE((
                   AND has_table_privilege(c.oid, 'SELECT')
                   AND NOT has_table_privilege(c.oid,
                       'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+                  -- Table privileges do not include column-only GRANTs.
+                  AND NOT has_any_column_privilege(c.oid, 'INSERT,UPDATE,REFERENCES')
                   AND NOT pg_has_role(a.oid, c.relowner, 'MEMBER')
               ), false)
              FROM pg_catalog.pg_class c
@@ -65,6 +67,7 @@ SELECT COALESCE((
                   has_table_privilege(c.oid, 'SELECT')
                   OR has_table_privilege(c.oid,
                       'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+                  OR has_any_column_privilege(c.oid, 'SELECT,INSERT,UPDATE,REFERENCES')
               )
        )
       FROM actor a CROSS JOIN namespace n
