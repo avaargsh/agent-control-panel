@@ -64,5 +64,17 @@ jobs:
         run: psql --host=127.0.0.1 --username=postgres --dbname=postgres --set=ON_ERROR_STOP=1 --file=migrations/tests/0001_tenant_isolation.sql
       - name: Static analysis
         run: go vet ./...
+      - name: Enforce independently authenticated authority role negative gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(go test -count=1 -v -run '^TestAuthorityDatabaseRoleFailClosed
+ ./cmd/acp-authority-api)"
+          printf '%s\n' "$output"
+          grep -F -- '--- PASS: TestAuthorityDatabaseRoleFailClosed' <<< "$output"
+          if grep -F -- '--- SKIP: TestAuthorityDatabaseRoleFailClosed' <<< "$output"; then
+            echo 'PGTEST_DSN role test was skipped: refuse security receipt' >&2
+            exit 1
+          fi
       - name: Race-enabled tests
         run: go test -race -count=1 ./...
