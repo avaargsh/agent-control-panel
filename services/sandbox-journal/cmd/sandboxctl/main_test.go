@@ -299,4 +299,16 @@ func TestSandboxctlRejectsShadowSchemaReadRoleBypass(t *testing.T) {
 	if err := verifySandboxReadRole(ctx, pool); err != nil {
 		t.Fatalf("revoking direct SECURITY DEFINER EXECUTE did not restore reader: %v", err)
 	}
+	// Migration 0006 uses a SECURITY DEFINER trigger function to check
+	// original lease/Outbox integrity. PostgreSQL cannot invoke these
+	// trigger-only routines with SELECT/CALL, despite default PUBLIC EXECUTE.
+	// A diagnostic reader must not fail simply because that routine exists.
+	const triggerName = schema + ".trigger_only_probe"
+	if _, err := owner.Exec(ctx, "CREATE FUNCTION "+triggerName+
+		"() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS 'BEGIN RETURN NEW; END'"); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifySandboxReadRole(ctx, pool); err != nil {
+		t.Fatalf("non-callable SECURITY DEFINER trigger blocked safe reader: %v", err)
+	}
 }
