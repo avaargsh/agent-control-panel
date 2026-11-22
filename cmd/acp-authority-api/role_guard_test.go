@@ -244,6 +244,62 @@ func TestAuthorityDatabaseRoleFailClosed(t *testing.T) {
 		}
 	}
 
+	// SECURITY DEFINER functions execute as their owner and are callable by
+	// PUBLIC by default. A read-only LOGIN with EXECUTE can therefore disclose
+	// data it cannot SELECT directly. Probe both the current schema and an
+	// unrelated application schema using real PostgreSQL role credentials.
+	for _, functionSchema := range []string{schema, foreignSchema} {
+		t.Run("security-definer/"+functionSchema, func(t *testing.T) {
+			functionName := functionSchema + ".authority_privilege_probe"
+			create := "CREATE FUNCTION " + functionName + "() RETURNS text " +
+				"LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog " +
+				"AS $ SELECT payload FROM " + foreignSchema + ".secret WHERE id=1 $"
+			if _, err := admin.Exec(ctx, create); err != nil {
+				t.Fatal(err)
+			}
+			defer admin.Exec(context.Background(), "DROP FUNCTION "+functionName+"()")
+			call := func() (string, error) {
+				var value string
+				err := reader.QueryRow(ctx, "SELECT "+functionName+"()").Scan(&value)
+				return value, err
+			}
+			// This is the default PUBLIC EXECUTE grant on newly defined
+			// functions, not an explicit grant to the tested principal.
+			if value, err := call(); err != nil || value != "foreign-schema-canary" {
+				t.Fatalf("default PUBLIC EXECUTE did not expose owner-only data: value=%q err=%v", value, err)
+			}
+			check(t, false)
+			if _, err := admin.Exec(ctx, "REVOKE EXECUTE ON FUNCTION "+functionName+"() FROM PUBLIC"); err != nil {
+				t.Fatal(err)
+			}
+			assertDenied := func() {
+				t.Helper()
+				_, err := call()
+				var pgErr *pgconn.PgError
+				if !errors.As(err, &pgErr) || pgErr.Code != "42501" {
+					t.Fatalf("revoked SECURITY DEFINER EXECUTE should return 42501: %v", err)
+				}
+			}
+			assertDenied()
+			check(t, true)
+
+			// Explicit EXECUTE grant can re-open the same bypass after
+			// PUBLIC was revoked. Verify actual execution, denial, recovery.
+			if _, err := admin.Exec(ctx, "GRANT EXECUTE ON FUNCTION "+functionName+"() TO "+role); err != nil {
+				t.Fatal(err)
+			}
+			if value, err := call(); err != nil || value != "foreign-schema-canary" {
+				t.Fatalf("explicit SECURITY DEFINER grant did not expose owner-only data: value=%q err=%v", value, err)
+			}
+			check(t, false)
+			if _, err := admin.Exec(ctx, "REVOKE EXECUTE ON FUNCTION "+functionName+"() FROM "+role); err != nil {
+				t.Fatal(err)
+			}
+			assertDenied()
+			check(t, true)
+		})
+	}
+
 	if _, err := admin.Exec(ctx, "REVOKE SELECT ON "+schema+".admission_sessions FROM "+role); err != nil {
 		t.Fatal(err)
 	}
