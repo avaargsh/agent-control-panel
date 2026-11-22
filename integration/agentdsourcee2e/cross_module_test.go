@@ -10,8 +10,8 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/json"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"math/big"
 	"net"
@@ -87,8 +87,8 @@ func realOriginalAttempt(t *testing.T, db *pgxpool.Pool) (*exec.Cmd, agentd.Ref)
 		RuntimeAttemptID: "runtime-attempt-1", SandboxUID: "sandbox-uid-1",
 		CommandID: "command-1", AttemptID: "command-attempt-1",
 		ProviderCommandUID: "process-uid-1",
-		RequestDigest: "sha256:" + strings.Repeat("a", 64),
-		GuardPermitID: "permit-1", PermitEpoch: 8,
+		RequestDigest:      "sha256:" + strings.Repeat("a", 64),
+		GuardPermitID:      "permit-1", PermitEpoch: 8,
 		ProcessPID: command.Process.Pid, ProcessStartTicks: ticks, HostBootID: boot,
 	}
 	_, err = db.Exec(context.Background(), `INSERT INTO public.sandbox_agentd_attempts
@@ -115,9 +115,9 @@ func sourcePublicPrivate(t *testing.T) (ed25519.PublicKey, ed25519.PrivateKey) {
 }
 
 type testCA struct {
-	root *x509.Certificate
-	raw []byte
-	key ed25519.PrivateKey
+	root  *x509.Certificate
+	raw   []byte
+	key   ed25519.PrivateKey
 	roots *x509.CertPool
 }
 
@@ -155,7 +155,7 @@ func (ca testCA) issue(t *testing.T, server bool, scope string) tls.Certificate 
 	leaf := &x509.Certificate{
 		SerialNumber: serial, Subject: pkix.Name{CommonName: "not-authorization"},
 		NotBefore: now.Add(-time.Minute), NotAfter: now.Add(time.Hour),
-		KeyUsage: x509.KeyUsageDigitalSignature,
+		KeyUsage:    x509.KeyUsageDigitalSignature,
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 	}
 	if server {
@@ -185,9 +185,9 @@ func realPostfaultBundle(t *testing.T, original agentd.Ref, before, after agentd
 		GuardOperationID: "guard-operation-1",
 	}
 	bundle := postfault.Bundle{
-		Schema: postfault.BundleVersion,
+		Schema:  postfault.BundleVersion,
 		Subject: subject,
-		Fault: postfault.Fault{ID: "worker-sigkill-1", Kind: "worker_sigkill", At: faultAt},
+		Fault:   postfault.Fault{ID: "worker-sigkill-1", Kind: "worker_sigkill", At: faultAt},
 	}
 	keys := make(map[string]ed25519.PublicKey)
 	privateKeys := make(map[string]ed25519.PrivateKey)
@@ -216,7 +216,7 @@ func realPostfaultBundle(t *testing.T, original agentd.Ref, before, after agentd
 				obs.Runtime = &postfault.RuntimeObservation{
 					Status: "RUNNING", HistoryDigest: "sha256:" + strings.Repeat("a", 64),
 					CheckpointDigest: "sha256:" + strings.Repeat("b", 64),
-					BreakerState: "CLOSED", BreakerEpoch: 4, BreakerVersion: 7,
+					BreakerState:     "CLOSED", BreakerEpoch: 4, BreakerVersion: 7,
 					Recovered: !pre,
 				}
 			case "sandbox":
@@ -224,7 +224,7 @@ func realPostfaultBundle(t *testing.T, original agentd.Ref, before, after agentd
 					LeaseID: "lease-1", SandboxUID: original.SandboxUID,
 					WorkspaceID: "workspace-1", Generation: 3,
 					RootPath: "/workspace/agent", SentinelPath: ".acp-continuity",
-					SentinelDigest: "sha256:" + strings.Repeat("c", 64),
+					SentinelDigest:   "sha256:" + strings.Repeat("c", 64),
 					ReadbackVerified: true, ProviderState: "ACTIVE",
 				}
 			case "agentd":
@@ -235,7 +235,7 @@ func realPostfaultBundle(t *testing.T, original agentd.Ref, before, after agentd
 				obs.Command = &postfault.CommandObservation{
 					CommandID: original.CommandID, AttemptID: original.AttemptID,
 					ProviderCommandUID: original.ProviderCommandUID,
-					JournalVersion: event.Event.JournalVersion, State: event.Event.State,
+					JournalVersion:     event.Event.JournalVersion, State: event.Event.State,
 					DispatchCount: 1, InspectCount: event.Event.InspectCount,
 					Source: "agentd.inspect", ExitReceiptDigest: event.Event.ExitReceiptDigest,
 				}
@@ -244,7 +244,7 @@ func realPostfaultBundle(t *testing.T, original agentd.Ref, before, after agentd
 					PermitID: original.GuardPermitID, PermitEpoch: original.PermitEpoch,
 					Status: "VALID", PermitExpiresAt: now.Add(10 * time.Minute),
 					ActionDigest: "sha256:" + strings.Repeat("d", 64),
-					Revalidated: !pre,
+					Revalidated:  !pre,
 				}
 			}
 			raw, err := json.Marshal(obs)
@@ -254,7 +254,7 @@ func realPostfaultBundle(t *testing.T, original agentd.Ref, before, after agentd
 			signature := ed25519.Sign(privateKeys[authority], append([]byte(postfault.SignatureDomain), raw...))
 			bundle.Receipts = append(bundle.Receipts, postfault.Receipt{
 				Authority: authority, Phase: phase,
-				PayloadB64: base64.StdEncoding.EncodeToString(raw),
+				PayloadB64:   base64.StdEncoding.EncodeToString(raw),
 				SignatureB64: base64.StdEncoding.EncodeToString(signature),
 			})
 		}
@@ -292,9 +292,9 @@ func TestAgentDRealCrossModuleOriginalWaitInspectAndMTLS(t *testing.T) {
 	// database/HTTP response. It is still a TEST callback, not a deployed
 	// ACP Head authority.
 	pinned := agentd.InspectHead{
-		InspectCount: before.Event.InspectCount,
+		InspectCount:   before.Event.InspectCount,
 		JournalVersion: before.Event.JournalVersion,
-		Digest: before.Digest,
+		Digest:         before.Digest,
 	}
 	readHead := func(_ context.Context, ref agentd.Ref) (agentd.InspectHead, error) {
 		if ref != original {
@@ -307,7 +307,7 @@ func TestAgentDRealCrossModuleOriginalWaitInspectAndMTLS(t *testing.T) {
 		db, sourcePub, "sandbox.test", readHead))
 	srv.TLS = &tls.Config{
 		Certificates: []tls.Certificate{ca.issue(t, true, "")},
-		ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: ca.roots,
+		ClientAuth:   tls.RequireAndVerifyClientCert, ClientCAs: ca.roots,
 		MinVersion: tls.VersionTLS13,
 	}
 	srv.StartTLS()
@@ -315,13 +315,13 @@ func TestAgentDRealCrossModuleOriginalWaitInspectAndMTLS(t *testing.T) {
 	clientScope := "spiffe://sandbox.test/tenant/" + original.TenantID +
 		"/run/" + original.RunID + "/role/evidence-reader"
 	credentials := &tls.Config{
-		RootCAs: ca.roots,
+		RootCAs:      ca.roots,
 		Certificates: []tls.Certificate{ca.issue(t, false, clientScope)},
-		MinVersion: tls.VersionTLS13,
+		MinVersion:   tls.VersionTLS13,
 	}
 	httpClient := &http.Client{
 		Transport: &http.Transport{TLSClientConfig: credentials.Clone(), Proxy: nil},
-		Timeout: 5 * time.Second,
+		Timeout:   5 * time.Second,
 	}
 	sourceRequest, err := json.Marshal(agentd.EvidenceReadRequest{Ref: original})
 	if err != nil {
@@ -329,7 +329,7 @@ func TestAgentDRealCrossModuleOriginalWaitInspectAndMTLS(t *testing.T) {
 	}
 	readUnknown := func() agentd.EvidenceReadResponse {
 		t.Helper()
-		response, err := httpClient.Post(srv.URL + agentd.EvidenceReadPath,
+		response, err := httpClient.Post(srv.URL+agentd.EvidenceReadPath,
 			"application/json", bytes.NewReader(sourceRequest))
 		if err != nil {
 			t.Fatal(err)
@@ -371,7 +371,7 @@ func TestAgentDRealCrossModuleOriginalWaitInspectAndMTLS(t *testing.T) {
 		t.Fatalf("source failed to durably reconcile original OS Wait: %+v %v", after, err)
 	}
 	pinned = agentd.InspectHead{
-		InspectCount: after.Event.InspectCount,
+		InspectCount:   after.Event.InspectCount,
 		JournalVersion: after.Event.JournalVersion, Digest: after.Digest,
 	}
 	afterObservation := time.Now().UTC()
@@ -384,10 +384,10 @@ func TestAgentDRealCrossModuleOriginalWaitInspectAndMTLS(t *testing.T) {
 	// This invokes REAL AgentD PostgreSQL query and mTLS Handler, not a
 	// contract mock. ACP independently validates every signed source record.
 	if err := postfault.FetchAndVerifyAgentDEvidence(ctx,
-		srv.URL + agentd.EvidenceReadPath, credentials,
+		srv.URL+agentd.EvidenceReadPath, credentials,
 		bundle, keys, expected,
 		postfault.TrustedAgentDInspectHead{
-			InspectCount: pinned.InspectCount,
+			InspectCount:   pinned.InspectCount,
 			JournalVersion: pinned.JournalVersion, Digest: pinned.Digest,
 		}, now); err != nil {
 		t.Fatalf("actual source PostgreSQL -> real AgentD mTLS -> ACP G05 failed: %v", err)
@@ -401,7 +401,7 @@ func TestAgentDRealCrossModuleOriginalWaitInspectAndMTLS(t *testing.T) {
 	// the independent trusted Head is behind a newer source Inspector event.
 	stale := pinned
 	pinned = agentd.InspectHead{
-		InspectCount: before.Event.InspectCount,
+		InspectCount:   before.Event.InspectCount,
 		JournalVersion: before.Event.JournalVersion, Digest: before.Digest,
 	}
 	if err := postfault.FetchAndVerifyAgentDEvidence(ctx, srv.URL+agentd.EvidenceReadPath,
