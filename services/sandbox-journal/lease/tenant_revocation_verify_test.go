@@ -199,6 +199,19 @@ func TestLeaseRevocationVerificationRequiresCommittedState(t *testing.T) {
 			t.Fatal("revocation verifier accepted a direct privileged revoker EXECUTE grant")
 		}
 	})
+	t.Run("direct_verifier_function_execute", func(t *testing.T) {
+		if _, err := owner.pool.Exec(ctx,
+			"GRANT EXECUTE ON FUNCTION public.sandbox_verify_lease_login_revocation(name,oid) TO "+login); err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			_, _ = owner.pool.Exec(context.Background(),
+				"REVOKE EXECUTE ON FUNCTION public.sandbox_verify_lease_login_revocation(name,oid) FROM "+login)
+		}()
+		if err := verifyCommittedRevocation(ctx, independent, login, oid); err == nil {
+			t.Fatal("revocation verifier accepted a direct verifier EXECUTE grant")
+		}
+	})
 	t.Run("direct_public_schema_create", func(t *testing.T) {
 		if _, err := owner.pool.Exec(ctx,
 			"GRANT CREATE ON SCHEMA public TO "+login); err != nil {
