@@ -112,6 +112,34 @@ func verifySandboxReadRole(ctx context.Context, pool *pgxpool.Pool) error {
 		  AND has_table_privilege(current_user, 'public.sandbox_journal_commands'::regclass, 'SELECT')
 		  AND has_table_privilege(current_user, 'public.sandbox_lease_intent_events'::regclass, 'SELECT')
 		  AND has_table_privilege(current_user, 'public.sandbox_journal_outbox'::regclass, 'SELECT')
+		  -- Do not mistake four required SELECT grants for an exact
+		  -- allowlist. A LOGIN with INSERT on an unrelated table can write
+		  -- persistently even when it cannot mutate any Sandbox table.
+		  -- Reject effective table and column ACLs on *all* other
+		  -- non-system relations, including inherited/PUBLIC grants.
+		  AND NOT EXISTS (
+		    SELECT 1
+		      FROM pg_catalog.pg_class c
+		      JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+		     WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')
+		       AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+		       AND n.nspname NOT LIKE 'pg_toast%'
+		       AND n.nspname NOT LIKE 'pg_temp_%'
+		       AND NOT (
+		         n.nspname = 'public' AND c.relname IN (
+		           'sandbox_lease_intents',
+		           'sandbox_journal_commands',
+		           'sandbox_lease_intent_events',
+		           'sandbox_journal_outbox'
+		         )
+		       )
+		       AND (
+		         has_table_privilege(current_user, c.oid,
+		           'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+		         OR has_any_column_privilege(current_user, c.oid,
+		           'SELECT,INSERT,UPDATE,REFERENCES')
+		       )
+		  )
 		  -- PostgreSQL Sequence ACLs are separate from table ACLs.
 		  -- USAGE/UPDATE may advance a persisted sequence even without
 		  -- table DML. This command accepts ONLY SELECT on four journal
