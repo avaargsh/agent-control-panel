@@ -65,6 +65,16 @@ func TestInspectSourcePersistsUnknownHoldAndHashLinkedFreshEvents(t *testing.T) 
 	if err := VerifyInspectChain(append(events, third), ref, pub, time.Now().UTC()); err != nil {
 		t.Fatalf("post-SIGKILL signed journal chain cannot be verified: %v", err)
 	}
+	// A valid prefix can have intact signatures yet omit the latest event.
+	// Require a head pinned OUTSIDE the candidate export to detect rollback.
+	head := InspectHead{InspectCount: third.Event.InspectCount,
+		JournalVersion: third.Event.JournalVersion, Digest: third.Digest}
+	if err := VerifyInspectAtHead(append(events, third), ref, pub, time.Now().UTC(), head); err != nil {
+		t.Fatalf("complete source head rejected: %v", err)
+	}
+	if err := VerifyInspectAtHead(events, ref, pub, time.Now().UTC(), head); !errors.Is(err, ErrUnverified) {
+		t.Fatalf("truncated signed history passed independently pinned head: %v", err)
+	}
 }
 
 func TestInspectSourceTerminalCommitBindsWaitDigestAndMonotonicRevision(t *testing.T) {
