@@ -107,6 +107,10 @@ func TestEvidenceReaderLoginIsTenantScopedAndReadOnly(t *testing.T) {
 		_ = tx.Rollback(ctx)
 		t.Fatalf("dedicated read-only login rejected: %v", err)
 	}
+	if err := verifyEvidenceReaderLogin(ctx, tx, other.TenantID); err == nil {
+		_ = tx.Rollback(ctx)
+		t.Fatal("one authenticated database LOGIN was accepted for a second tenant")
+	}
 	if _, err := tx.Exec(ctx, "SELECT set_config('app.tenant_id',$1,true)", other.TenantID); err != nil {
 		_ = tx.Rollback(ctx)
 		t.Fatalf("bind tenant scope in reader transaction: %v", err)
