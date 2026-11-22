@@ -80,6 +80,17 @@ func TestLeaseRevocationEvictsExistingRepeatableReadSession(t *testing.T) {
 	if n, err := readCount(); err != nil || n != 1 {
 		t.Fatalf("missing original active snapshot: rows=%d err=%v", n, err)
 	}
+	// The operator must supply the exact authenticated role generation.
+	// An incorrect OID must not evict a legitimate tenant session.
+	var ignored int
+	if err := owner.pool.QueryRow(ctx,
+		"SELECT public.sandbox_revoke_lease_login($1::name,$2::oid)",
+		login, roleOID+1).Scan(&ignored); err == nil {
+		t.Fatal("stale role generation was allowed to revoke a live principal")
+	}
+	if n, err := readCount(); err != nil || n != 1 {
+		t.Fatalf("stale-OID revoke disrupted valid session: rows=%d err=%v", n, err)
+	}
 	if err := revokeLeasePrincipalForTest(ctx, owner, login, roleOID); err != nil {
 		t.Fatal("DBA revocation failed:", err)
 	}
@@ -102,5 +113,35 @@ func TestLeaseRevocationEvictsExistingRepeatableReadSession(t *testing.T) {
 	}
 	if err := active.Ping(ctx); err == nil {
 		t.Fatal(fmt.Sprintf("revoked LOGIN %s retained new database connectivity", login))
+	}
+	var savedOID uint32
+	var savedTenant, revokedBy string
+	var terminated int
+	err = owner.pool.QueryRow(ctx, `SELECT login_role_oid, tenant_id, terminated_sessions, revoked_by
+		FROM public.sandbox_lease_login_revocations WHERE login_name=$1`, login).
+		Scan(&savedOID, &savedTenant, &terminated, &revokedBy)
+	if err != nil || savedOID != roleOID || savedTenant != "tenant-a" || terminated < 1 || revokedBy == "" {
+		t.Fatalf("source revocation fact invalid: oid=%d tenant=%s sessions=%d operator=%s err=%v",
+			savedOID, savedTenant, terminated, revokedBy, err)
+	}
+	if err := owner.pool.QueryRow(ctx,
+		"SELECT public.sandbox_revoke_lease_login($1::name,$2::oid)",
+		login, roleOID).Scan(&ignored); err == nil {
+		t.Fatal("repeat revocation succeeded without an active principal binding")
+	}
+	var facts int
+	if err := owner.pool.QueryRow(ctx, `SELECT count(*)
+		FROM public.sandbox_lease_login_revocations WHERE login_role_oid=$1::oid`,
+		roleOID).Scan(&facts); err != nil || facts != 1 {
+		t.Fatalf("stale retry altered revocation history: facts=%d err=%v", facts, err)
+	}
+	for _, statement := range []string{
+		"UPDATE public.sandbox_lease_login_revocations SET tenant_id=tenant_id",
+		"DELETE FROM public.sandbox_lease_login_revocations",
+		"TRUNCATE public.sandbox_lease_login_revocations",
+	} {
+		if _, err := owner.pool.Exec(ctx, statement); err == nil {
+			t.Fatalf("ordinary SQL modified source-owned revocation fact: %s", statement)
+		}
 	}
 }
