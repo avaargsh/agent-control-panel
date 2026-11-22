@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path"
 	"strings"
 	"time"
 	"unicode"
@@ -132,6 +133,23 @@ func safeID(s string) bool {
 func validSubject(s Subject) bool {
 	return safeID(s.TenantID) && safeID(s.RunID) &&
 		safeID(s.SessionID) && safeID(s.WorkflowID) && safeID(s.GuardOperationID)
+}
+
+// canonicalWorkspaceRoot rejects lexical aliases and control bytes in a
+// signed Linux workspace root. Signed equality on a path containing "..",
+// ".", duplicate separators or embedded control bytes cannot assert one
+// stable physical directory across SIGKILL. The authoritative Sandbox
+// producer still MUST verify the actual mount/inode and read-back bytes.
+func canonicalWorkspaceRoot(root string) bool {
+	if root == "/" || !path.IsAbs(root) || path.Clean(root) != root {
+		return false
+	}
+	for _, r := range root {
+		if r < 32 || r == 127 || r == '\\' {
+			return false
+		}
+	}
+	return true
 }
 
 func validDigest(s string) bool {
@@ -357,7 +375,7 @@ func checkContinuity(observed map[string]Observation, faultAt, now time.Time) er
 	sb := observed["sandbox/before_fault"].Sandbox
 	sa := observed["sandbox/after_recovery"].Sandbox
 	if !safeID(sb.LeaseID) || !safeID(sb.SandboxUID) || !safeID(sb.WorkspaceID) ||
-		sb.Generation == 0 || !strings.HasPrefix(sb.RootPath, "/") ||
+		sb.Generation == 0 || !canonicalWorkspaceRoot(sb.RootPath) ||
 		!safeID(sb.SentinelPath) || strings.HasPrefix(sb.SentinelPath, "/") || strings.Contains(sb.SentinelPath, "..") ||
 		!validDigest(sb.SentinelDigest) ||
 		sb.ProviderState != "ACTIVE" || sa.ProviderState != "ACTIVE" ||
@@ -371,7 +389,7 @@ func checkContinuity(observed map[string]Observation, faultAt, now time.Time) er
 	cb := observed["agentd/before_fault"].Command
 	ca := observed["agentd/after_recovery"].Command
 	if !safeID(cb.CommandID) || !safeID(cb.AttemptID) || !safeID(cb.ProviderCommandUID) ||
-		cb.State != "UNKNOWN" || cb.DispatchCount != 1 || cb.JournalVersion == 0 ||
+		cb.State != "UNKNOWN" || cb.ExitReceiptDigest != "" || cb.DispatchCount != 1 || cb.JournalVersion == 0 ||
 		cb.Replayed || ca.Replayed || ca.CommandID != cb.CommandID ||
 		ca.AttemptID != cb.AttemptID || ca.ProviderCommandUID != cb.ProviderCommandUID ||
 		ca.DispatchCount != 1 ||

@@ -67,6 +67,20 @@ jobs:
           done
           printf 'POSTFAULT_SIGNED_AGENTD_INSPECT_COUNT_GATE=PASS; REAL_AGENTD_RECONCILIATION=NOT_VERIFIED\n'
 
+      - name: Require canonical Sandbox root and consistent UNKNOWN signed observations
+        shell: bash
+        run: |
+          set -euo pipefail
+          log="$RUNNER_TEMP/postfault-signed-continuity.log"
+          go test -race -count=1 -v -run '^(TestPostfaultRejectsNoncanonicalSignedSandboxRoot|TestPostfaultRejectsPreFaultUnknownWithTerminalReceipt)$' ./internal/postfault | tee "$log"
+          for testname in TestPostfaultRejectsNoncanonicalSignedSandboxRoot TestPostfaultRejectsPreFaultUnknownWithTerminalReceipt; do
+            grep -Fq -- "--- PASS: $testname " "$log" || { echo "missing mandatory signed continuity test: $testname" >&2; exit 1; }
+          done
+          for scenario in parent_escape dot_segment duplicate_separator root_only control_byte; do
+            grep -Fq -- "--- PASS: TestPostfaultRejectsNoncanonicalSignedSandboxRoot/$scenario " "$log" || { echo "missing canonical root negative: $scenario" >&2; exit 1; }
+          done
+          printf 'POSTFAULT_SIGNED_CONTINUITY_CONTRACT=PASS; PHYSICAL_SANDBOX_AGENTD_EVIDENCE=NOT_VERIFIED\n'
+
       - name: Compile and run real local process SIGKILL, UNKNOWN and negative matrix
         shell: bash
         run: |
