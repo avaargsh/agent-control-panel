@@ -41,12 +41,40 @@ jobs:
           set -euo pipefail
           test "$(go env GOVERSION)" = "go1.27.4"
           go mod verify
-      - name: Reject ambiguous signed JSON field aliases (strict decoder)
+      - name: Reject ambiguous signed JSON field aliases (all evidence verifiers)
         shell: bash
         run: |
           set -euo pipefail
-          go test -race -count=1 -v -run '^TestStrictDecodeRejectsCaseFoldedDuplicateKeys$' ./internal/postfault | tee "$RUNNER_TEMP/postfault-strict-json.log"
-          grep -Fq -- '--- PASS: TestStrictDecodeRejectsCaseFoldedDuplicateKeys ' "$RUNNER_TEMP/postfault-strict-json.log"
+          go test -race -count=1 -v -run '^(TestStrictDecodeRejectsCaseFoldedDuplicateKeys|TestEvidenceStrictDecodeRejectsCaseFoldedKeys|TestEvidencePackageRejectsResignedCaseFoldedStatus)
+      - name: Compile and run real local process SIGKILL, UNKNOWN and negative matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+          log="$RUNNER_TEMP/acp-local-postfault-precursor.log"
+          go test -race -count=1 -v -run '^(TestPhysicalWorkspace|TestLocalWorkspaceRejects|TestLocalWorkspaceReadRejects|TestLocalUnknownCommandAfterSIGKILLRemainsBlocked|TestLocalUnknownCommandRejectsForgedReconciliation)' ./internal/postfault | tee "$log"
+          for marker in \
+            '--- PASS: TestPhysicalWorkspaceSurvivesWorkerSIGKILL ' \
+            '--- PASS: TestPhysicalWorkspaceRecoveryRejectsCorruptionAndStaleBinding ' \
+            '--- PASS: TestLocalWorkspaceRejectsHardLinkedSiblingTenantFile ' \
+            '--- PASS: TestLocalUnknownCommandAfterSIGKILLRemainsBlocked ' \
+            '--- PASS: TestLocalUnknownCommandRejectsForgedReconciliation ' \
+            'LOCAL_UNKNOWN_COMMAND_SIGKILL_HOLD_CONFIRMED'; do
+            grep -Fq -- "$marker" "$log" || { echo "missing mandatory local test receipt: $marker" >&2; exit 1; }
+          done
+          for negative in wrong_run wrong_attempt wrong_command missing_effect duplicated_effect fabricated_terminal double_dispatch replaced_workspace_identical_files symlink_effect; do
+            grep -Fq -- "--- PASS: TestLocalUnknownCommandRejectsForgedReconciliation/$negative " "$log" || {
+              echo "missing local UNKNOWN negative case: $negative" >&2
+              exit 1
+            }
+          done
+          printf 'LOCAL_PRECURSOR_ONLY=PASS; REAL_AGENTD_GUARD_RUNTIME_EVIDENCE=NOT_VERIFIED\n'
+ ./internal/postfault ./internal/evidencepackage | tee "$RUNNER_TEMP/postfault-strict-json.log"
+          for receipt in TestStrictDecodeRejectsCaseFoldedDuplicateKeys TestEvidenceStrictDecodeRejectsCaseFoldedKeys TestEvidencePackageRejectsResignedCaseFoldedStatus; do
+            grep -Fq -- "--- PASS: $receipt " "$RUNNER_TEMP/postfault-strict-json.log" || {
+              echo "missing strict signed JSON evidence test: $receipt" >&2
+              exit 1
+            }
+          done
       - name: Compile and run real local process SIGKILL, UNKNOWN and negative matrix
         shell: bash
         run: |
