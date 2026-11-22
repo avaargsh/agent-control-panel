@@ -158,13 +158,8 @@ func NewReadOnlyEvidenceHandler(db *pgxpool.Pool, sourcePublicKey ed25519.Public
 			return
 		}
 		defer func() { _ = tx.Rollback(context.Background()) }()
-		if err := verifyEvidenceReaderLogin(r.Context(), tx); err != nil {
+		if err := verifyEvidenceReaderLogin(r.Context(), tx, req.Ref.TenantID); err != nil {
 			http.Error(w, "source evidence reader identity denied", http.StatusServiceUnavailable)
-			return
-		}
-		if _, err := tx.Exec(r.Context(),
-			"SELECT set_config('app.tenant_id',$1,true)", req.Ref.TenantID); err != nil {
-			http.Error(w, "source tenant scope unavailable", http.StatusServiceUnavailable)
 			return
 		}
 		trustedHead, err := lookup(r.Context(), req.Ref)
