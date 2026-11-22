@@ -126,7 +126,6 @@ func TestSandboxctlRealScopedReaderFixture(t *testing.T) {
 	}
 }
 
-
 // A PostgreSQL client may supply its own search_path. A writable credential
 // with SELECT on same-named shadow tables must never pass the Sandbox reader
 // preflight by making unqualified regclass lookups resolve to a false schema.
