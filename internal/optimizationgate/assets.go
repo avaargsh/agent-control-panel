@@ -66,7 +66,7 @@ func VerifyReviewEvidenceWithAssets(
 		// never materialize an unbounded object in the verifier process.
 		// The extra byte distinguishes an exactly-full valid artifact
 		// from an oversized stream, even if the remote reader never EOFs.
-		size, readErr := io.CopyN(hash, contextCheckedEvidenceReader{ctx: ctx, source: stream}, int64(maxEvidenceBytes)+1)
+		size, readErr := io.CopyN(hash, &contextCheckedEvidenceReader{ctx: ctx, source: stream}, int64(maxEvidenceBytes)+1)
 		closeErr := stream.Close()
 		if err := ctx.Err(); err != nil {
 			return EvaluationReceipt{}, err
@@ -95,17 +95,28 @@ func evidenceReaderConfigured(reader any) bool {
 	}
 }
 
-// contextCheckedEvidenceReader checks for cancellation before each source read.
-// A provider must still support cancellation of an already-blocked Read itself;
-// this wrapper prevents additional network or disk reads after cancellation.
+// contextCheckedEvidenceReader stops repeated zero-byte, nil-error reads
+// as well as reads after context cancellation. A provider must still support
+// cancellation of an already-blocked Read itself; this wrapper cannot
+// interrupt a network operation which ignores its context.
 type contextCheckedEvidenceReader struct {
-	ctx    context.Context
-	source io.Reader
+	ctx        context.Context
+	source     io.Reader
+	emptyReads int
 }
 
-func (r contextCheckedEvidenceReader) Read(p []byte) (int, error) {
+func (r *contextCheckedEvidenceReader) Read(p []byte) (int, error) {
 	if err := r.ctx.Err(); err != nil {
 		return 0, err
 	}
-	return r.source.Read(p)
+	n, err := r.source.Read(p)
+	if n == 0 && err == nil {
+		r.emptyReads++
+		if r.emptyReads >= 100 {
+			return 0, io.ErrNoProgress
+		}
+	} else if n > 0 {
+		r.emptyReads = 0
+	}
+	return n, err
 }
