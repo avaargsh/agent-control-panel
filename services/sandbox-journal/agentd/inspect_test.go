@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -59,15 +58,19 @@ func startOwnedTestProcess(t *testing.T, duration string) (*exec.Cmd, Ref) {
 		t.Fatal(err)
 	}
 	return cmd, Ref{
-		TenantID: "agentd-tenant-a",
-		RunID: "11111111-1111-4111-8111-111111111111",
-		RuntimeAttemptID: "runtime-attempt-1",
-		SandboxUID: "sandbox-uid-1", CommandID: "command-1",
-		AttemptID: "executor-attempt-1",
+		TenantID:           "agentd-tenant-a",
+		RunID:              "11111111-1111-4111-8111-111111111111",
+		RuntimeAttemptID:   "runtime-attempt-1",
+		SandboxUID:         "sandbox-uid-1",
+		CommandID:          "command-1",
+		AttemptID:          "executor-attempt-1",
 		ProviderCommandUID: "provider-command-uid-1",
-		RequestDigest: "sha256:" + strings.Repeat("a", 64),
-		GuardPermitID: "guard-permit-1", PermitEpoch: 7,
-		ProcessPID: cmd.Process.Pid, ProcessStartTicks: ticks, HostBootID: bootID,
+		RequestDigest:      "sha256:" + strings.Repeat("a", 64),
+		GuardPermitID:      "guard-permit-1",
+		PermitEpoch:        7,
+		ProcessPID:         cmd.Process.Pid,
+		ProcessStartTicks:  ticks,
+		HostBootID:         bootID,
 	}
 }
 
