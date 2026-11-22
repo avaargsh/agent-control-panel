@@ -84,7 +84,11 @@ SELECT COALESCE((
               AND s.nspname NOT IN ('pg_catalog', 'information_schema')
               AND s.nspname NOT LIKE 'pg_toast%'
               AND s.nspname NOT LIKE 'pg_temp_%'
-              AND has_sequence_privilege(c.oid, 'SELECT,USAGE,UPDATE')
+              -- SQL planner may reorder AND predicates: protect the
+              -- sequence-only ACL function from non-sequence relkinds.
+              AND CASE WHEN c.relkind = 'S'
+                       THEN has_sequence_privilege(c.oid, 'SELECT,USAGE,UPDATE')
+                       ELSE false END
        )
        AND NOT pg_has_role(a.oid, n.nspowner, 'MEMBER')
        -- Even NOINHERIT memberships may permit SET ROLE to a privileged
