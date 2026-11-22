@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"testing"
 )
 
@@ -83,5 +84,36 @@ func TestIndependentEvidenceRejectsCanceledContext(t *testing.T) {
 	cancel()
 	if _, err := VerifyReviewEvidenceWithAssets(ctx, policy, wire, keys, assets); !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled fetch should fail before review: %v", err)
+	}
+}
+
+// streamingEvidenceProbe makes the old eager []byte retrieval fail on
+// purpose, while serving valid, independently digest-pinned evidence through
+// a bounded stream. The verifier must use the streaming route, not silently
+// download an unbounded object before enforcing maxEvidenceBytes.
+type streamingEvidenceProbe struct {
+	testEvidenceReader
+	opens int
+}
+
+func (r *streamingEvidenceProbe) ReadEvidence(context.Context, string) ([]byte, error) {
+	return nil, errors.New("unbounded eager evidence fetch is forbidden")
+}
+
+func (r *streamingEvidenceProbe) OpenEvidence(ctx context.Context, digest string) (io.ReadCloser, error) {
+	data, err := r.testEvidenceReader.ReadEvidence(ctx, digest)
+	if err != nil {
+		return nil, err
+	}
+	r.opens++
+	return io.NopCloser(bytes.NewReader(data)), nil
+}
+
+func TestIndependentEvidencePrefersBoundedStreamingOverEagerByteFetch(t *testing.T) {
+	policy, wire, keys, assets := evidenceFixture(t)
+	reader := &streamingEvidenceProbe{testEvidenceReader: assets}
+	receipt, err := VerifyReviewEvidenceWithAssets(context.Background(), policy, wire, keys, reader)
+	if err != nil || receipt.VerifierRunID != "independent-run-1" || reader.opens != 2 {
+		t.Fatalf("streaming evidence was not verified without eager fetch: receipt=%+v opens=%d err=%v", receipt, reader.opens, err)
 	}
 }
