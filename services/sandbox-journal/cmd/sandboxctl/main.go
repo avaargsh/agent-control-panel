@@ -112,6 +112,11 @@ func verifySandboxReadRole(ctx context.Context, pool *pgxpool.Pool) error {
 		  AND has_table_privilege(current_user, 'public.sandbox_journal_commands'::regclass, 'SELECT')
 		  AND has_table_privilege(current_user, 'public.sandbox_lease_intent_events'::regclass, 'SELECT')
 		  AND has_table_privilege(current_user, 'public.sandbox_journal_outbox'::regclass, 'SELECT')
+		  -- Account membership and SET ROLE are capabilities even when
+		  -- NOINHERIT makes current_user appear harmless. Inspect the
+		  -- session LOGIN plus every role it can belong to, fail-closed.
+		  -- Checking only its currently inherited ACLs misses a delegated
+		  -- foreign writer, sequence mutator or SECURITY DEFINER executor.
 		  -- Do not mistake four required SELECT grants for an exact
 		  -- allowlist. A LOGIN with INSERT on an unrelated table can write
 		  -- persistently even when it cannot mutate any Sandbox table.
@@ -121,6 +126,9 @@ func verifySandboxReadRole(ctx context.Context, pool *pgxpool.Pool) error {
 		    SELECT 1
 		      FROM pg_catalog.pg_class c
 		      JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+		      JOIN pg_catalog.pg_roles r ON
+		        (r.rolname = session_user
+		         OR pg_has_role(session_user, r.oid, 'MEMBER'))
 		     WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')
 		       AND n.nspname NOT IN ('pg_catalog', 'information_schema')
 		       AND n.nspname NOT LIKE 'pg_toast%'
@@ -134,9 +142,9 @@ func verifySandboxReadRole(ctx context.Context, pool *pgxpool.Pool) error {
 		         )
 		       )
 		       AND (
-		         has_table_privilege(current_user, c.oid,
+		         has_table_privilege(r.oid, c.oid,
 		           'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
-		         OR has_any_column_privilege(current_user, c.oid,
+		         OR has_any_column_privilege(r.oid, c.oid,
 		           'SELECT,INSERT,UPDATE,REFERENCES')
 		       )
 		  )
@@ -147,13 +155,16 @@ func verifySandboxReadRole(ctx context.Context, pool *pgxpool.Pool) error {
 		  AND NOT EXISTS (
 		    SELECT 1 FROM pg_catalog.pg_class c
 		    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+		      JOIN pg_catalog.pg_roles r ON
+		        (r.rolname = session_user
+		         OR pg_has_role(session_user, r.oid, 'MEMBER'))
 		    WHERE c.relkind = 'S'
 		      AND n.nspname NOT IN ('pg_catalog', 'information_schema')
 		      AND n.nspname NOT LIKE 'pg_toast%'
 		      AND n.nspname NOT LIKE 'pg_temp_%'
 		      -- WHERE reordering must never call this function on a table.
 		      AND CASE WHEN c.relkind = 'S'
-		               THEN has_sequence_privilege(current_user, c.oid, 'SELECT,USAGE,UPDATE')
+		               THEN has_sequence_privilege(r.oid, c.oid, 'SELECT,USAGE,UPDATE')
 		               ELSE false END
 		  )
 		  -- A function created by the DB owner may carry SECURITY
@@ -168,14 +179,17 @@ func verifySandboxReadRole(ctx context.Context, pool *pgxpool.Pool) error {
 		    SELECT 1
 		      FROM pg_catalog.pg_proc f
 		      JOIN pg_catalog.pg_namespace n ON n.oid = f.pronamespace
+		      JOIN pg_catalog.pg_roles r ON
+		        (r.rolname = session_user
+		         OR pg_has_role(session_user, r.oid, 'MEMBER'))
 		     WHERE f.prosecdef
 		       AND f.prorettype <> 'pg_catalog.trigger'::regtype
 		       AND f.prorettype <> 'pg_catalog.event_trigger'::regtype
 		       AND n.nspname NOT IN ('pg_catalog', 'information_schema')
 		       AND n.nspname NOT LIKE 'pg_toast%'
 		       AND n.nspname NOT LIKE 'pg_temp_%'
-		       AND has_schema_privilege(current_user, n.oid, 'USAGE')
-		       AND has_function_privilege(current_user, f.oid, 'EXECUTE')
+		       AND has_schema_privilege(r.oid, n.oid, 'USAGE')
+		       AND has_function_privilege(r.oid, f.oid, 'EXECUTE')
 		       -- Migration 0007 intentionally uses exactly this DBA-owned
 		       -- stable SQL helper to bind the authenticated session LOGIN
 		       -- to its lease tenant. Do not broadly allow a function name:
