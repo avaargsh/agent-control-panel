@@ -107,6 +107,41 @@ BEGIN
       USING ERRCODE = '23514';
   END IF;
 
+  -- A revoked LOGIN with direct EXECUTE on SECURITY DEFINER revocation
+  -- functions could become dangerous if a DBA later re-enables its LOGIN.
+  -- Fail closed on privileged operator entrypoints, not just table ACLs.
+  IF EXISTS (
+    SELECT 1 FROM pg_catalog.pg_roles AS r
+    WHERE r.oid = p_expected_oid AND (
+      pg_catalog.has_function_privilege(
+        r.oid,
+        'public.sandbox_revoke_lease_login(name,oid)'::regprocedure,
+        'EXECUTE'
+      ) OR pg_catalog.has_function_privilege(
+        r.oid,
+        'public.sandbox_verify_lease_login_revocation(name,oid)'::regprocedure,
+        'EXECUTE'
+      )
+    )
+  ) THEN
+    RAISE EXCEPTION 'revoked LOGIN retains privileged operator function execution'
+      USING ERRCODE = '23514';
+  END IF;
+
+  -- A residual direct CREATE grant to public can survive role-membership
+  -- revocation. No source-owned object should be provisioned by a
+  -- re-enabled, previously revoked tenant account.
+  IF EXISTS (
+    SELECT 1 FROM pg_catalog.pg_roles AS r
+    WHERE r.oid = p_expected_oid
+      AND pg_catalog.has_schema_privilege(
+        r.oid, 'public'::regnamespace, 'CREATE'
+      )
+  ) THEN
+    RAISE EXCEPTION 'revoked LOGIN retains public schema CREATE authority'
+      USING ERRCODE = '23514';
+  END IF;
+
   IF EXISTS (
     SELECT 1 FROM public.sandbox_lease_db_principals AS p
     WHERE p.login_name = p_login OR p.login_role_oid = p_expected_oid
