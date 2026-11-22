@@ -41,10 +41,10 @@ type AgentDEvidenceRecord struct {
 // AgentD InspectHead. It is compared to a separately pinned consumer value;
 // a Head supplied by this HTTP response is never its own trust anchor.
 type AgentDEvidenceReadResponse struct {
-	Schema      string                 `json:"schema"`
-	Ref         AgentDWaitRef          `json:"ref"`
-	State       string                 `json:"state"`
-	NextAction  string                 `json:"next_action"`
+	Schema      string        `json:"schema"`
+	Ref         AgentDWaitRef `json:"ref"`
+	State       string        `json:"state"`
+	NextAction  string        `json:"next_action"`
 	Head        TrustedAgentDInspectHead
 	Inspections []AgentDEvidenceRecord `json:"inspections"`
 	Terminal    *AgentDEvidenceRecord  `json:"terminal,omitempty"`
@@ -138,12 +138,17 @@ func (c AgentDEvidenceClient) Read(ctx context.Context, ref AgentDWaitRef,
 		!strings.Contains(strings.ToLower(response.Header.Get("Cache-Control")), "no-store") {
 		return empty, ErrAgentDEvidenceUnavailable
 	}
-	if encoding := strings.TrimSpace(strings.ToLower(response.Header.Get("Content-Encoding")));
-		encoding != "" && encoding != "identity" {
+	if encoding := strings.TrimSpace(strings.ToLower(response.Header.Get("Content-Encoding"))); encoding != "" && encoding != "identity" {
 		return empty, ErrAgentDEvidenceUnavailable
 	}
 	raw, err := io.ReadAll(io.LimitReader(response.Body, maxAgentDEvidenceBody+1))
-	if err != nil || len(raw) == 0 || len(raw) > maxAgentDEvidenceBody {
+	if err != nil {
+		if ctx.Err() != nil {
+			return empty, ctx.Err()
+		}
+		return empty, ErrAgentDEvidenceUnavailable
+	}
+	if len(raw) == 0 || len(raw) > maxAgentDEvidenceBody {
 		return empty, ErrAgentDEvidenceUnavailable
 	}
 	var decoded AgentDEvidenceReadResponse
