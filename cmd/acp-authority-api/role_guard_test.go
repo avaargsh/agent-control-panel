@@ -123,6 +123,8 @@ func TestAuthorityDatabaseRoleFailClosed(t *testing.T) {
 			"REVOKE SELECT (payload) ON " + schema + ".outbox_events FROM " + role},
 		{"update intent column only", "GRANT UPDATE (updated_at) ON " + schema + ".run_intents TO " + role,
 			"REVOKE UPDATE (updated_at) ON " + schema + ".run_intents FROM " + role},
+		{"public read outbox column", "GRANT SELECT (payload) ON " + schema + ".outbox_events TO PUBLIC",
+			"REVOKE SELECT (payload) ON " + schema + ".outbox_events FROM PUBLIC"},
 		{"create schema objects", "GRANT CREATE ON SCHEMA " + schema + " TO " + role,
 			"REVOKE CREATE ON SCHEMA " + schema + " FROM " + role},
 	} {
