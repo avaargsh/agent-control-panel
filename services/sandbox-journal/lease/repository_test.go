@@ -69,6 +69,16 @@ func testRepository(t *testing.T) *Repository {
 	if _, err := pool.Exec(ctx, string(immutable)); err != nil {
 		t.Fatal("lease Outbox append-only migration:", err)
 	}
+	// RLS policies reference NOLOGIN group roles introduced in migration 0004.
+	// Install the DBA-owned grant groups BEFORE attempting migration 0007;
+	// a missing prerequisite must not be mistaken for an RLS behavior failure.
+	rolePolicy, err := os.ReadFile(filepath.Join("..", "migrations", "0004_lease_runtime_roles.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, string(rolePolicy)); err != nil {
+		t.Fatal("lease DBA role migration:", err)
+	}
 	// The independent CI database also installs the post-0005 deferrable
 	// COMMIT constraint. Each test's owner-only reset remains disposable;
 	// production runtime principals never execute migration SQL.
