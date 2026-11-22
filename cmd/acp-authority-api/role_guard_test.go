@@ -244,6 +244,87 @@ func TestAuthorityDatabaseRoleFailClosed(t *testing.T) {
 		}
 	}
 
+	// PUBLIC receives any sequence ACL grant made to everybody, not only
+	// privileges given directly to the independently authenticated LOGIN.
+	// A successful guard after REVOKE also exercises a pg_class catalog
+	// containing both ordinary relations and sequence relkinds.
+	t.Run("public sequence USAGE remains planner-safe", func(t *testing.T) {
+		sequence := foreignSchema + ".authority_gate_probe_seq"
+		if _, err := admin.Exec(ctx, "GRANT USAGE ON SEQUENCE "+sequence+" TO PUBLIC"); err != nil {
+			t.Fatal(err)
+		}
+		var advanced int64
+		if err := reader.QueryRow(ctx, "SELECT nextval($1::regclass)", sequence).Scan(&advanced); err != nil || advanced < 1 {
+			t.Fatalf("PUBLIC sequence USAGE was not effective: value=%d err=%v", advanced, err)
+		}
+		check(t, false)
+		if _, err := admin.Exec(ctx, "REVOKE USAGE ON SEQUENCE "+sequence+" FROM PUBLIC"); err != nil {
+			t.Fatal(err)
+		}
+		var pgErr *pgconn.PgError
+		err := reader.QueryRow(ctx, "SELECT nextval($1::regclass)", sequence).Scan(&advanced)
+		if !errors.As(err, &pgErr) || pgErr.Code != "42501" {
+			t.Fatalf("sequence privilege should be revoked with SQLSTATE 42501: %v", err)
+		}
+		check(t, true)
+	})
+
+	// SECURITY DEFINER functions execute as their owner and are callable by
+	// PUBLIC by default. A read-only LOGIN with EXECUTE can therefore disclose
+	// data it cannot SELECT directly. Probe both the current schema and an
+	// unrelated application schema using real PostgreSQL role credentials.
+	for _, functionSchema := range []string{schema, foreignSchema} {
+		t.Run("security-definer/"+functionSchema, func(t *testing.T) {
+			functionName := functionSchema + ".authority_privilege_probe"
+			create := "CREATE FUNCTION " + functionName + "() RETURNS text " +
+				"LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog " +
+				"AS $acl$ SELECT payload FROM " + foreignSchema + ".secret WHERE id=1 $acl$"
+			if _, err := admin.Exec(ctx, create); err != nil {
+				t.Fatal(err)
+			}
+			defer admin.Exec(context.Background(), "DROP FUNCTION "+functionName+"()")
+			call := func() (string, error) {
+				var value string
+				err := reader.QueryRow(ctx, "SELECT "+functionName+"()").Scan(&value)
+				return value, err
+			}
+			// This is the default PUBLIC EXECUTE grant on newly defined
+			// functions, not an explicit grant to the tested principal.
+			if value, err := call(); err != nil || value != "foreign-schema-canary" {
+				t.Fatalf("default PUBLIC EXECUTE did not expose owner-only data: value=%q err=%v", value, err)
+			}
+			check(t, false)
+			if _, err := admin.Exec(ctx, "REVOKE EXECUTE ON FUNCTION "+functionName+"() FROM PUBLIC"); err != nil {
+				t.Fatal(err)
+			}
+			assertDenied := func() {
+				t.Helper()
+				_, err := call()
+				var pgErr *pgconn.PgError
+				if !errors.As(err, &pgErr) || pgErr.Code != "42501" {
+					t.Fatalf("revoked SECURITY DEFINER EXECUTE should return 42501: %v", err)
+				}
+			}
+			assertDenied()
+			check(t, true)
+
+			// Explicit EXECUTE grant can re-open the same bypass after
+			// PUBLIC was revoked. Verify actual execution, denial, recovery.
+			if _, err := admin.Exec(ctx, "GRANT EXECUTE ON FUNCTION "+functionName+"() TO "+role); err != nil {
+				t.Fatal(err)
+			}
+			if value, err := call(); err != nil || value != "foreign-schema-canary" {
+				t.Fatalf("explicit SECURITY DEFINER grant did not expose owner-only data: value=%q err=%v", value, err)
+			}
+			check(t, false)
+			if _, err := admin.Exec(ctx, "REVOKE EXECUTE ON FUNCTION "+functionName+"() FROM "+role); err != nil {
+				t.Fatal(err)
+			}
+			assertDenied()
+			check(t, true)
+		})
+	}
+
 	if _, err := admin.Exec(ctx, "REVOKE SELECT ON "+schema+".admission_sessions FROM "+role); err != nil {
 		t.Fatal(err)
 	}
