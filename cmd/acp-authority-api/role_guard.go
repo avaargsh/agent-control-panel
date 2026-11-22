@@ -71,6 +71,21 @@ SELECT COALESCE((
               AND has_schema_privilege(s.oid, 'USAGE')
               AND has_function_privilege(f.oid, 'EXECUTE')
        )
+       -- Sequence ACLs are independent of table/column privileges.
+       -- USAGE or UPDATE permits nextval() to advance persisted state;
+       -- SELECT permits inspecting sequence state outside this reader's
+       -- exact seven-table allowlist. Reject effective rights anywhere
+       -- in non-system namespaces, including grants through PUBLIC.
+       AND NOT EXISTS (
+           SELECT 1
+             FROM pg_catalog.pg_class c
+             JOIN pg_catalog.pg_namespace s ON s.oid = c.relnamespace
+            WHERE c.relkind = 'S'
+              AND s.nspname NOT IN ('pg_catalog', 'information_schema')
+              AND s.nspname NOT LIKE 'pg_toast%'
+              AND s.nspname NOT LIKE 'pg_temp_%'
+              AND has_sequence_privilege(c.oid, 'SELECT,USAGE,UPDATE')
+       )
        AND NOT pg_has_role(a.oid, n.nspowner, 'MEMBER')
        -- Even NOINHERIT memberships may permit SET ROLE to a privileged
        -- identity after startup. This dedicated service login must belong
