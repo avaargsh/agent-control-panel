@@ -93,7 +93,8 @@ func TestIndependentEvidenceRejectsCanceledContext(t *testing.T) {
 // download an unbounded object before enforcing maxEvidenceBytes.
 type streamingEvidenceProbe struct {
 	testEvidenceReader
-	opens int
+	opens          int
+	streamOverride io.ReadCloser
 }
 
 func (r *streamingEvidenceProbe) ReadEvidence(context.Context, string) ([]byte, error) {
@@ -101,11 +102,14 @@ func (r *streamingEvidenceProbe) ReadEvidence(context.Context, string) ([]byte, 
 }
 
 func (r *streamingEvidenceProbe) OpenEvidence(ctx context.Context, digest string) (io.ReadCloser, error) {
+	r.opens++
+	if r.streamOverride != nil {
+		return r.streamOverride, nil
+	}
 	data, err := r.testEvidenceReader.ReadEvidence(ctx, digest)
 	if err != nil {
 		return nil, err
 	}
-	r.opens++
 	return io.NopCloser(bytes.NewReader(data)), nil
 }
 
@@ -115,5 +119,36 @@ func TestIndependentEvidencePrefersBoundedStreamingOverEagerByteFetch(t *testing
 	receipt, err := VerifyReviewEvidenceWithAssets(context.Background(), policy, wire, keys, reader)
 	if err != nil || receipt.VerifierRunID != "independent-run-1" || reader.opens != 2 {
 		t.Fatalf("streaming evidence was not verified without eager fetch: receipt=%+v opens=%d err=%v", receipt, reader.opens, err)
+	}
+}
+
+type infiniteEvidenceStream struct {
+	readBytes int64
+	closed    bool
+}
+
+func (s *infiniteEvidenceStream) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = 'x'
+	}
+	s.readBytes += int64(len(p))
+	return len(p), nil
+}
+
+func (s *infiniteEvidenceStream) Close() error {
+	s.closed = true
+	return nil
+}
+
+func TestIndependentEvidenceStopsUnboundedStreamAtDeclaredLimit(t *testing.T) {
+	policy, wire, keys, _ := evidenceFixture(t)
+	stream := &infiniteEvidenceStream{}
+	reader := &streamingEvidenceProbe{streamOverride: stream}
+	_, err := VerifyReviewEvidenceWithAssets(context.Background(), policy, wire, keys, reader)
+	if !errors.Is(err, ErrEvidenceInvalid) {
+		t.Fatalf("unbounded evidence stream was accepted: %v", err)
+	}
+	if stream.readBytes != int64(maxEvidenceBytes)+1 || !stream.closed {
+		t.Fatalf("evidence reader failed to enforce limit before download: readBytes=%d cap=%d closed=%v", stream.readBytes, maxEvidenceBytes, stream.closed)
 	}
 }
