@@ -26,16 +26,24 @@ func signedVariant(t *testing.T, wire []byte, modify func(*EvaluationReceipt)) [
 func TestPostgresReconcilePendingThenConsumedWithoutNewPermission(t *testing.T) {
 	store, pool := disposableAttemptStore(t)
 	policy, wire, keys, assets := attemptFixture(t, store)
-	state, err := store.ReconcileReviewAttempt(context.Background(), policy, wire, keys, assets)
+	reader := &countingAttemptEvidenceReader{testEvidenceReader: assets}
+	state, err := store.ReconcileReviewAttempt(context.Background(), policy, wire, keys, reader)
 	if err != nil || state != AttemptPending {
 		t.Fatalf("fresh attempt must be pending, got %q: %v", state, err)
+	}
+	if reader.opens != 0 {
+		t.Fatalf("pending reconciliation fetched raw evidence unnecessarily: opens=%d", reader.opens)
 	}
 	if _, err := store.ConsumeReviewEvidence(context.Background(), policy, wire, keys, assets); err != nil {
 		t.Fatal(err)
 	}
-	state, err = store.ReconcileReviewAttempt(context.Background(), policy, wire, keys, assets)
+	reader.opens = 0
+	state, err = store.ReconcileReviewAttempt(context.Background(), policy, wire, keys, reader)
 	if err != nil || state != AttemptConsumed {
 		t.Fatalf("accepted receipt not reconciled from PG: %q: %v", state, err)
+	}
+	if reader.opens != 2 {
+		t.Fatalf("consumed matching reconciliation must recheck both raw evidence objects: opens=%d", reader.opens)
 	}
 	var rows int
 	if err := pool.QueryRow(context.Background(),
@@ -67,11 +75,15 @@ func TestPostgresReconcileNeverEquatesASecondValidSignedReceipt(t *testing.T) {
 func TestPostgresReconcileRejectsUnissuedChallenge(t *testing.T) {
 	store, _ := disposableAttemptStore(t)
 	policy, wire, keys, assets := attemptFixture(t, store)
+	reader := &countingAttemptEvidenceReader{testEvidenceReader: assets}
 	other := policy
 	other.VerificationNonce = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
 	signedOther := signedVariant(t, wire, func(r *EvaluationReceipt) { r.VerificationNonce = other.VerificationNonce })
-	if _, err := store.ReconcileReviewAttempt(context.Background(), other, signedOther, keys, assets); !errors.Is(err, ErrAttemptUnavailable) {
+	if _, err := store.ReconcileReviewAttempt(context.Background(), other, signedOther, keys, reader); !errors.Is(err, ErrAttemptUnavailable) {
 		t.Fatalf("unissued but validly signed result was treated as issued: %v", err)
+	}
+	if reader.opens != 0 {
+		t.Fatalf("unissued challenge caused external evidence fetch: opens=%d", reader.opens)
 	}
 }
 
@@ -87,15 +99,18 @@ func TestPostgresReconcileExpiredAttemptFromDatabaseClock(t *testing.T) {
 	baseline, candidate := []byte("baseline"), []byte("candidate")
 	r.BaselineEvidenceDigest = evidenceSHA(baseline)
 	r.CandidateEvidenceDigest = evidenceSHA(candidate)
-	assets := testEvidenceReader{
+	assets := &countingAttemptEvidenceReader{testEvidenceReader: testEvidenceReader{
 		r.BaselineEvidenceDigest:  baseline,
 		r.CandidateEvidenceDigest: candidate,
-	}
+	}}
 	if _, err := pool.Exec(context.Background(), "SELECT pg_sleep(1.1)"); err != nil {
 		t.Fatal(err)
 	}
 	state, err := store.ReconcileReviewAttempt(context.Background(), issued, signed(r, key), keys, assets)
 	if err != nil || state != AttemptExpired {
 		t.Fatalf("expired challenge treated as pending/accepted: %q %v", state, err)
+	}
+	if assets.opens != 0 {
+		t.Fatalf("expired challenge caused external evidence fetch: opens=%d", assets.opens)
 	}
 }
