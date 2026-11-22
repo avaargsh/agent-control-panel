@@ -98,6 +98,20 @@ SELECT COALESCE((
                   OR has_any_column_privilege(c.oid, 'SELECT,INSERT,UPDATE,REFERENCES')
               )
        )
+       -- SECURITY DEFINER routines execute under an owner identity, not
+       -- the caller's table ACL. Default PUBLIC EXECUTE and explicit grants
+       -- are both effective; never allow this authority reader to invoke
+       -- elevated application routines in any non-system schema.
+       AND NOT EXISTS (
+           SELECT 1
+             FROM pg_catalog.pg_proc p
+             JOIN pg_catalog.pg_namespace s ON s.oid = p.pronamespace
+            WHERE p.prosecdef
+              AND s.nspname NOT IN ('pg_catalog', 'information_schema')
+              AND s.nspname NOT LIKE 'pg_toast%'
+              AND s.nspname NOT LIKE 'pg_temp_%'
+              AND has_function_privilege(p.oid, 'EXECUTE')
+       )
        -- Sequence USAGE/SELECT/UPDATE are not relation or column ACLs.
        -- A reader with nextval/setval or sequence-reading access can mutate
        -- or inspect independently scoped state even with no table grants.
