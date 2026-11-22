@@ -211,6 +211,46 @@ func TestAuthorityDatabaseRoleFailClosed(t *testing.T) {
 	// Effective PostgreSQL sequence privileges include grants to PUBLIC,
 	// not just direct grants to this LOGIN. Enforce the same deny/revoke
 	// behavior for a PUBLIC-granted side-effectful nextval operation.
+	// A sequence inside the configured application schema has independent ACLs
+	// too. Verify real grant, deny, revoke and SQLSTATE with the separate LOGIN.
+	t.Run("configured schema sequence rights deny dedicated reader", func(t *testing.T) {
+		seq := pgx.Identifier{schema, "privilege_probe_seq"}.Sanitize()
+		if _, err := admin.Exec(ctx, "CREATE SEQUENCE "+seq); err != nil {
+			t.Fatal(err)
+		}
+		defer admin.Exec(context.Background(), "DROP SEQUENCE "+seq)
+		for _, right := range []string{"USAGE", "SELECT", "UPDATE"} {
+			t.Run(right, func(t *testing.T) {
+				if _, err := admin.Exec(ctx, "GRANT "+right+" ON SEQUENCE "+seq+" TO "+role); err != nil {
+					t.Fatal(err)
+				}
+				var value int64
+				var readErr error
+				if right == "SELECT" {
+					readErr = reader.QueryRow(ctx, "SELECT last_value FROM "+seq).Scan(&value)
+				} else {
+					readErr = reader.QueryRow(ctx, "SELECT nextval($1::regclass)", seq).Scan(&value)
+				}
+				if readErr != nil || value < 1 {
+					t.Fatalf("configured schema reader %s right was not effective: value=%d err=%v", right, value, readErr)
+				}
+				check(t, false)
+				if _, err := admin.Exec(ctx, "REVOKE "+right+" ON SEQUENCE "+seq+" FROM "+role); err != nil {
+					t.Fatal(err)
+				}
+				check(t, true)
+				if right == "SELECT" {
+					readErr = reader.QueryRow(ctx, "SELECT last_value FROM "+seq).Scan(&value)
+				} else {
+					readErr = reader.QueryRow(ctx, "SELECT nextval($1::regclass)", seq).Scan(&value)
+				}
+				var pgErr *pgconn.PgError
+				if !errors.As(readErr, &pgErr) || pgErr.Code != "42501" {
+					t.Fatalf("configured schema sequence %s was still accessible after REVOKE: %v", right, readErr)
+				}
+			})
+		}
+	})
 	t.Run("public sequence usage is not read-only authority", func(t *testing.T) {
 		if _, err := admin.Exec(ctx, "GRANT USAGE ON SEQUENCE "+foreignSequence+" TO PUBLIC"); err != nil {
 			t.Fatal(err)
