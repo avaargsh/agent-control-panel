@@ -28,12 +28,46 @@ SELECT COALESCE((
      AND NOT r.rolcreatedb
      AND NOT r.rolreplication
      AND pg_has_role(r.oid, 'sandbox_agentd_evidence_reader', 'USAGE')
+     AND EXISTS (
+       SELECT 1 FROM pg_roles g
+       WHERE g.rolname='sandbox_agentd_evidence_reader'
+         AND NOT g.rolcanlogin AND NOT g.rolsuper AND NOT g.rolcreatedb
+         AND NOT g.rolcreaterole AND NOT g.rolreplication
+         AND NOT g.rolbypassrls AND NOT g.rolinherit
+     )
+     AND NOT EXISTS (
+       SELECT 1 FROM pg_auth_members m
+       WHERE m.member=r.oid
+         AND m.roleid=(SELECT oid FROM pg_roles WHERE rolname='sandbox_agentd_evidence_reader')
+         AND m.admin_option
+     )
      AND has_schema_privilege(r.oid, 'public', 'USAGE')
      AND NOT has_schema_privilege(r.oid, 'public', 'CREATE')
      AND NOT has_database_privilege(r.oid, current_database(), 'CREATE')
      AND NOT pg_has_role(r.oid, owner_row.relowner, 'MEMBER')
      AND public.sandbox_agentd_evidence_tenant() = $1
      AND NOT has_table_privilege(r.oid, 'public.sandbox_agentd_evidence_reader_tenants', 'SELECT')
+     AND (SELECT relowner FROM pg_class WHERE oid=to_regclass('public.sandbox_agentd_evidence_reader_tenants')) = owner_row.relowner
+     AND NOT EXISTS (
+       SELECT 1 FROM pg_class c
+       WHERE c.oid IN (
+         to_regclass('public.sandbox_agentd_terminal_receipts'),
+         to_regclass('public.sandbox_agentd_inspect_events')
+       )
+       AND c.relowner <> owner_row.relowner
+     )
+     AND (
+       SELECT count(*) FROM pg_policies p
+       WHERE p.schemaname='public'
+         AND p.policyname IN (
+           'agentd_attempt_evidence_reader_tenant',
+           'agentd_terminal_evidence_reader_tenant',
+           'agentd_inspect_evidence_reader_tenant'
+         )
+         AND p.cmd='SELECT'
+         AND p.roles @> ARRAY['sandbox_agentd_evidence_reader'::name]
+         AND p.qual LIKE '%sandbox_agentd_evidence_tenant%'
+     ) = 3
      AND NOT EXISTS (
        SELECT 1 FROM pg_auth_members m
        WHERE m.member = r.oid
@@ -48,7 +82,7 @@ SELECT COALESCE((
        WHERE n.nspname NOT IN ('pg_catalog','information_schema','public')
          AND n.nspname NOT LIKE 'pg_toast%'
          AND n.nspname NOT LIKE 'pg_temp_%'
-         AND has_schema_privilege(r.oid, n.oid, 'USAGE')
+         AND (has_schema_privilege(r.oid, n.oid, 'USAGE') OR has_schema_privilege(r.oid, n.oid, 'CREATE'))
      )
      AND NOT EXISTS (
        SELECT 1
