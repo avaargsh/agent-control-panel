@@ -325,11 +325,11 @@ func Verify(p Package, e Expected, keys map[string]ed25519.PublicKey, now time.T
 		// reconciled command and Guard Permit references. It cannot claim
 		// completed recovery before the independent evidence it depends on
 		// was observed, even if a later Guard settlement is correctly dated.
-		if resumed.ObservedAt.Before(observedAt) {
-			return reject("G05: recovered Run predates signed postfault source proof")
-		}
 		if guardReleased.ObservedAt.Before(observedAt) {
 			return reject("G03/G04: settlement predates signed postfault recovery proof")
+		}
+		if resumed.ObservedAt.Before(observedAt) {
+			return reject("G05: recovered Run predates signed postfault source proof")
 		}
 	}
 	if sandboxReleased.Status != "RELEASED" || !sandboxReleased.ProviderAbsent ||
