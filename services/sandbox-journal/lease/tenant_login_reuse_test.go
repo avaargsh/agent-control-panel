@@ -84,6 +84,50 @@ func TestLeaseTenantBindingRejectsDroppedAndRecreatedLogin(t *testing.T) {
 	if _, created, err := New(replacement).Create(ctx, forged); err == nil || created {
 		t.Fatalf("RECREATED login inherited deleted role tenant write authorization: created=%t err=%v", created, err)
 	}
+	// Migration replay is not an authorization renewal. It must never
+	// reassign the stored identity to a different role that reused the name.
+	migration, err := os.ReadFile("../migrations/0008_tenant_login_oid_fence.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := owner.pool.Exec(ctx, string(migration)); err != nil {
+		t.Fatal("idempotent OID-fence migration replay:", err)
+	}
+	var pinnedOID uint32
+	if err := owner.pool.QueryRow(ctx, `SELECT login_role_oid
+		FROM public.sandbox_lease_db_principals WHERE login_name=$1`, login).Scan(&pinnedOID); err != nil {
+		t.Fatal(err)
+	}
+	if pinnedOID != originalOID {
+		t.Fatalf("migration silently rebound stale identity: stored=%d original=%d", pinnedOID, originalOID)
+	}
+	if _, err := New(replacement).Get(ctx, in.TenantID, in.LeaseIntentID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("migration replay reopened a revoked identity: %v", err)
+	}
+	// Re-enrollment is an explicit DBA decision, not a side effect of
+	// LOGIN creation or migration replay. The test-only owner verifies the
+	// new role identity, deletes the stale record, and inserts a fresh one.
+	if _, err := owner.pool.Exec(ctx, `DELETE FROM public.sandbox_lease_db_principals
+		WHERE login_name=$1`, login); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := owner.pool.Exec(ctx, `INSERT INTO public.sandbox_lease_db_principals
+		(login_name, tenant_id) VALUES ($1, 'tenant-a')`, login); err != nil {
+		t.Fatal("explicit DBA re-enrollment:", err)
+	}
+	if err := owner.pool.QueryRow(ctx, `SELECT login_role_oid
+		FROM public.sandbox_lease_db_principals WHERE login_name=$1`, login).Scan(&pinnedOID); err != nil {
+		t.Fatal(err)
+	}
+	if pinnedOID != replacementOID {
+		t.Fatalf("explicit DBA re-enrollment failed to pin new role: got=%d want=%d", pinnedOID, replacementOID)
+	}
+	if got, err := New(replacement).Get(ctx, in.TenantID, in.LeaseIntentID); err != nil || got.Intent != in {
+		t.Fatalf("explicitly re-enrolled LOGIN cannot read its tenant: %+v %v", got, err)
+	}
+	if _, created, err := New(replacement).Create(ctx, forged); err != nil || !created {
+		t.Fatalf("explicitly re-enrolled LOGIN cannot write its tenant: created=%t err=%v", created, err)
+	}
 	if got, err := owner.Get(ctx, in.TenantID, in.LeaseIntentID); err != nil || got.Intent != in {
 		t.Fatalf("revocation damaged original immutable source history: %+v %v", got, err)
 	}
