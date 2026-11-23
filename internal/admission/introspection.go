@@ -137,8 +137,14 @@ func (a *Introspector) Authenticate(ctx context.Context, token string) (Identity
 		return Identity{}, ErrIdentityUnavailable
 	}
 	defer resp.Body.Close()
-	media, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
-	if resp.StatusCode != http.StatusOK || err != nil || media != "application/json" {
+	// Header.Get returns only the first field value. Never accept
+	// an authenticated principal from ambiguous IdP response metadata.
+	contentTypes := resp.Header.Values("Content-Type")
+	if resp.StatusCode != http.StatusOK || len(contentTypes) != 1 {
+		return Identity{}, ErrIdentityUnavailable
+	}
+	media, _, err := mime.ParseMediaType(contentTypes[0])
+	if err != nil || media != "application/json" {
 		return Identity{}, ErrIdentityUnavailable
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxIntrospectionBytes+1))
