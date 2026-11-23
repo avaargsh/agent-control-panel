@@ -11,8 +11,10 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math/big"
 	"net"
 	"net/http"
@@ -27,6 +29,7 @@ import (
 
 	"github.com/avaargsh/agent-control-panel/internal/postfault"
 	"github.com/avaargsh/agent-control-panel/services/sandbox-journal/agentd"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -54,7 +57,12 @@ func testSourceDB(t *testing.T) *pgxpool.Pool {
 	if !filepath.IsAbs(migrationRoot) {
 		migrationRoot = filepath.Join("..", "..", migrationRoot)
 	}
-	for _, migration := range []string{"0013_agentd_attempt_terminal.sql", "0014_agentd_inspect_events.sql"} {
+	for _, migration := range []string{
+		"0013_agentd_attempt_terminal.sql",
+		"0014_agentd_inspect_events.sql",
+		"0015_agentd_evidence_reader_rls.sql",
+		"0016_agentd_reader_login_oid_fence.sql",
+	} {
 		raw, err := os.ReadFile(filepath.Join(migrationRoot, migration))
 		if err != nil {
 			t.Fatal(err)
@@ -67,6 +75,62 @@ func testSourceDB(t *testing.T) *pgxpool.Pool {
 		t.Fatal(err)
 	}
 	return db
+}
+
+// A real authenticated PostgreSQL LOGIN with strictly scoped source SELECT
+// permissions is mandatory. Never pass the owner/writer pool into the HTTP
+// evidence reader: that bypasses the AgentD RLS and identity contract.
+func newTenantEvidenceReader(t *testing.T, owner *pgxpool.Pool, tenant string) *pgxpool.Pool {
+	t.Helper()
+	if tenant == "" {
+		t.Fatal("test requires an original authenticated tenant")
+	}
+	ctx := context.Background()
+	role := fmt.Sprintf("acp_g05_reader_%d", time.Now().UnixNano())
+	roleSQL := pgx.Identifier{role}.Sanitize()
+	passwordBytes := make([]byte, 24)
+	if _, err := rand.Read(passwordBytes); err != nil {
+		t.Fatal(err)
+	}
+	password := hex.EncodeToString(passwordBytes)
+	if _, err := owner.Exec(ctx,
+		"CREATE ROLE "+roleSQL+" LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD '"+password+"'"); err != nil {
+		t.Fatalf("create dedicated AgentD reader LOGIN: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = owner.Exec(context.Background(), "DELETE FROM public.sandbox_agentd_evidence_reader_tenants WHERE login_role=$1", role)
+		_, _ = owner.Exec(context.Background(), "REVOKE sandbox_agentd_evidence_reader FROM "+roleSQL)
+		_, _ = owner.Exec(context.Background(), "DROP OWNED BY "+roleSQL)
+		_, _ = owner.Exec(context.Background(), "DROP ROLE "+roleSQL)
+	})
+	if _, err := owner.Exec(ctx, "GRANT sandbox_agentd_evidence_reader TO "+roleSQL); err != nil {
+		t.Fatalf("grant least-privilege AgentD reader role: %v", err)
+	}
+	tag, err := owner.Exec(ctx, `INSERT INTO public.sandbox_agentd_evidence_reader_tenants(login_role,login_oid,tenant_id)
+		SELECT r.rolname,r.oid,$2 FROM pg_catalog.pg_roles r WHERE r.rolname=$1 AND r.rolcanlogin`,
+		role, tenant)
+	if err != nil || tag.RowsAffected() != 1 {
+		t.Fatalf("bind authenticated AgentD LOGIN and original role OID: rows=%d err=%v", tag.RowsAffected(), err)
+	}
+	cfg, err := pgxpool.ParseConfig(os.Getenv("AGENTD_CROSS_MODULE_TEST_DSN"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.ConnConfig.User = role
+	cfg.ConnConfig.Password = password
+	cfg.MaxConns = 2
+	reader, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatalf("connect independent AgentD evidence reader LOGIN: %v", err)
+	}
+	// Cleanup callbacks are LIFO: close the reader connection before revoking
+	// its role; the source owner remains available until testSourceDB cleanup.
+	t.Cleanup(reader.Close)
+	var identity string
+	if err := reader.QueryRow(ctx, "SELECT session_user").Scan(&identity); err != nil || identity != role {
+		t.Fatalf("evidence query did not use distinct authenticated LOGIN: %q %v", identity, err)
+	}
+	return reader
 }
 
 func realOriginalAttempt(t *testing.T, db *pgxpool.Pool) (*exec.Cmd, agentd.Ref) {
@@ -283,6 +347,7 @@ func TestAgentDRealCrossModuleOriginalWaitInspectAndMTLS(t *testing.T) {
 	ctx := context.Background()
 	db := testSourceDB(t)
 	command, original := realOriginalAttempt(t, db)
+	reader := newTenantEvidenceReader(t, db, original.TenantID)
 	sourcePub, sourcePrivate := sourcePublicPrivate(t)
 
 	before, err := agentd.InspectAndJournal(ctx, db, original, sourcePub, sourcePrivate)
@@ -309,7 +374,7 @@ func TestAgentDRealCrossModuleOriginalWaitInspectAndMTLS(t *testing.T) {
 	}
 	ca := realTestCA(t)
 	srv := httptest.NewUnstartedServer(agentd.NewReadOnlyEvidenceHandler(
-		db, sourcePub, "sandbox.test", readHead))
+		reader, sourcePub, "sandbox.test", readHead))
 	srv.TLS = &tls.Config{
 		Certificates: []tls.Certificate{ca.issue(t, true, "")},
 		ClientAuth:   tls.RequireAndVerifyClientCert, ClientCAs: ca.roots,
