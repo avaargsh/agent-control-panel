@@ -26,12 +26,15 @@ func validEvidenceTLSIdentity(cfg *tls.Config, expected AgentDWaitRef) bool {
 	}
 	identity := leaf.URIs[0]
 	if identity.Scheme != "spiffe" || identity.Host == "" ||
-		identity.User != nil || identity.RawQuery != "" || identity.Fragment != "" {
+		identity.User != nil || identity.RawQuery != "" || identity.ForceQuery ||
+		identity.Fragment != "" || identity.Opaque != "" || identity.RawPath != "" ||
+		identity.Port() != "" || identity.Host != identity.Hostname() {
 		return false
 	}
 	wantPath := "/tenant/" + url.PathEscape(expected.TenantID) +
 		"/run/" + url.PathEscape(expected.RunID) + "/role/evidence-reader"
-	return identity.EscapedPath() == wantPath
+	return identity.EscapedPath() == wantPath &&
+		identity.String() == "spiffe://"+identity.Host+wantPath
 }
 
 // FetchAndVerifyAgentDEvidence is an mTLS identity/transport adapter for the
@@ -59,8 +62,40 @@ func FetchAndVerifyAgentDEvidence(ctx context.Context, endpoint string, credenti
 		b.Subject.GuardOperationID != expected.GuardOperationID {
 		return failure("untrusted AgentD mTLS target or independent Run/Head binding")
 	}
+	// Bind the server's leaf identity to the same out-of-band trust domain
+	// as the exact Tenant/Run evidence-reader certificate. A certificate
+	// signed by the configured CA and valid for the HTTPS DNS name is NOT
+	// sufficient if it belongs to a different workload in that domain.
+	// This candidate SPIFFE service role must be provisioned independently
+	// by the source owner; it is never taken from an HTTP response or model.
+	readerCert, err := x509.ParseCertificate(credentials.Certificates[0].Certificate[0])
+	if err != nil || len(readerCert.URIs) != 1 {
+		return failure("invalid AgentD evidence-reader identity")
+	}
+	wantServer := "spiffe://" + readerCert.URIs[0].Host + "/role/agentd-evidence-server"
+	tlsCredentials := credentials.Clone()
+	priorVerify := tlsCredentials.VerifyConnection
+	tlsCredentials.VerifyConnection = func(state tls.ConnectionState) error {
+		if priorVerify != nil {
+			if err := priorVerify(state); err != nil {
+				return err
+			}
+		}
+		// Go's ordinary certificate-chain/DNS/EKU checks still run because
+		// InsecureSkipVerify is prohibited. This additional URI-SAN match
+		// denies a differently scoped but CA-trusted TLS server BEFORE an
+		// original Run/Guard/Attempt request can reach its HTTP handler.
+		if state.Version < tls.VersionTLS13 ||
+			len(state.VerifiedChains) == 0 || len(state.PeerCertificates) == 0 ||
+			len(state.PeerCertificates[0].URIs) != 1 ||
+			state.PeerCertificates[0].URIs[0] == nil ||
+			state.PeerCertificates[0].URIs[0].String() != wantServer {
+			return failure("untrusted AgentD evidence server workload identity")
+		}
+		return nil
+	}
 	transport := &http.Transport{
-		TLSClientConfig:     credentials.Clone(),
+		TLSClientConfig:     tlsCredentials,
 		Proxy:               nil,
 		DisableKeepAlives:   true,
 		TLSHandshakeTimeout: 5 * time.Second,
