@@ -368,6 +368,19 @@ func TestAgentDRealCrossModuleOriginalWaitInspectAndMTLS(t *testing.T) {
 	if err != nil || len(history) != 1 {
 		t.Fatalf("authenticated AgentD reader cannot verify original signed Inspect: events=%d err=%v", len(history), err)
 	}
+	// Reproduce the exact read-only path that the HTTP handler will execute.
+	// This is a positive control, never a fallback for a rejected HTTP read.
+	var terminalRows int
+	if err := reader.QueryRow(ctx,
+		"SELECT count(*) FROM public.sandbox_agentd_terminal_receipts WHERE tenant_id=$1",
+		original.TenantID).Scan(&terminalRows); err != nil || terminalRows != 0 {
+		t.Fatalf("reader cannot prove absence of uncommitted OS Wait: rows=%d err=%v", terminalRows, err)
+	}
+	snapshot, err := agentd.InspectCommand(ctx, reader, original, sourcePub)
+	if err != nil || snapshot.State != agentd.Unknown || snapshot.NextAction != agentd.Hold {
+		t.Fatalf("reader cannot prove original UNKNOWN/HOLD before HTTP: state=%q action=%q err=%v",
+			snapshot.State, snapshot.NextAction, err)
+	}
 	beforeObservation := time.Now().UTC()
 	faultAt := time.Now().UTC()
 
