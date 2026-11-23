@@ -1,6 +1,6 @@
 # PostgreSQL Outbox Publisher — P0
 
-Status: **generic Outbox dispatcher implemented; broker adapter and Inbox consumer remain pending**.
+The generic Outbox dispatcher handles durable publication. See the [Inbox consumer](INBOX-CONSUMER.md) for ordered application and the [JetStream experiment](ADR-JETSTREAM-BROKER-POC.md) for broker-specific integration.
 
 ## Contract
 
