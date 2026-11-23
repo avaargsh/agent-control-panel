@@ -15,9 +15,22 @@ import (
 	"github.com/avaargsh/agent-control-panel/internal/issuegoal"
 )
 
+func privateHoldDirectory(t *testing.T) string {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), "private-hold")
+	if err := os.Mkdir(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	// Explicitly set mode: some CI temp-root fixtures use a permissive umask.
+	if err := os.Chmod(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
 func TestSubmitCLIHoldRecordIsDurableBeforeNetwork(t *testing.T) {
 	var calls atomic.Int32
-	holdPath := filepath.Join(t.TempDir(), "submit-hold.json")
+	holdPath := filepath.Join(privateHoldDirectory(t), "submit-hold.json")
 	url, preparedJSON, tokenFile, caFile, done := submitFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		raw, err := os.ReadFile(holdPath)
@@ -83,14 +96,14 @@ func TestSubmitCLIHoldRecordFailsClosedBeforeNetwork(t *testing.T) {
 		path func(*testing.T) string
 	}{
 		{"existing-file", func(t *testing.T) string {
-			path := filepath.Join(t.TempDir(), "existing.json")
+			path := filepath.Join(privateHoldDirectory(t), "existing.json")
 			if err := os.WriteFile(path, []byte("DO NOT REPLACE"), 0600); err != nil {
 				t.Fatal(err)
 			}
 			return path
 		}},
 		{"symlink", func(t *testing.T) string {
-			dir := t.TempDir()
+			dir := privateHoldDirectory(t)
 			dest := filepath.Join(dir, "target.json")
 			if err := os.WriteFile(dest, []byte("DO NOT REPLACE"), 0600); err != nil {
 				t.Fatal(err)
@@ -102,7 +115,7 @@ func TestSubmitCLIHoldRecordFailsClosedBeforeNetwork(t *testing.T) {
 			return path
 		}},
 		{"missing-parent", func(t *testing.T) string {
-			return filepath.Join(t.TempDir(), "missing", "hold.json")
+			return filepath.Join(privateHoldDirectory(t), "missing", "hold.json")
 		}},
 		{"world-readable-parent", func(t *testing.T) string {
 			dir := filepath.Join(t.TempDir(), "shared")
@@ -141,7 +154,7 @@ func TestSubmitCLIHoldRecordFailsClosedBeforeNetwork(t *testing.T) {
 }
 
 func TestSubmitCLIHoldRecordRemainsAsAttemptEvidenceOnSuccess(t *testing.T) {
-	holdPath := filepath.Join(t.TempDir(), "submit-hold.json")
+	holdPath := filepath.Join(privateHoldDirectory(t), "submit-hold.json")
 	url, proposal, tokenFile, caFile, done := submitFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var prepared issuegoal.Prepared
 		if err := json.NewDecoder(r.Body).Decode(&prepared); err != nil {
