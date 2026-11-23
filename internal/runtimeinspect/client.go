@@ -182,8 +182,7 @@ func (c *Client) Inspect(ctx context.Context, scope InspectRequest) (Inspection,
 	default:
 		return Inspection{}, ErrUnavailable
 	}
-	media, _, err := mime.ParseMediaType(res.Header.Get("Content-Type"))
-	if err != nil || media != "application/json" {
+	if !singleRuntimeJSONContentType(res.Header) {
 		return Inspection{}, ErrInvalidResponse
 	}
 	raw, err := io.ReadAll(io.LimitReader(res.Body, maxResponseBytes+1))
@@ -191,6 +190,18 @@ func (c *Client) Inspect(ctx context.Context, scope InspectRequest) (Inspection,
 		return Inspection{}, ErrInvalidResponse
 	}
 	return parseInspectResponse(raw, scope)
+}
+
+// singleRuntimeJSONContentType rejects ambiguous response metadata before
+// any authenticated Runtime claim can be interpreted as identity or absence.
+// Header.Get observes only the first value and is unsafe at this boundary.
+func singleRuntimeJSONContentType(headers http.Header) bool {
+	values := headers.Values("Content-Type")
+	if len(values) != 1 {
+		return false
+	}
+	media, _, err := mime.ParseMediaType(values[0])
+	return err == nil && media == "application/json"
 }
 
 func parseInspectResponse(raw []byte, scope InspectRequest) (Inspection, error) {

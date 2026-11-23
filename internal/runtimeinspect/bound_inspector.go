@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"io"
-	"mime"
 	"net/http"
 	"time"
 	"unicode/utf8"
@@ -57,8 +56,7 @@ func (c *Client) InspectBound(ctx context.Context, claimed runintent.Intent, inp
 	default:
 		return Inspection{}, ErrUnavailable
 	}
-	media, _, err := mime.ParseMediaType(res.Header.Get("Content-Type"))
-	if err != nil || media != "application/json" {
+	if !singleRuntimeJSONContentType(res.Header) {
 		return Inspection{}, ErrInvalidResponse
 	}
 	raw, err := io.ReadAll(io.LimitReader(res.Body, maxResponseBytes+1))
