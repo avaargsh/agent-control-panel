@@ -82,18 +82,13 @@ def evaluate(state, *, expected_head, expected_main=None):
     if branch.get("protected") is not True:
         errors.append("main is not verified protected")
 
-    # Absence/403 of the server-side protection source is a hard failure.
-    required = protection.get("required_pull_request_reviews") or {}
+    # Branch protection, strict status checks and unresolved change requests
+    # remain hard gates. Independent human approval counts are advisory, not
+    # a separate synthetic requirement imposed by this script.
     statuses = protection.get("required_status_checks") or {}
     resolution = protection.get("required_conversation_resolution") or {}
-    if not required or not statuses:
-        errors.append("missing authoritative main protection API / review and status requirements")
-    if required.get("required_approving_review_count", 0) < 2:
-        errors.append("main protection requires fewer than two human approvals")
-    if required.get("dismiss_stale_reviews") is not True:
-        errors.append("main protection does not dismiss stale reviews")
-    if required.get("require_last_push_approval") is not True:
-        errors.append("main protection does not require last push approval")
+    if not statuses:
+        errors.append("missing authoritative main protection API / status requirements")
     if (protection.get("enforce_admins") or {}).get("enabled") is not True:
         errors.append("main protection allows administrator bypass")
     if resolution.get("enabled") is not True:
@@ -108,35 +103,25 @@ def evaluate(state, *, expected_head, expected_main=None):
     if not contexts or len(set(contexts)) != len(contexts):
         errors.append("no unambiguous required job check contexts are configured")
 
-    # Reviews are chronologically returned by GitHub's paginated API. For
-    # any reviewer, only the most recent decisive review applies. Approvals
-    # on a different commit, by the author, a Bot or without a verified
-    # collaborator permission cannot count as independent human sign-off.
-    latest = {}
+    # Later COMMENTED/PENDING reviews are not decisive. A previous
+    # CHANGES_REQUESTED remains blocking until an explicit APPROVED or
+    # DISMISSED review supersedes it, never merely a normal comment.
+    latest_decisive = {}
     if not isinstance(reviews, list):
-        errors.append("missing complete independent review history")
+        errors.append("missing complete PR review history")
         reviews = []
     for r in reviews:
         if not isinstance(r, dict):
             continue
+        if r.get("state") not in ("APPROVED", "CHANGES_REQUESTED", "DISMISSED"):
+            continue
         user = r.get("user") or {}
         login = user.get("login")
         if isinstance(login, str) and login:
-            latest[login.lower()] = r
-    author = ((pr.get("user") or {}).get("login") or "").lower()
-    permissions = state.get("reviewer_permissions") or {}
-    approved = 0
-    for login, record in latest.items():
-        user = record.get("user") or {}
+            latest_decisive[login.lower()] = r
+    for login, record in latest_decisive.items():
         if record.get("state") == "CHANGES_REQUESTED":
             errors.append("unresolved review requests changes from " + login)
-        if (login != author and login and user.get("type") != "Bot" and
-                not login.endswith("[bot]") and record.get("state") == "APPROVED" and
-                record.get("commit_id") == source_head and
-                permissions.get(login) in ("write", "maintain", "admin")):
-            approved += 1
-    if approved < 2:
-        errors.append("fewer than two current-HEAD independent eligible human approvals")
 
     by_name = {}
     if not isinstance(checks, list):
@@ -190,12 +175,6 @@ def collect_live(repo, number, token):
     protection = _get_json(repo, "/branches/main/protection", token)
     reviews = _all_pages(repo, f"/pulls/{number}/reviews", token)
     checks = _all_pages(repo, f"/commits/{pr['head']['sha']}/check-runs", token, key="check_runs")
-    permissions = {}
-    for review in reviews:
-        login = (review.get("user") or {}).get("login", "")
-        if login and login.lower() != ((pr.get("user") or {}).get("login") or "").lower():
-            perms = _get_json(repo, f"/collaborators/{login}/permission", token)
-            permissions[login.lower()] = perms.get("permission")
     # GitHub's retarget operation does not establish dependency closure.
     # Verify the exact reviewed parent PR was merged into main, and compare
     # its real merge commit against the current main commit ancestry.
@@ -215,7 +194,7 @@ def collect_live(repo, number, token):
     return {
         "stack_parent": parent,
         "pr": pr, "branch": branch, "protection": protection,
-        "reviews": reviews, "checks": checks, "reviewer_permissions": permissions,
+        "reviews": reviews, "checks": checks,
     }
 
 

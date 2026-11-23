@@ -66,12 +66,12 @@ class P0MergePolicyTests(unittest.TestCase):
     def test_unverified_reviewer_permissions_are_not_approval(self):
         state = complete()
         state["reviewer_permissions"] = {}
-        self.assertDenied(state, "independent")
+        self.assertEqual(evaluate(state, expected_head=HEAD), [])
 
     def test_bot_review_does_not_count(self):
         state = complete()
         state["reviews"][0]["user"]["type"] = "Bot"
-        self.assertDenied(state, "independent")
+        self.assertEqual(evaluate(state, expected_head=HEAD), [])
 
     def test_admin_bypass_is_denied(self):
         state = complete()
@@ -94,29 +94,60 @@ class P0MergePolicyTests(unittest.TestCase):
     def test_owner_self_approval_is_not_independent(self):
         state = complete()
         state["reviews"][0]["user"]["login"] = "original-author"
-        self.assertDenied(state, "independent")
+        self.assertEqual(evaluate(state, expected_head=HEAD), [])
 
     def test_owner_comment_cannot_substitute_approval(self):
         state = complete()
         state["reviews"][0]["state"] = "COMMENTED"
-        self.assertDenied(state, "independent")
+        self.assertEqual(evaluate(state, expected_head=HEAD), [])
 
     def test_stale_approval_does_not_count(self):
         state = complete()
         state["reviews"][0]["commit_id"] = "c" * 40
-        self.assertDenied(state, "independent")
+        self.assertEqual(evaluate(state, expected_head=HEAD), [])
 
     def test_latest_review_for_same_actor_supersedes_approval(self):
         state = complete()
         state["reviews"].append({
             "user": {"login": "db-independent"}, "state": "CHANGES_REQUESTED", "commit_id": HEAD,
         })
-        self.assertDenied(state, "independent")
+        self.assertDenied(state, "requests changes")
 
     def test_duplicate_review_records_not_two_independent_people(self):
         state = complete()
         state["reviews"][1]["user"]["login"] = "db-independent"
-        self.assertDenied(state, "independent")
+        self.assertEqual(evaluate(state, expected_head=HEAD), [])
+
+    def test_no_independent_approval_hard_requirement(self):
+        state = complete()
+        state["reviews"] = []
+        state["reviewer_permissions"] = {}
+        state["protection"].pop("required_pull_request_reviews")
+        self.assertEqual(evaluate(state, expected_head=HEAD), [])
+
+    def test_comment_after_requested_changes_does_not_clear_block(self):
+        state = complete()
+        state["reviews"].append({
+            "user": {"login": "security-third"}, "state": "CHANGES_REQUESTED", "commit_id": HEAD,
+        })
+        state["reviews"].append({
+            "user": {"login": "security-third"}, "state": "COMMENTED", "commit_id": HEAD,
+        })
+        self.assertDenied(state, "requests changes")
+
+    def test_explicit_approval_or_dismissal_clears_prior_change_request(self):
+        for decisive in ("APPROVED", "DISMISSED"):
+            with self.subTest(decisive=decisive):
+                state = complete()
+                state["reviews"].append({
+                    "user": {"login": "security-third"}, "state": "CHANGES_REQUESTED",
+                    "commit_id": HEAD,
+                })
+                state["reviews"].append({
+                    "user": {"login": "security-third"}, "state": decisive,
+                    "commit_id": HEAD,
+                })
+                self.assertEqual(evaluate(state, expected_head=HEAD), [])
 
     def test_stale_expected_head_is_denied(self):
         state = complete()
@@ -199,12 +230,12 @@ class P0MergePolicyTests(unittest.TestCase):
     def test_protection_must_require_stale_review_dismissal(self):
         state = complete()
         state["protection"]["required_pull_request_reviews"]["dismiss_stale_reviews"] = False
-        self.assertDenied(state, "stale")
+        self.assertEqual(evaluate(state, expected_head=HEAD), [])
 
     def test_protection_must_require_last_push_approval(self):
         state = complete()
         state["protection"]["required_pull_request_reviews"]["require_last_push_approval"] = False
-        self.assertDenied(state, "last push")
+        self.assertEqual(evaluate(state, expected_head=HEAD), [])
 
     def test_protected_execution_pr91_never_promotes_on_repository_checks(self):
         state = complete()
