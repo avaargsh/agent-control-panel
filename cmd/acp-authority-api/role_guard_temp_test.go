@@ -166,3 +166,46 @@ func TestAuthorityDatabaseRoleRejectsTempShadow(t *testing.T) {
 		t.Fatalf("reader did not recover after explicit TEMP grant revocation: %v", err)
 	}
 }
+
+// isolatedAuthorityRoleTestDatabase gives privilege-gate HTTP and role
+// regressions their own PostgreSQL database. The default PUBLIC TEMP grant
+// is revoked only there: global PGTEST_DSN and concurrent packages are NOT
+// changed. All associated test connections close before t.Cleanup drops DB.
+func isolatedAuthorityRoleTestDatabase(t *testing.T, ctx context.Context, dsn string) (*pgx.Conn, string) {
+	t.Helper()
+	root, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	databaseName := "acp_authority_isolated_" + suffix
+	database := pgx.Identifier{databaseName}.Sanitize()
+	if _, err := root.Exec(ctx, "CREATE DATABASE "+database); err != nil {
+		_ = root.Close(context.Background())
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		cleanupCtx, done := context.WithTimeout(context.Background(), 30*time.Second)
+		defer done()
+		if _, err := root.Exec(cleanupCtx, "DROP DATABASE "+database+" WITH (FORCE)"); err != nil {
+			t.Errorf("drop isolated authority database: %v", err)
+		}
+		if err := root.Close(context.Background()); err != nil {
+			t.Errorf("close PostgreSQL test cluster connection: %v", err)
+		}
+	})
+	adminCfg, err := pgx.ParseConfig(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adminCfg.Database = databaseName
+	admin, err := pgx.ConnectConfig(ctx, adminCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admin.Exec(ctx, "REVOKE TEMPORARY ON DATABASE "+database+" FROM PUBLIC"); err != nil {
+		_ = admin.Close(context.Background())
+		t.Fatal(err)
+	}
+	return admin, databaseName
+}

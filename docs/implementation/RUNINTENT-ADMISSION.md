@@ -118,6 +118,20 @@ DDL or schema ownership. A dedicated LOGIN and actual write denial are
 tested in the isolated live CI; production grants/rotation/RLS remain
 deployment gates.
 
+PostgreSQL grants database-level `TEMPORARY` to `PUBLIC` on a new
+database by default. The dedicated authority-reader database must have
+`REVOKE TEMPORARY ON DATABASE <dedicated_db> FROM PUBLIC`, and the
+reader LOGIN must not receive direct or inherited TEMP rights. Otherwise
+the reader can create a temporary relation called `run_intents`, which
+PostgreSQL searches before the configured application schema when
+executing unqualified table names. The startup/per-request role guard
+now refuses a LOGIN with effective database-level TEMP privilege, even
+if its seven application relation SELECT grants are otherwise exact.
+This is a **database provisioning requirement**: do not revoke PUBLIC
+TEMP on an unrelated shared production database without an impact
+assessment. The real PostgreSQL regression uses an isolated disposable
+database for all privilege-changing cases.
+
 The authority service now additionally **fails at startup** if its actual
 PostgreSQL LOGIN is privileged (superuser, BYPASSRLS, role/database creator),
 can create objects in any non-system schema, has database-level CREATE

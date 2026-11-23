@@ -27,10 +27,7 @@ func TestAuthorityDatabaseRoleFailClosed(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	admin, err := pgx.Connect(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
+	admin, databaseName := isolatedAuthorityRoleTestDatabase(t, ctx, dsn)
 	defer admin.Close(context.Background())
 
 	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
@@ -44,6 +41,7 @@ func TestAuthorityDatabaseRoleFailClosed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	cfg.ConnConfig.Database = databaseName
 	cfg.ConnConfig.RuntimeParams["search_path"] = schema
 	owner, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
