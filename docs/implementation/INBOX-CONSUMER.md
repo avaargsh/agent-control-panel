@@ -1,6 +1,6 @@
 # PostgreSQL Inbox Consumer — P0
 
-Status: **durable Inbox intake and ordered projection worker implemented in a stacked Draft PR; transport adapter and operator replay remain pending**.
+The Inbox provides durable intake and ordered projection. See the [Inbox settlement guide](INBOX-SETTLEMENT-GATE.md) for the transport boundary.
 
 ## Receive contract
 
@@ -40,6 +40,4 @@ The worker drains bounded batches and reports the number of aggregates with defe
 
 The intended boundary is at-least-once broker delivery plus idempotent durable Inbox intake. The broker adapter must ACK only after `ReceiveInboxEvent` commits. A crash after database commit but before broker ACK causes a duplicate delivery, which is safe for an exact event replay.
 
-This slice does **not** select Kafka, NATS, Temporal or a cloud broker. It also does not implement quarantine replay tooling, cross-process broker fault injection, production metrics, worker lifecycle/readiness wiring or authenticated Runtime `StartRun` / `InspectRunIntent`.
-
-Do not expose mutating public APIs or claim production readiness until those remaining P0 paths and the full Golden Path are verified.
+Broker integration, operator replay, metrics, and worker readiness depend on the deployment. The [Runtime Inspect guide](RUNTIME-INSPECT-CLIENT.md) describes authenticated Runtime reconciliation.
