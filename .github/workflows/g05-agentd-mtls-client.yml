@@ -1,0 +1,52 @@
+name: G05 authenticated AgentD mTLS evidence client (non-production)
+
+on:
+  pull_request:
+    paths:
+      - 'internal/postfault/agentd_evidence_client*'
+      - 'internal/postfault/agentd_evidence_mtls_client*'
+      - 'integration/agentdsourcee2e/**'
+      - '.github/workflows/g05-agentd-mtls-client.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GOTOOLCHAIN: local
+
+jobs:
+  agentd-mtls-consumer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Exact HEAD
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version: '1.27.4'
+          cache: false
+      - name: Verify toolchain, module and gofmt
+        run: |
+          test "$(go env GOVERSION)" = "go1.27.4"
+          go mod verify
+          dirty="$(gofmt -l internal/postfault/agentd_evidence_client.go internal/postfault/agentd_evidence_client_test.go internal/postfault/agentd_evidence_mtls_client.go internal/postfault/agentd_evidence_mtls_client_test.go)"
+          if [ -n "$dirty" ]; then
+            printf '%s\n' "$dirty"
+            gofmt -d internal/postfault/agentd_evidence_client.go internal/postfault/agentd_evidence_client_test.go internal/postfault/agentd_evidence_mtls_client.go internal/postfault/agentd_evidence_mtls_client_test.go
+            exit 1
+          fi
+      - name: Real mutual TLS handshake and signed source wire refusal gates
+        run: |
+          set -euo pipefail
+          go test -race -count=1 -v -run '^(TestG05MTLSConsumer|TestAgentDEvidenceClient)' ./internal/postfault | tee "$RUNNER_TEMP/g05-mtls-canonical-tests.log"
+          grep -q -- '--- PASS: TestG05MTLSConsumerVerifiesOriginalSourceEvidence ' "$RUNNER_TEMP/g05-mtls-canonical-tests.log"
+          grep -q -- '--- PASS: TestAgentDEvidenceClientFetchesAndVerifiesSameRunOverMutualTLS ' "$RUNNER_TEMP/g05-mtls-canonical-tests.log"
+      - name: Vet consumer
+        run: go vet ./internal/postfault

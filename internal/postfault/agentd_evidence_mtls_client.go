@@ -60,9 +60,9 @@ func FetchAndVerifyAgentDEvidence(ctx context.Context, endpoint string, credenti
 		return failure("untrusted AgentD mTLS target or independent Run/Head binding")
 	}
 	transport := &http.Transport{
-		TLSClientConfig:   credentials.Clone(),
-		Proxy:             nil,
-		DisableKeepAlives: true,
+		TLSClientConfig:     credentials.Clone(),
+		Proxy:               nil,
+		DisableKeepAlives:   true,
 		TLSHandshakeTimeout: 5 * time.Second,
 	}
 	defer transport.CloseIdleConnections()
