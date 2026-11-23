@@ -26,7 +26,7 @@ BEGIN
             'AgentD 0016 blocked: unverifiable legacy LOGIN binding; owner must revoke and re-enroll'
             USING ERRCODE = '23514';
     END IF;
-END
+END;
 $agentd_reader_upgrade$;
 ALTER TABLE public.sandbox_agentd_evidence_reader_tenants
     ALTER COLUMN login_oid SET NOT NULL;
