@@ -112,7 +112,7 @@ func (r *PublicIssueReader) baselineGET(ctx context.Context, endpoint string) ([
 		return nil, newPublicSourceFailure(ErrBaselineSourceUnavailable, "baseline", "invalid_media", resp.StatusCode)
 	}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxBaselineResponseBytes+1))
-	if err != nil || len(raw) > maxBaselineResponseBytes || rejectCaseFoldKeyCollisions(raw) != nil {
+	if err != nil || len(raw) > maxBaselineResponseBytes || ValidateUniqueJSONKeys(raw) != nil {
 		return nil, newPublicSourceFailure(ErrBaselineSourceUnavailable, "baseline", "invalid_body", resp.StatusCode)
 	}
 	return raw, nil

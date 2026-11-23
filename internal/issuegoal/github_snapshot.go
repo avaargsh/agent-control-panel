@@ -132,7 +132,7 @@ func (r *PublicIssueReader) Read(ctx context.Context, issueURL string) (GitHubIs
 	}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxPublicIssueResponseBytes+1))
 	if err != nil || len(raw) > maxPublicIssueResponseBytes ||
-		rejectCaseFoldKeyCollisions(raw) != nil {
+		ValidateUniqueJSONKeys(raw) != nil {
 		return GitHubIssueSnapshot{}, newPublicSourceFailure(ErrIssueSourceUnavailable, "issue", "invalid_body", resp.StatusCode)
 	}
 	var observed struct {

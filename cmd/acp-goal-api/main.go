@@ -278,6 +278,26 @@ func verifyAuthoritySchema(ctx context.Context, pool *pgxpool.Pool) error {
 	return nil
 }
 
+// Each connection candidate, including TLS downgrade attempts and alternate
+// hosts, must satisfy the same policy before the pool can connect.
+func verifyPostgresTLS(config *pgxpool.Config) error {
+	verified := func(host string, tlsConfig *tls.Config) bool {
+		local := host == "localhost" || host == "127.0.0.1" ||
+			host == "::1" || strings.HasPrefix(host, "/")
+		return local || (tlsConfig != nil && !tlsConfig.InsecureSkipVerify && tlsConfig.ServerName == host)
+	}
+	conn := config.ConnConfig
+	if !verified(conn.Host, conn.TLSConfig) {
+		return errors.New("remote PostgreSQL must use verified TLS")
+	}
+	for _, fallback := range conn.Fallbacks {
+		if !verified(fallback.Host, fallback.TLSConfig) {
+			return errors.New("remote PostgreSQL must use verified TLS")
+		}
+	}
+	return nil
+}
+
 func serve(ctx context.Context, c config) error {
 	host, _, err := net.SplitHostPort(c.listenAddress)
 	if err != nil {
@@ -320,15 +340,8 @@ func serve(ctx context.Context, c config) error {
 	if err != nil {
 		return errors.New("invalid PostgreSQL connection configuration")
 	}
-	// A remote database must use full server-certificate hostname
-	// verification; loopback/Unix socket is permitted for isolated demos.
-	dbHost := pgConfig.ConnConfig.Host
-	local := dbHost == "localhost" || dbHost == "127.0.0.1" ||
-		dbHost == "::1" || strings.HasPrefix(dbHost, "/")
-	if !local && (pgConfig.ConnConfig.TLSConfig == nil ||
-		pgConfig.ConnConfig.TLSConfig.InsecureSkipVerify ||
-		pgConfig.ConnConfig.TLSConfig.ServerName == "") {
-		return errors.New("remote PostgreSQL must use verified TLS")
+	if err := verifyPostgresTLS(pgConfig); err != nil {
+		return err
 	}
 	pgConfig.MaxConns = 8
 	pool, err := pgxpool.NewWithConfig(ctx, pgConfig)

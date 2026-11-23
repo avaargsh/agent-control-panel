@@ -261,3 +261,40 @@ func TestSubmitCLIReportsUnknownWhenServerLosesReplyAfterReceivingGoal(t *testin
 		t.Fatal("private bearer leaked into ambiguous error")
 	}
 }
+
+func TestSubmitCLIUntrustedSuccessRemainsUnknown(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		cache     string
+		extraJSON string
+	}{
+		{"lookalike cache directive", "x-no-store", ""},
+		{"quoted cache directive", `other=",no-store,"`, ""},
+		{"duplicate status", "no-store", `,"status":"PENDING"`},
+		{"case alias", "no-store", `,"STATUS":"PENDING"`},
+		{"Unicode case alias", "no-store", `,"ſtatus":"PENDING"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var received atomic.Int32
+			url, proposal, tokenFile, caFile, done := submitFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				received.Add(1)
+				var p issuegoal.Prepared
+				if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
+					t.Error(err)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("Cache-Control", tc.cache)
+				w.WriteHeader(http.StatusCreated)
+				_, _ = fmt.Fprintf(w, `{"schema":"acp.issue-goal-acceptance/v1","run_intent_id":"00000000-0000-4000-8000-000000000001","request_digest":%q,"status":"PENDING","created":true%s}`, p.RequestDigest, tc.extraJSON)
+			}))
+			defer done()
+			var out, diagnostics bytes.Buffer
+			err := run([]string{"submit", "--file", "-", "--url", url, "--token-file", tokenFile, "--ca-file", caFile},
+				strings.NewReader(proposal), &out, &diagnostics)
+			if err == nil || !strings.Contains(err.Error(), "outcome unknown") || out.Len() != 0 || received.Load() != 1 {
+				t.Fatalf("untrusted response was accepted or retried: err=%v requests=%d", err, received.Load())
+			}
+		})
+	}
+}
