@@ -1,8 +1,10 @@
-// acp-goal prepares an immutable Issue Goal input for authenticated admission.
-// The prepare command is offline and never submits a Run or creates a PR.
+// acp-goal prepares and inspects immutable Issue Goal input, then optionally
+// submits it for non-dispatch RunIntent admission over explicit loopback TLS.
+// No command dispatches Runtime work, writes GitHub or grants tool effects.
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -13,10 +15,37 @@ import (
 	"github.com/avaargsh/agent-control-panel/internal/issuegoal"
 )
 
+type issueReader interface {
+	Read(context.Context, string) (issuegoal.GitHubIssueSnapshot, error)
+}
+
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
-	if len(args) == 0 || args[0] != "prepare" {
-		return errors.New("usage: acp-goal prepare --file manifest.json (or --file - for stdin)")
+	return runWithIssueReader(args, stdin, stdout, stderr, issuegoal.NewPublicIssueReader())
+}
+
+func runWithIssueReader(args []string, stdin io.Reader, stdout, stderr io.Writer, reader issueReader) error {
+	if len(args) == 0 {
+		return errors.New("usage: acp-goal prepare | snapshot | inspect | submit")
 	}
+	switch args[0] {
+	case "prepare":
+		return prepare(args, stdin, stdout, stderr)
+	case "snapshot":
+		return snapshot(args, stdout, stderr, reader)
+	case "submit":
+		return submit(args, stdin, stdout, stderr)
+	case "inspect":
+		baselines, ok := reader.(baselineReader)
+		if !ok {
+			return errors.New("public baseline reader not configured")
+		}
+		return inspect(args, stdin, stdout, stderr, reader, baselines)
+	default:
+		return errors.New("usage: acp-goal prepare --file manifest.json | snapshot --issue-url https://github.com/owner/repo/issues/123")
+	}
+}
+
+func prepare(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	flags := flag.NewFlagSet("prepare", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	path := flags.String("file", "", "Issue Goal manifest path; - reads stdin")
@@ -38,8 +67,6 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		defer file.Close()
 		reader = file
 	}
-	// Bound untrusted input before decoding. The core parser also enforces
-	// the same limit and rejects duplicate keys and unknown fields.
 	raw, err := io.ReadAll(io.LimitReader(reader, 32*1024+1))
 	if err != nil {
 		return fmt.Errorf("read manifest: %w", err)
@@ -49,6 +76,38 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		return err
 	}
 	return json.NewEncoder(stdout).Encode(prepared)
+}
+
+func snapshot(args []string, stdout, stderr io.Writer, reader issueReader) error {
+	flags := flag.NewFlagSet("snapshot", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	issueURL := flags.String("issue-url", "", "public GitHub Issue HTTPS URL")
+	if err := flags.Parse(args[1:]); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	if flags.NArg() != 0 || issuegoal.ValidateIssueURL(*issueURL) != nil || reader == nil {
+		return errors.New("snapshot requires exactly one valid --issue-url")
+	}
+	observed, err := reader.Read(context.Background(), *issueURL)
+	if err != nil {
+		return err
+	}
+	return json.NewEncoder(stdout).Encode(struct {
+		Schema              string `json:"schema"`
+		IssueURL            string `json:"issue_url"`
+		IssueSnapshotDigest string `json:"issue_snapshot_digest"`
+		IssueID             int64  `json:"issue_id"`
+		UpdatedAt           string `json:"updated_at"`
+	}{
+		Schema:              observed.Schema,
+		IssueURL:            observed.IssueURL,
+		IssueSnapshotDigest: observed.Digest,
+		IssueID:             observed.IssueID,
+		UpdatedAt:           observed.UpdatedAt,
+	})
 }
 
 func main() {

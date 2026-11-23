@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - 'internal/admission/**'
+      - 'internal/goalhttp/**'
+      - 'internal/issuegoal/**'
       - 'internal/runintent/**'
       - 'migrations/**'
       - 'scripts/test-real-oidc-admission.sh'
@@ -44,10 +46,12 @@ jobs:
           cache: false
       - name: Verify patched Go toolchain
         run: test "$(go env GOVERSION)" = "go1.27.4"
-      - name: Real issuer TLS + OAuth token issuance + catalog + PostgreSQL input admission
+      - name: Real Keycloak + PostgreSQL admission and live public GitHub Issue GoalSubmit
         env:
           PGTEST_DSN: postgres://postgres:acp-test-only@127.0.0.1:5432/acp_oidc?sslmode=disable
         run: bash scripts/test-real-oidc-admission.sh
 
-# Only service-account client credentials; no interactive human OIDC,
-# deployed IAM, credential broker, production IdP or external egress proof.
+# Executes opt-in live public GitHub Issue #70 admission against a disposable
+# Keycloak realm and PostgreSQL schema: actual public source reads, never writes.
+# No interactive human OIDC, protected GitHub branch assertion, deployed IAM,
+# credential broker, production IdP or protected effect/Runtime dispatch.
