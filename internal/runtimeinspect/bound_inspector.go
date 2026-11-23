@@ -42,6 +42,7 @@ func (c *Client) InspectBound(ctx context.Context, claimed runintent.Intent, inp
 	req.GetBody = nil
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Accept-Encoding", "identity")
 	res, err := c.client.Do(req)
 	if err != nil {
 		return Inspection{}, ErrUnavailable
@@ -56,7 +57,7 @@ func (c *Client) InspectBound(ctx context.Context, claimed runintent.Intent, inp
 	default:
 		return Inspection{}, ErrUnavailable
 	}
-	if !singleRuntimeJSONContentType(res.Header) {
+	if !validRuntimeJSONIdentityResponse(res) {
 		return Inspection{}, ErrInvalidResponse
 	}
 	raw, err := io.ReadAll(io.LimitReader(res.Body, maxResponseBytes+1))
