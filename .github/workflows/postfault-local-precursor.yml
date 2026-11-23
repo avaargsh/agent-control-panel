@@ -166,10 +166,21 @@ jobs:
           print('CROSS_SOURCE_PREPERMIT_BINDING=PASS; AGENTD_COMMAND_INSPECT=NOT_PRODUCED')
           PY
           go build -trimpath -o "$RUNNER_TEMP/acp-postfault-verify" ./cmd/acp-postfault-verify
+          # Supply every required CLI flag to reach the *signed bundle*
+          # rejection, not merely the new Head/mTLS argument gate.
+          # Deliberately nonexistent trust inputs: no network, issuer or
+          # source evidence is contacted in this fail-closed negative test.
           if "$RUNNER_TEMP/acp-postfault-verify" \
             --bundle "$RUNNER_TEMP/sandbox-snapshot.json" \
             --expected "$RUNNER_TEMP/sandbox-snapshot.json" \
-            --trust-dir "$RUNNER_TEMP" >"$RUNNER_TEMP/sandbox-promotion-refusal.log" 2>&1; then
+            --head-acceptance "$RUNNER_TEMP/NOT_PROVISIONED_HEAD.json" \
+            --trust-dir "$RUNNER_TEMP" \
+            --agentd-evidence-endpoint "https://127.0.0.1:9443" \
+            --agentd-client-cert "$RUNNER_TEMP/NOT_PROVISIONED_CLIENT.crt" \
+            --agentd-client-key "$RUNNER_TEMP/NOT_PROVISIONED_CLIENT.key" \
+            --agentd-server-ca "$RUNNER_TEMP/NOT_PROVISIONED_SERVER_CA.pem" \
+            --agentd-server-name "agentd.invalid" \
+            >"$RUNNER_TEMP/sandbox-promotion-refusal.log" 2>&1; then
             echo "INVALID_PROMOTION: an unsigned Sandbox DB snapshot passed the cross-authority postfault verifier" >&2
             exit 1
           fi
