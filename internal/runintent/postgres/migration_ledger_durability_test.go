@@ -3,9 +3,12 @@ package postgres
 import (
 	"context"
 	"errors"
+	"os"
 	"strconv"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // The migration ledger must survive a PostgreSQL crash. A checksum alone
@@ -161,5 +164,55 @@ func TestMigrationLedgerAllowsOwnerColumnGrants(t *testing.T) {
 	}
 	if err := Migrate(ctx, pool); err != nil {
 		t.Fatalf("owner-only column grants rejected: %v", err)
+	}
+}
+
+// Migrations are intentionally bound to the authenticated LOGIN identity.
+// SET ROLE must not silently turn a different effective role into the
+// migration actor, even when the switched role has elevated database rights.
+func TestMigrationLedgerRejectsSetRoleDuringMigration(t *testing.T) {
+	_, pool := testRepository(t)
+	ctx := context.Background()
+	var schema string
+	if err := pool.QueryRow(ctx, "SELECT current_schema()").Scan(&schema); err != nil {
+		t.Fatal(err)
+	}
+	role := "acp_set_role_probe_" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	if _, err := pool.Exec(ctx, "CREATE ROLE "+role+" NOLOGIN SUPERUSER"); err != nil {
+		t.Fatalf("create SET ROLE probe: %v", err)
+	}
+	t.Cleanup(func() {
+		if _, err := pool.Exec(context.Background(), "DROP ROLE "+role); err != nil {
+			t.Errorf("drop SET ROLE probe: %v", err)
+		}
+	})
+
+	cfg, err := pgxpool.ParseConfig(os.Getenv("PGTEST_DSN"))
+	if err != nil {
+		t.Fatalf("parse PostgreSQL test DSN: %v", err)
+	}
+	if cfg.ConnConfig.RuntimeParams == nil {
+		cfg.ConnConfig.RuntimeParams = make(map[string]string)
+	}
+	cfg.ConnConfig.RuntimeParams["search_path"] = schema
+	cfg.MaxConns = 1
+	rolePool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatalf("create single-session role-switch pool: %v", err)
+	}
+	t.Cleanup(rolePool.Close)
+
+	if _, err := rolePool.Exec(ctx, "SET ROLE "+role); err != nil {
+		t.Fatalf("switch effective migration role: %v", err)
+	}
+	var current, session string
+	if err := rolePool.QueryRow(ctx, "SELECT current_user, session_user").Scan(&current, &session); err != nil {
+		t.Fatal(err)
+	}
+	if current != role || session == current {
+		t.Fatalf("fixture did not establish distinct effective and authenticated roles: current=%q session=%q", current, session)
+	}
+	if err := Migrate(ctx, rolePool); !errors.Is(err, ErrSchemaDrift) {
+		t.Fatalf("migration accepted SET ROLE identity drift: current=%q session=%q err=%v", current, session, err)
 	}
 }

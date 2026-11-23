@@ -109,7 +109,17 @@ func nilReader(reader Reader) bool {
 // RequireAndVerifyClientCert and the dedicated trust-domain CA. The exact
 // workload and tenant are provisioned out-of-band, never request claims.
 func NewHandler(reader Reader, peer, tenant string) (http.Handler, error) {
-	return newHandler(reader, nil, peer, tenant)
+	return newHandler(reader, nil, peer, tenant, nil)
+}
+
+// NewGuardedHandler requires an independently provisioned database-role
+// verifier on every authenticated, well-formed request before any catalog
+// read. A failed verification returns 503 and never enters the Reader.
+func NewGuardedHandler(reader Reader, peer, tenant string, readGuard func(context.Context) error) (http.Handler, error) {
+	if readGuard == nil {
+		return nil, errors.New("ACP authority request role guard required")
+	}
+	return newHandler(reader, nil, peer, tenant, readGuard)
 }
 
 // NewPublicationHandler serves both existing authority and signed
@@ -118,10 +128,22 @@ func NewPublicationHandler(reader PublicationReader, publisher *Publisher, peer,
 	if publisher == nil || publisher.root == nil {
 		return nil, ErrPublicationUnavailable
 	}
-	return newHandler(reader, publisher, peer, tenant)
+	return newHandler(reader, publisher, peer, tenant, nil)
 }
 
-func newHandler(reader Reader, publisher *Publisher, peer, tenant string) (http.Handler, error) {
+// NewGuardedPublicationHandler applies the same fresh pre-read role check to
+// protected publication as to the normal authority snapshot endpoint.
+func NewGuardedPublicationHandler(reader PublicationReader, publisher *Publisher, peer, tenant string, readGuard func(context.Context) error) (http.Handler, error) {
+	if readGuard == nil {
+		return nil, errors.New("ACP authority publication role guard required")
+	}
+	if publisher == nil || publisher.root == nil {
+		return nil, ErrPublicationUnavailable
+	}
+	return newHandler(reader, publisher, peer, tenant, readGuard)
+}
+
+func newHandler(reader Reader, publisher *Publisher, peer, tenant string, readGuard func(context.Context) error) (http.Handler, error) {
 	if nilReader(reader) || !validIdentity(peer) || !validTenant(tenant) {
 		return nil, errors.New("invalid ACP execution authority configuration")
 	}
@@ -173,12 +195,45 @@ func newHandler(reader Reader, publisher *Publisher, peer, tenant string) (http.
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 		defer cancel()
+		// This check is deliberately uncached: an out-of-band GRANT or
+		// REVOKE must affect the next authorized request without restart.
+		// Validate only after mTLS and request syntax checks to avoid
+		// exposing the database to arbitrary unauthenticated traffic.
+		if readGuard != nil {
+			if err := readGuard(ctx); err != nil {
+				if publication {
+					fail(http.StatusServiceUnavailable, "PUBLICATION_UNAVAILABLE")
+				} else {
+					fail(http.StatusServiceUnavailable, "RUN_AUTHORITY_UNAVAILABLE")
+				}
+				return
+			}
+		}
 		var current runpg.ExecutionAuthority
 		var input []byte
 		if publication {
 			current, input, err = reader.(PublicationReader).GetExecutionAuthorityInput(ctx, ref)
 		} else {
 			current, err = reader.GetExecutionAuthority(ctx, ref)
+		}
+		// A privileged DCL actor may commit GRANT/REVOKE between the first
+		// role attestation and the repository's SQL query. Re-attest after
+		// EVERY catalog read, including denied/missing runs, before choosing
+		// an HTTP 403, emitting an authority response or constructing/signing
+		// a Decision Publication. Never trust a result if this check fails.
+		//
+		// This reduces a proven between-check-and-read window. It is NOT
+		// atomic with response emission, a defense against privileged DCL
+		// after the final check, or a substitute for tenant RLS.
+		if readGuard != nil {
+			if err := readGuard(ctx); err != nil {
+				if publication {
+					fail(http.StatusServiceUnavailable, "PUBLICATION_UNAVAILABLE")
+				} else {
+					fail(http.StatusServiceUnavailable, "RUN_AUTHORITY_UNAVAILABLE")
+				}
+				return
+			}
 		}
 		if errors.Is(err, runpg.ErrCatalogDenied) {
 			fail(http.StatusForbidden, "RUN_AUTHORITY_DENIED")

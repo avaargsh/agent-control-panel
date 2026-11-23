@@ -57,7 +57,6 @@ func TestPrepareRejectsUnsafeOrAmbiguousGoal(t *testing.T) {
 		"fake github domain":                strings.Replace(validManifest, `github.com/example`, `github.com.evil.invalid/example`, 1),
 		"issue url credential":              strings.Replace(validManifest, `https://github.com/`, `https://token@github.com/`, 1),
 		"issue url query":                   strings.Replace(validManifest, `/issues/123`, `/issues/123?token=secret`, 1),
-		"issue url empty query delimiter":   strings.Replace(validManifest, `/issues/123`, `/issues/123?`, 1),
 		"issue url not issue":               strings.Replace(validManifest, `/issues/123`, `/pull/123`, 1),
 		"issue url encoded path":            strings.Replace(validManifest, `/issues/123`, `/issues/%31%32%33`, 1),
 		"unfixed baseline":                  strings.Replace(validManifest, `"integration_baseline_sha":"2222222222222222222222222222222222222222"`, `"integration_baseline_sha":"main"`, 1),
@@ -95,5 +94,15 @@ func TestPrepareChangesDigestWhenPinnedInputOrScopeChanges(t *testing.T) {
 		if next.RequestDigest == first.RequestDigest {
 			t.Fatal("scope or immutable input changed without digest change")
 		}
+	}
+}
+
+func TestPrepareRejectsIssueURLWithEmptyQueryDelimiter(t *testing.T) {
+	// An empty '?' is still a query delimiter (url.URL.ForceQuery).
+	// Reject it at the immutable Goal boundary, not only in the
+	// later GitHub reader. This was already guarded on main.
+	raw := strings.Replace(validManifest, "/issues/123", "/issues/123?", 1)
+	if _, err := Prepare([]byte(raw)); err == nil {
+		t.Fatal("Goal manifest accepted noncanonical Issue URL with empty query delimiter")
 	}
 }
