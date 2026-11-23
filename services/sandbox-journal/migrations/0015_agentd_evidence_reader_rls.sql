@@ -4,7 +4,18 @@
 -- from a caller-settable GUC or request field.
 BEGIN;
 
-DO $$
+-- This is a dedicated Sandbox-owned database, not a shared application DB.
+-- PostgreSQL normally grants TEMPORARY to PUBLIC. Revoke that inherited
+-- privilege for all connections; a separate reader LOGIN must also fail
+-- validation if an operator later re-grants TEMP directly or through a role.
+-- Never run this owner-only migration against a shared database.
+DO $
+BEGIN
+  EXECUTE format('REVOKE TEMPORARY ON DATABASE %I FROM PUBLIC', current_database());
+END;
+$;
+
+DO $
 DECLARE
   reader pg_roles%ROWTYPE;
 BEGIN

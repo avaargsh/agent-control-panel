@@ -44,6 +44,7 @@ SELECT COALESCE((
      AND has_schema_privilege(r.oid, 'public', 'USAGE')
      AND NOT has_schema_privilege(r.oid, 'public', 'CREATE')
      AND NOT has_database_privilege(r.oid, current_database(), 'CREATE')
+     AND NOT has_database_privilege(r.oid, current_database(), 'TEMP')
      AND NOT pg_has_role(r.oid, owner_row.relowner, 'MEMBER')
      AND public.sandbox_agentd_evidence_tenant() = $1
      AND EXISTS (
