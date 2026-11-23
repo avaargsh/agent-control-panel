@@ -90,7 +90,9 @@ func TestPostfaultCLIRejectsDuplicateBundleAndExpectedKeys(t *testing.T) {
 			// Supply all required mTLS flag names so duplicate JSON validation
 			// is reached before trust-key or client-certificate lookup.
 			err := run([]string{
-				"--bundle", bundle, "--expected", expected, "--trust-dir", root,
+				"--bundle", bundle, "--expected", expected,
+				"--head-acceptance", filepath.Join(root, "missing-head-acceptance.json"),
+				"--trust-dir", root,
 				"--agentd-evidence-endpoint", "https://127.0.0.1:9443",
 				"--agentd-client-cert", filepath.Join(root, "not-used-client.pem"),
 				"--agentd-client-key", filepath.Join(root, "not-used-client.key"),
