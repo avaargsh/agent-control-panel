@@ -21,7 +21,9 @@ import (
 
 const (
 	SubmitPath        = "/api/v1/goals:submit"
+	StatusPath        = "/api/v1/goals:status"
 	AcceptanceVersion = "acp.issue-goal-acceptance/v1"
+	StatusVersion     = "acp.issue-goal-status/v1"
 )
 
 type GoalAdmitter interface {
@@ -33,9 +35,15 @@ type GoalAdmitter interface {
 // access token or accept identity from the submitted proposal.
 type GoalServiceFactory func(context.Context, string) (GoalAdmitter, error)
 
+// GoalStatusLookup is a separately configured, authenticated, read-only ACP
+// authority lookup. The returned Intent is verified against all selectors
+// before producing a receipt. A 404 is NOT proof of terminal non-existence.
+type GoalStatusLookup func(context.Context, string, issuegoal.Prepared) (runintent.Intent, error)
+
 type handler struct {
 	factory GoalServiceFactory
 	source  admission.IssueGoalSourceVerifier
+	status  GoalStatusLookup
 }
 
 func configured(value any) bool {
@@ -60,10 +68,25 @@ func NewHandler(factory GoalServiceFactory, source admission.IssueGoalSourceVeri
 	return &handler{factory: factory, source: source}, nil
 }
 
+// NewHandlerWithStatus enables a separate, non-mutating status endpoint only
+// when the trusted host supplies an explicit request-scoped lookup.
+func NewHandlerWithStatus(factory GoalServiceFactory, source admission.IssueGoalSourceVerifier, status GoalStatusLookup) (http.Handler, error) {
+	if !configured(status) {
+		return nil, admission.ErrInvalidConfig
+	}
+	base, err := NewHandler(factory, source)
+	if err != nil {
+		return nil, err
+	}
+	h := base.(*handler)
+	h.status = status
+	return h, nil
+}
+
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	if r.URL.Path != SubmitPath {
+	if r.URL.Path != SubmitPath && (r.URL.Path != StatusPath || !configured(h.status)) {
 		reject(w, http.StatusNotFound, "not_found")
 		return
 	}
@@ -103,6 +126,11 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	proposal, _, _, err := issuegoal.DecodePrepared(data)
 	if err != nil {
 		reject(w, http.StatusBadRequest, "invalid_goal")
+		return
+	}
+
+	if r.URL.Path == StatusPath {
+		h.serveStatus(w, r, strings.TrimPrefix(headers[0], "Bearer "), proposal)
 		return
 	}
 
@@ -154,6 +182,47 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	_, _ = w.Write(payload)
 	_, _ = w.Write([]byte("\n"))
+}
+
+// serveStatus never calls the write-admission service or public GitHub source.
+func (h *handler) serveStatus(w http.ResponseWriter, r *http.Request, bearer string, proposal issuegoal.Prepared) {
+	intent, err := h.status(r.Context(), bearer, proposal)
+	if err != nil {
+		switch {
+		case errors.Is(err, admission.ErrUnauthenticated):
+			reject(w, http.StatusUnauthorized, "unauthenticated")
+		case errors.Is(err, admission.ErrPolicyDenied):
+			reject(w, http.StatusForbidden, "policy_denied")
+		case errors.Is(err, runpg.ErrNotFound):
+			// Treat missing, mismatched, revoked and cross-scope records equally.
+			// This response NEVER permits retry or final absence inference.
+			reject(w, http.StatusNotFound, "not_found_or_denied")
+		default:
+			reject(w, http.StatusServiceUnavailable, "status_unavailable")
+		}
+		return
+	}
+	if err := intent.Validate(); err != nil ||
+		intent.TenantID != proposal.Target.TenantID ||
+		intent.ProjectID != proposal.Target.ProjectID ||
+		intent.AgentID != proposal.Target.AgentID ||
+		intent.ReleaseID != proposal.Target.ReleaseID ||
+		intent.SessionID != proposal.Target.SessionID ||
+		intent.IdempotencyKey != proposal.IdempotencyKey ||
+		intent.RequestDigest != proposal.RequestDigest {
+		reject(w, http.StatusServiceUnavailable, "invalid_status_receipt")
+		return
+	}
+	reply := struct {
+		Schema        string `json:"schema"`
+		RunIntentID   string `json:"run_intent_id"`
+		RequestDigest string `json:"request_digest"`
+		Status        string `json:"status"`
+	}{
+		StatusVersion, intent.ID, intent.RequestDigest, string(intent.Status),
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(reply)
 }
 
 func classify(err error) int {
