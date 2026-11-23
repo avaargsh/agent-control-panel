@@ -60,13 +60,18 @@ func (r *Repository) RecordPermitUnavailable(ctx context.Context, in identity.In
 	created := err == nil
 	if errors.Is(err, pgx.ErrNoRows) {
 		rec, err = scan(tx.QueryRow(ctx, `SELECT tenant_id,run_id,runtime_attempt_id,sandbox_uid,command_id,request_digest,generation,state,created_at
- FROM sandbox_journal_commands WHERE tenant_id=$1 AND sandbox_uid=$2 AND command_id=$3 FOR SHARE`, in.TenantID, in.SandboxUID, in.CommandID))
+ FROM sandbox_journal_commands WHERE tenant_id=$1 AND sandbox_uid=$2 AND command_id=$3`, in.TenantID, in.SandboxUID, in.CommandID))
 		if err != nil {
 			return Record{}, false, fmt.Errorf("read replay: %w", err)
 		}
 		if rec.Identity != in {
 			return Record{}, false, ErrConflict
 		}
+		// This is a committed, append-only original row (migration 0005).
+		// FOR SHARE requires UPDATE privilege in PostgreSQL, which the
+		// least-privileged Command writer deliberately cannot have.
+		// The unique INSERT conflict already waits for the creator's
+		// transaction; inspect row and source Outbox without a row lock.
 		// A command row without its original atomic Outbox fact is NOT a
 		// trustworthy replay. Never mint a replacement event or dispatch.
 		if err := verifyCommittedOutbox(ctx, tx, rec); err != nil {
