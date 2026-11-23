@@ -90,6 +90,24 @@ go run ./cmd/acp-goal submit \
 
 On `201` and `200`, the CLI checks the server's schema and request digest against the exact immutable prepared input, checks the RunIntent receipt fields and status/created consistency, and prints only the verified acceptance JSON. It will not call a GitHub write API or execute Runtime work. On any TLS, HTTP, or invalid-receipt error, no acceptance JSON is emitted. A network timeout has an **unknown outcome**; check the authoritative ACP database before replaying the same idempotency key.
 
+### Crash-safe local attempt hold record (opt-in)
+
+For a Goal whose HTTP acceptance ACK could disappear after PostgreSQL commit, add `--hold-record` to `acp-goal submit`. This option writes and synchronizes one **private, non-authoritative attempt marker before sending the POST**. A failed write, existing path, symlink, relative path, or missing/non-private parent prevents the network request. The file remains after a verified 201/200; it describes the attempt, not its eventual outcome.
+
+```sh
+install -d -m 0700 /run/acp/goal-hold
+go run ./cmd/acp-goal submit \
+  --file /tmp/acp-proposal.json \
+  --url https://127.0.0.1:9443/api/v1/goals:submit \
+  --token-file /run/acp/secrets/goal-bearer \
+  --ca-file /run/acp/ca/goal-server-ca.pem \
+  --hold-record /run/acp/goal-hold/attempt-001.json
+```
+
+The `acp.goal-submit-hold/v1` JSON includes only the tenant/project/agent/release/session selectors, original `idempotency_key`, `request_digest`, and conservative `UNKNOWN/HOLD` disposition. It **never** contains a bearer, raw execution input, server response, or Runtime identity. The parent directory must already be private (0700); the newly created file is 0600 and cannot overwrite earlier attempt evidence. A new attempt needs a distinct operator-approved filename; do not generate a new filename simply to bypass an existing HOLD. Keep selectors private and follow ordinary retention controls.
+
+A marker is **not** evidence that the server committed or rejected a RunIntent, and `UNKNOWN/HOLD` remains conservative even when the CLI separately printed a valid acceptance receipt. On transport ambiguity, stop and reconcile the original tuple with ACP's authenticated PostgreSQL authority and Runtime's separate authoritative records; an absent database row at one instant is **not** a final absence certificate. Never blindly POST again or infer execution success from this file. The current Goal HTTP host has no read-only lookup endpoint; this option does not create one or bypass branch protection.
+
 The CLI deliberately only permits a direct numeric loopback endpoint and a bounded TLS server response. It cannot currently connect through remote ingress or a proxy; production host deployment and genuine OAuth/GitHub/DB joint validation remain separate acceptance gates.
 
 Expected: HTTP `201` for the first authorized request and `200` for an exact same-key replay, both with the *same* `run_intent_id` and canonical digest; there is **no** `run_id` and no dispatch receipt. A reused key with changed input should result in `409`. Revoke the membership, retry, and expect denial without a new DB row or GitHub source request. For timeouts or ambiguous external responses, inspect the existing database and authoritative source; never blindly synthesize success.
@@ -104,4 +122,4 @@ Expected: HTTP `201` for the first authorized request and `200` for an exact sam
 - Public GitHub Issues can change or be closed; their snapshot and pinned branch HEAD must be freshly re-observed on each authorized submission, including replay.
 - Operator must independently verify the exact HEAD SHA, authenticated GitHub logs, failure/negative matrix, database role least privilege, branch protections and a separate reviewer before promoting this candidate.
 
-Related: [HTTP handler contract](ISSUE-GOAL-HTTP.md), [input preparation](ISSUE-GOAL-PREPARE.md), [portfolio demo](PORTFOLIO-VALIDATION-DEMO.md), [PR #86](https://github.com/avaargsh/agent-control-panel/pull/86).
+Related: [HTTP handler contract](ISSUE-GOAL-HTTP.md), [input preparation](ISSUE-GOAL-PREPARE.md), [PR #86](https://github.com/avaargsh/agent-control-panel/pull/86).

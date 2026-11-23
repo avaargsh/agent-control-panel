@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -55,6 +56,7 @@ func TestRealGoalHTTPKeycloakGitHubPostgres(t *testing.T) {
 	issuerCA := require("ACP_REAL_IDP_CA")
 	clientSecret := require("ACP_REAL_IDP_SECRET")
 	runnerSecret := require("ACP_REAL_RUNNER_SECRET")
+	githubReadToken := require("ACP_REAL_GITHUB_READ_TOKEN")
 	dsn := require("PGTEST_DSN")
 	if os.Getenv("GITHUB_ACTIONS") != "true" {
 		t.Fatal("live acceptance must run in a disposable CI environment, not against a developer or production realm")
@@ -64,10 +66,21 @@ func TestRealGoalHTTPKeycloakGitHubPostgres(t *testing.T) {
 
 	// Derive mutable source selectors from actual api.github.com response
 	// immediately before submitting. Do not fake a digest or SHA in this test.
-	publicReader := issuegoal.NewPublicIssueReader()
+	publicReader, err := issuegoal.NewPublicIssueReaderWithBearer(githubReadToken)
+	if err != nil {
+		t.Fatal("ephemeral CI read-only GitHub token format is invalid")
+	}
 	snapshot, err := publicReader.Read(ctx, liveGoalIssueURL)
-	if err != nil || snapshot.State != "open" || snapshot.Number != 70 {
-		t.Fatalf("live public GitHub Issue unavailable or changed: %v", err)
+	if err != nil {
+		var failure *issuegoal.PublicSourceFailure
+		if errors.As(err, &failure) {
+			t.Fatalf("live public GitHub Issue observation failed: operation=%s reason=%s http_status=%d",
+				failure.Operation, failure.Reason, failure.HTTPStatus)
+		}
+		t.Fatalf("live public GitHub Issue unavailable: %v", err)
+	}
+	if snapshot.State != "open" || snapshot.Number != 70 {
+		t.Fatal("live public GitHub Issue is no longer the required open Issue #70")
 	}
 	readPublic := func(path string, dest any) {
 		t.Helper()
@@ -78,8 +91,10 @@ func TestRealGoalHTTPKeycloakGitHubPostgres(t *testing.T) {
 		req.Header.Set("Accept", "application/vnd.github+json")
 		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 		req.Header.Set("User-Agent", "acp-live-goal-acceptance/0.1")
+		req.Header.Set("Authorization", "Bearer "+githubReadToken)
 		client := &http.Client{
 			Timeout:       12 * time.Second,
+			Transport:     &http.Transport{Proxy: nil},
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 		}
 		res, err := client.Do(req)
@@ -242,7 +257,8 @@ func TestRealGoalHTTPKeycloakGitHubPostgres(t *testing.T) {
 		runLiveGoalProcessCLI(t, ctx, liveGoalProcessInput{
 			DSN: dsn, Schema: schema, Issuer: issuer, IssuerCA: issuerCA,
 			ResourceSecret: clientSecret, Bearer: tokenReply.AccessToken,
-			Manifest: manifest, Prepared: preparedJSON,
+			GitHubReadToken: githubReadToken,
+			Manifest:        manifest, Prepared: preparedJSON,
 			RequestDigest: proposal.RequestDigest, Pool: pool,
 		})
 		return
