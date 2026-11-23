@@ -162,6 +162,7 @@ jobs:
           set -euo pipefail
           bundle="$RUNNER_TEMP/acp-postfault/proof.json"
           expected="$RUNNER_TEMP/acp-postfault/expected.json"
+          head_acceptance="$RUNNER_TEMP/acp-postfault/head-acceptance.json"
           trust="$RUNNER_TEMP/acp-postfault/trust"
           mtls="$RUNNER_TEMP/acp-agentd-mtls"
           client_cert="$mtls/client.crt"
@@ -169,6 +170,10 @@ jobs:
           server_ca="$mtls/server-ca.pem"
           if [ ! -s "$bundle" ] || [ ! -s "$expected" ] || [ ! -d "$trust" ]; then
             echo "::error::EXTENDED GOLDEN PATH BLOCKED: no real, independently signed Sandbox/AgentD/Guard/Runtime post-fault proof for this Run."
+            exit 1
+          fi
+          if [ ! -s "$head_acceptance" ] || [ ! -s "$trust/head-acceptor.pub" ]; then
+            echo "::error::EXTENDED GOLDEN PATH BLOCKED: independent same-Run Guard/AgentD Head acceptance and separate trust root were not provisioned."
             exit 1
           fi
           if [ -z "${AGENTD_EVIDENCE_ENDPOINT:-}" ] || [ -z "${AGENTD_EVIDENCE_SERVER_NAME:-}" ] ||
@@ -179,6 +184,7 @@ jobs:
           "$RUNNER_TEMP/acp-postfault-verify" \
             --bundle "$bundle" \
             --expected "$expected" \
+            --head-acceptance "$head_acceptance" \
             --trust-dir "$trust" \
             --agentd-evidence-endpoint "$AGENTD_EVIDENCE_ENDPOINT" \
             --agentd-client-cert "$client_cert" \
