@@ -277,6 +277,14 @@ func Verify(p Package, e Expected, keys map[string]ed25519.PublicKey, now time.T
 		!identifier(dec.DecisionID) || !digest(dec.DecisionDigest) {
 		return reject("G01/G02: missing accepted Run or authoritative Decision")
 	}
+	// Signed receipt validity alone cannot justify a downstream decision
+	// that predates its required upstream accepted Run, or a Guard Permit
+	// that predates the accepted Decision it references. Equal timestamps
+	// are allowed; source-owned causal journals remain the stronger proof.
+	if dec.ObservedAt.Before(run.ObservedAt) ||
+		permit.ObservedAt.Before(dec.ObservedAt) {
+		return reject("G01/G03: signed Run, Decision and Permit stages out of order")
+	}
 	if permit.Status != "VALID" || permit.DecisionID != dec.DecisionID ||
 		permit.DecisionDigest != dec.DecisionDigest ||
 		!identifier(permit.PermitID) || permit.PermitEpoch == 0 ||
@@ -304,6 +312,25 @@ func Verify(p Package, e Expected, keys map[string]ed25519.PublicKey, now time.T
 		guardReleased.PermitEpoch != permit.PermitEpoch || guardReleased.ActionDigest != permit.ActionDigest ||
 		guardReleased.ObservedAt.Before(resumed.ObservedAt) {
 		return reject("G03/G04: protected operation settlement not observed")
+	}
+	// Independently signed, fresh observations can still be captured AFTER
+	// a purported settlement. Merely verifying all signatures and Run IDs
+	// would let a package present later AgentD Inspect / Guard revalidation
+	// as if they justified an earlier protected-operation settlement.
+	// This is a necessary timestamp consistency fence, not proof of real
+	// execution or a substitute for authenticated source clocks.
+	for _, authority := range []string{"runtime", "sandbox", "agentd", "guard"} {
+		observedAt := postfaultAfter[authority].ObservedAt
+		// RECOVERED is a cross-service lifecycle claim carrying the
+		// reconciled command and Guard Permit references. It cannot claim
+		// completed recovery before the independent evidence it depends on
+		// was observed, even if a later Guard settlement is correctly dated.
+		if guardReleased.ObservedAt.Before(observedAt) {
+			return reject("G03/G04: settlement predates signed postfault recovery proof")
+		}
+		if resumed.ObservedAt.Before(observedAt) {
+			return reject("G05: recovered Run predates signed postfault source proof")
+		}
 	}
 	if sandboxReleased.Status != "RELEASED" || !sandboxReleased.ProviderAbsent ||
 		sandboxReleased.SandboxUID != postSandbox.SandboxUID ||
