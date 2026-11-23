@@ -28,6 +28,31 @@ The response is the exact source-owned wire version `acp.agentd-evidence-export/
 
 The single canonical reader rejects oversized or malformed/noncanonical/duplicate JSON, an untrusted response status/cache policy, missing Wait, mismatched original Run/Attempt/Guard Permit, altered signature/digest, stale Head, missing chain tail, wrong source state and invalid source clock order. Then, with **no legacy fallback**, it invokes `VerifyWithAgentDSourceJournal`, which independently verifies the eight source-signed G05 observations, true signed Wait, complete source Inspect chain and before/after accepted-Run continuity.
 
+## Actual postfault CLI uses the same server identity gate
+
+The `cmd/acp-postfault-verify` entrypoint now uses the existing
+`postfault.FetchAndVerifyAgentDEvidence` mTLS adapter instead of constructing
+a generic `http.Client` and calling the canonical parser directly.
+`--agentd-evidence-endpoint` still accepts the configured HTTPS origin (or
+the exact `/v1/agentd/evidence:read` route). The CLI derives that exact route
+and rejects alternate paths, URL userinfo, queries and fragments before any
+network access. The adapter checks the Tenant/Run-scoped client certificate,
+explicit server CA/DNS name and sole AgentD **server** URI SAN during the TLS
+handshake, so a same-CA certificate for another service cannot receive the
+original Run/Guard/Attempt request. Signatures/Inspect chain remain verified
+only by the single canonical reader.
+
+**Head is still not a deployed trusted publisher.** The CLI's
+`--expected` file is a user-provided local representation of a supposed
+independently accepted Run/fault/AgentD Head. Strict JSON, a pinned digest
+and full source signatures cannot authenticate the provenance of that file
+or show that the claimed Head is the latest source commit. Production G05
+requires an independently authorized, authenticated, anti-rollback
+ACP/Guard-bound Head acceptance and publication path. An operator copying
+the AgentD HTTP response Head into `--expected` is NOT an independent
+trust anchor. Until that producer exists and its keys and ledger are
+verified independently, the business Golden Path remains HOLD.
+
 ## Tests and what they do NOT prove
 
 The dedicated root CI tests both the canonical verifier and scoped mTLS adapter using Go 1.27.4, exact candidate HEAD, strict gofmt/module checks, `go test -race -count=1 -v -run '^(TestG05MTLSConsumer|TestAgentDEvidenceClient)' ./internal/postfault` and vet. It starts a **real mutual TLS server and client** with ephemeral X.509/Ed25519 CA and authorized URI SANs, but that server is a **contract test fake responding with independently signed test fixtures**, not the deployed Sandbox/AgentD server. A separate exact-SHA-pinned PostgreSQL 16 / actual Linux OS Wait / scoped mTLS source Handler / ACP G05 cross-module integration from #115 is now included in this reconciliation PR. Even this independently verified non-production test is **not equivalent** to deployed same-Run Runtime/Sandbox/AgentD/Guard original postfault production proof.
