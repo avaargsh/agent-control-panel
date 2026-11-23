@@ -3,7 +3,7 @@ name: Legacy compatibility snapshot checks
 on:
   pull_request:
   push:
-    branches: [main, "feature/platform-foundation"]
+    branches: [main]
 
 permissions:
   contents: read
