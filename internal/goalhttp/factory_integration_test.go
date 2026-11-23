@@ -165,7 +165,11 @@ func TestCatalogGoalHTTPRealTLSIntrospectionAndPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler, err := NewHandler(factory, source)
+	statusLookup, err := NewCatalogGoalStatusLookup(repository, auth)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, err := NewHandlerWithStatus(factory, source, statusLookup)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,6 +206,39 @@ func TestCatalogGoalHTTPRealTLSIntrospectionAndPostgres(t *testing.T) {
 		replay["run_intent_id"] != id || replay["created"] != false {
 		t.Fatalf("idempotent replay created a new intent: HTTP %d %#v", replayCode, replay)
 	}
+	// Read-only status is bound to the same request, OAuth identity and live
+	// Catalog membership. It never calls the GitHub source verifier or creates
+	// another RunIntent/Outbox event.
+	lookupStatus := func(bearer string) (int, map[string]any) {
+		t.Helper()
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+StatusPath, bytes.NewReader(validProposal(t)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+bearer)
+		resp, err := server.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var output map[string]any
+		if err := json.NewDecoder(resp.Body).Decode(&output); err != nil {
+			t.Fatal(err)
+		}
+		return resp.StatusCode, output
+	}
+	if code, status := lookupStatus("valid-test-bearer"); code != http.StatusOK ||
+		status["run_intent_id"] != id || status["request_digest"] != first["request_digest"] ||
+		status["status"] != "PENDING" {
+		t.Fatalf("authorized exact-request lookup failed: HTTP %d %#v", code, status)
+	}
+	if reader.issueReads != 2 || reader.baselineReads != 2 {
+		t.Fatal("read-only lookup re-contacted public GitHub source")
+	}
+	if code, _ := lookupStatus("invalid-test-bearer"); code != http.StatusUnauthorized {
+		t.Fatalf("invalid OAuth bearer could inspect status: HTTP %d", code)
+	}
 	if deniedCode, _ := send("invalid-test-bearer"); deniedCode != http.StatusUnauthorized {
 		t.Fatalf("invalid bearer bypassed identity: %d", deniedCode)
 	}
@@ -226,6 +263,10 @@ func TestCatalogGoalHTTPRealTLSIntrospectionAndPostgres(t *testing.T) {
 	}
 	if _, err := pool.Exec(ctx, "UPDATE admission_memberships SET role='VIEWER' WHERE tenant_id='tenant-a'"); err != nil {
 		t.Fatal(err)
+	}
+	if code, status := lookupStatus("valid-test-bearer"); code != http.StatusNotFound ||
+		status["error"] != "not_found_or_denied" {
+		t.Fatalf("revoked membership leaked read-only status: HTTP %d %#v", code, status)
 	}
 	if revokedCode, _ := send("valid-test-bearer"); revokedCode != http.StatusForbidden {
 		t.Fatalf("catalog revocation bypassed: HTTP %d", revokedCode)
