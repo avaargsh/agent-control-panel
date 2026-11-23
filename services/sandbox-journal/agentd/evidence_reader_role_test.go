@@ -237,3 +237,52 @@ func TestEvidenceReaderGUCForgeryOIDMismatchAndRevocationFailClosed(t *testing.T
 	}
 	checkNoReads("revoked binding")
 }
+
+
+func TestEvidenceReaderDatabaseTemporaryPrivilegeFailsClosed(t *testing.T) {
+	// A SELECT-only LOGIN must not retain database TEMP privilege. The
+	// default PostgreSQL PUBLIC TEMP grant or an explicit re-grant permits
+	// creating temporary objects outside the read-only service transaction.
+	owner := testDatabase(t)
+	reader := newEvidenceReaderPool(t, owner, "agentd-tenant-a")
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	var login, database string
+	if err := reader.QueryRow(ctx, "SELECT session_user, current_database()").Scan(&login, &database); err != nil {
+		t.Fatal(err)
+	}
+	databaseSQL := pgx.Identifier{database}.Sanitize()
+	loginSQL := pgx.Identifier{login}.Sanitize()
+	if _, err := owner.Exec(ctx, "GRANT TEMPORARY ON DATABASE "+databaseSQL+" TO "+loginSQL); err != nil {
+		t.Fatal(err)
+	}
+	var hasTemp bool
+	if err := reader.QueryRow(ctx, "SELECT has_database_privilege(session_user,current_database(),'TEMP')").Scan(&hasTemp); err != nil || !hasTemp {
+		t.Fatalf("test did not grant effective TEMP privilege: granted=%v err=%v", hasTemp, err)
+	}
+	begin := func() pgx.Tx {
+		t.Helper()
+		tx, err := reader.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return tx
+	}
+	tx := begin()
+	if err := verifyEvidenceReaderLogin(ctx, tx, "agentd-tenant-a"); !errors.Is(err, ErrEvidenceReaderUntrusted) {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("TEMP-enabled reader LOGIN was accepted as least privilege: %v", err)
+	}
+	_ = tx.Rollback(ctx)
+
+	if _, err := owner.Exec(ctx, "REVOKE TEMPORARY ON DATABASE "+databaseSQL+" FROM "+loginSQL); err != nil {
+		t.Fatal(err)
+	}
+	tx = begin()
+	if err := verifyEvidenceReaderLogin(ctx, tx, "agentd-tenant-a"); err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("dedicated reader still denied after revoking TEMP: %v", err)
+	}
+	_ = tx.Rollback(ctx)
+}
