@@ -7,10 +7,10 @@ import (
 	"strings"
 )
 
-// rejectCaseFoldKeyCollisions closes a mismatch between Go's case-insensitive
+// ValidateUniqueJSONKeys closes a mismatch between Go's case-insensitive
 // struct field matching and the exact-key duplicate detection in the ACP
 // immutable JSON walker. A second spelling must never override a field.
-func rejectCaseFoldKeyCollisions(raw []byte) error {
+func ValidateUniqueJSONKeys(raw []byte) error {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
 	root, err := dec.Token()

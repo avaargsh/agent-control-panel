@@ -271,3 +271,28 @@ func TestVerifyAuthoritySchemaRequiresLatestAdmissionMigration(t *testing.T) {
 		t.Fatal("schema missing admission-origin migration was accepted")
 	}
 }
+
+func TestPostgresTLSVerifiesEveryCandidate(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		hosts       string
+		mode        string
+		wantAllowed bool
+	}{
+		{"local only", "127.0.0.1,::1", "disable", true},
+		{"remote with hostname verification", "first.example,second.example", "verify-full", true},
+		{"local primary with unverified remote fallback", "127.0.0.1,remote.example", "disable", false},
+		{"remote fallback without hostname verification", "127.0.0.1,remote.example", "require", false},
+		{"remote primary without hostname verification", "remote.example", "require", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			config, err := pgxpool.ParseConfig("host=" + tc.hosts + " user=acp dbname=acp sslmode=" + tc.mode)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := verifyPostgresTLS(config); (err == nil) != tc.wantAllowed {
+				t.Fatalf("verifyPostgresTLS returned %v, want allowed %v", err, tc.wantAllowed)
+			}
+		})
+	}
+}

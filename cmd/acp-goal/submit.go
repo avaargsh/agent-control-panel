@@ -24,9 +24,10 @@ import (
 )
 
 const (
-	maxGoalReplyBytes = 4096
-	maxCABytes        = 64 << 10
-	maxBearerBytes    = 8192
+	unknownGoalReceipt = "GoalSubmit acceptance response is not trustworthy; outcome unknown, inspect ACP before retrying"
+	maxGoalReplyBytes  = 4096
+	maxCABytes         = 64 << 10
+	maxBearerBytes     = 8192
 )
 
 // submit sends only an immutable, already prepared Issue Goal proposal to the
@@ -103,15 +104,22 @@ func submit(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("GoalSubmit not accepted (HTTP %d); inspect ACP before retrying", resp.StatusCode)
+		switch resp.StatusCode {
+		case http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusConflict:
+			return fmt.Errorf("GoalSubmit not accepted (HTTP %d); inspect ACP before retrying", resp.StatusCode)
+		default:
+			return fmt.Errorf("GoalSubmit returned HTTP %d; outcome unknown, inspect ACP before retrying", resp.StatusCode)
+		}
 	}
 	media, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
-	if err != nil || media != "application/json" || !strings.Contains(resp.Header.Get("Cache-Control"), "no-store") {
-		return errors.New("GoalSubmit acceptance response is not trustworthy")
+	cache := resp.Header.Values("Cache-Control")
+	if err != nil || media != "application/json" || len(cache) != 1 ||
+		!strings.EqualFold(strings.TrimSpace(cache[0]), "no-store") {
+		return errors.New(unknownGoalReceipt)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxGoalReplyBytes+1))
-	if err != nil || len(body) > maxGoalReplyBytes {
-		return errors.New("GoalSubmit acceptance response is too large or incomplete")
+	if err != nil || len(body) > maxGoalReplyBytes || issuegoal.ValidateUniqueJSONKeys(body) != nil {
+		return errors.New(unknownGoalReceipt)
 	}
 	var receipt struct {
 		Schema        string `json:"schema"`
@@ -128,7 +136,7 @@ func submit(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		receipt.Created == nil || *receipt.Created != (resp.StatusCode == http.StatusCreated) ||
 		!validGoalReceiptID(receipt.RunIntentID) || !validGoalReceiptStatus(receipt.Status) ||
 		(*receipt.Created && receipt.Status != "PENDING") {
-		return errors.New("GoalSubmit returned an unbound or malformed admission receipt")
+		return errors.New(unknownGoalReceipt)
 	}
 	return json.NewEncoder(stdout).Encode(receipt)
 }
