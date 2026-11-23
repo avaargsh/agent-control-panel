@@ -41,14 +41,14 @@ type AgentDEvidenceRecord struct {
 // AgentD InspectHead. It is compared to a separately pinned consumer value;
 // a Head supplied by this HTTP response is never its own trust anchor.
 type AgentDEvidenceReadResponse struct {
-	Schema      string        `json:"schema"`
-	Ref         AgentDWaitRef `json:"ref"`
-	State       string        `json:"state"`
-	NextAction  string        `json:"next_action"`
+	Schema      string                   `json:"schema"`
+	Ref         AgentDWaitRef            `json:"ref"`
+	State       string                   `json:"state"`
+	NextAction  string                   `json:"next_action"`
 	Head        TrustedAgentDInspectHead `json:"head"`
-	Inspections []AgentDEvidenceRecord `json:"inspections"`
-	Terminal    *AgentDEvidenceRecord  `json:"terminal,omitempty"`
-	CanRetry    bool                   `json:"can_retry"`
+	Inspections []AgentDEvidenceRecord   `json:"inspections"`
+	Terminal    *AgentDEvidenceRecord    `json:"terminal,omitempty"`
+	CanRetry    bool                     `json:"can_retry"`
 }
 
 // AgentDEvidenceClient fetches only the bounded original AgentD evidence
