@@ -42,16 +42,42 @@ handshake, so a same-CA certificate for another service cannot receive the
 original Run/Guard/Attempt request. Signatures/Inspect chain remain verified
 only by the single canonical reader.
 
-**Head is still not a deployed trusted publisher.** The CLI's
-`--expected` file is a user-provided local representation of a supposed
-independently accepted Run/fault/AgentD Head. Strict JSON, a pinned digest
-and full source signatures cannot authenticate the provenance of that file
-or show that the claimed Head is the latest source commit. Production G05
-requires an independently authorized, authenticated, anti-rollback
-ACP/Guard-bound Head acceptance and publication path. An operator copying
-the AgentD HTTP response Head into `--expected` is NOT an independent
-trust anchor. Until that producer exists and its keys and ledger are
-verified independently, the business Golden Path remains HOLD.
+## Signed Head acceptance preflight (consumer-only candidate)
+
+The CLI now **requires** three independently provisioned inputs for Head
+provenance before it opens the AgentD mTLS connection:
+
+- `--expected <path>`: the existing strict `acp.postfault-expected/v2` Run,
+  fault, Guard Operation, original AgentD Ref and exact Inspect Head binding
+- `--head-acceptance <path>`: strict canonical JSON
+  `{"payload_b64":"...","signature_b64":"..."}`, where `payload_b64`
+  contains the canonical `acp.g05-head-acceptance/v1` statement:
+  `schema`, **complete** `binding` (exactly the expected v2 object),
+  `revision`, `accepted_at` and `expires_at`
+- `--trust-dir/head-acceptor.pub`: separately configured 32-byte Ed25519
+  public key encoded as lowercase hex, deliberately distinct from the four
+  Runtime/Sandbox/AgentD/Guard receipt verification keys
+
+The detached signature covers exactly the original payload bytes using
+`acp.g05-head-acceptance/v1\\x00` as a domain separator. The CLI rejects
+missing/bad signatures, duplicate or unknown keys, noncanonical JSON,
+foreign original Tenant/Run/RuntimeAttempt/Guard Operation/PermitID/Epoch,
+Command/Attempt/ProviderUID/process identity, fault or Head digest/count,
+future acceptance, expiry and acceptance windows over 24 hours. The signed
+receipt's `revision` must be positive. A genuine signature from **AgentD's
+own source signing key** is not an independent Head acceptance.
+
+**Crucial boundary:** This is a verifier and mandatory missing-evidence
+gate, **not** an implemented independent Head publisher or durable
+anti-rollback ledger. A valid but still-unexpired historical signed
+`revision` can be replayed if an attacker controls all local files and
+no separately trusted latest revision/checkpoint is available. The CLI
+does not mint acceptances or keys. The real ACP/Guard-authorized accepted
+Head store, signed monotonic version publication, revocation/key rotation
+and authoritative original-Run enrollment still require implementation
+and independent security review. Without those deployed components,
+**G01-G05 remains HOLD**; do not fabricate a test acceptance, copy the
+source HTTP Head into a local file, or mark a physical resource released.
 
 ## Tests and what they do NOT prove
 
