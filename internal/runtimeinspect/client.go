@@ -134,7 +134,8 @@ func NewClient(originRaw, expectedRuntimeSPIFFE string, roots *x509.CertPool, cl
 		TLSClientConfig:       config,
 		TLSHandshakeTimeout:   5 * time.Second,
 		ResponseHeaderTimeout: 5 * time.Second,
-		Proxy:                 nil, // no environment-controlled proxy for privileged traffic
+		DisableCompression:    true, // inspect authority receipts before any transparent decompression
+		Proxy:                 nil,  // no environment-controlled proxy for privileged traffic
 	}
 	return &Client{
 		base: originRaw,
@@ -167,6 +168,7 @@ func (c *Client) Inspect(ctx context.Context, scope InspectRequest) (Inspection,
 		return Inspection{}, fmt.Errorf("%w: build lookup: %v", ErrInvalidRequest, err)
 	}
 	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Accept-Encoding", "identity")
 	// No Authorization header, forwarded identity or request body is accepted.
 	res, err := c.client.Do(req)
 	if err != nil {
@@ -182,7 +184,7 @@ func (c *Client) Inspect(ctx context.Context, scope InspectRequest) (Inspection,
 	default:
 		return Inspection{}, ErrUnavailable
 	}
-	if !singleRuntimeJSONContentType(res.Header) {
+	if !validRuntimeJSONIdentityResponse(res) {
 		return Inspection{}, ErrInvalidResponse
 	}
 	raw, err := io.ReadAll(io.LimitReader(res.Body, maxResponseBytes+1))
@@ -202,6 +204,17 @@ func singleRuntimeJSONContentType(headers http.Header) bool {
 	}
 	media, _, err := mime.ParseMediaType(values[0])
 	return err == nil && media == "application/json"
+}
+
+// validRuntimeJSONIdentityResponse requires an untransformed Runtime receipt.
+// Go's default Transport can auto-decompress gzip and remove Content-Encoding;
+// the Uncompressed marker catches that case if a caller changes the Transport.
+func validRuntimeJSONIdentityResponse(res *http.Response) bool {
+	if res == nil || res.Uncompressed || !singleRuntimeJSONContentType(res.Header) {
+		return false
+	}
+	encodings := res.Header.Values("Content-Encoding")
+	return len(encodings) == 0 || (len(encodings) == 1 && encodings[0] == "identity")
 }
 
 func parseInspectResponse(raw []byte, scope InspectRequest) (Inspection, error) {
