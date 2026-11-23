@@ -25,15 +25,17 @@ func testDatabase(t *testing.T) *pgxpool.Pool {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
-	raw, err := os.ReadFile(filepath.Join("..", "migrations", "0013_agentd_attempt_terminal.sql"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(context.Background(), string(raw)); err != nil {
-		t.Fatalf("owner-only AgentD migration: %v", err)
+	for _, name := range []string{"0013_agentd_attempt_terminal.sql", "0014_agentd_inspect_events.sql", "0015_agentd_evidence_reader_rls.sql", "0016_agentd_reader_login_oid_fence.sql"} {
+		raw, err := os.ReadFile(filepath.Join("..", "migrations", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(context.Background(), string(raw)); err != nil {
+			t.Fatalf("owner-only AgentD migration %s: %v", name, err)
+		}
 	}
 	if _, err := pool.Exec(context.Background(),
-		"TRUNCATE public.sandbox_agentd_terminal_receipts,public.sandbox_agentd_attempts"); err != nil {
+		"TRUNCATE public.sandbox_agentd_inspect_events,public.sandbox_agentd_terminal_receipts,public.sandbox_agentd_attempts"); err != nil {
 		t.Fatal(err)
 	}
 	return pool
