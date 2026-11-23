@@ -252,12 +252,21 @@ func inspectCommandTx(ctx context.Context, tx pgx.Tx, expected Ref, trusted ed25
 // The source-owned Journal must have been created by an independently
 // authorized Guard PEP path; this candidate does not implement registration.
 func RecordWaitOutcome(ctx context.Context, db *pgxpool.Pool, original Ref, state *os.ProcessState, signer ed25519.PrivateKey) (TerminalReceipt, error) {
-	if db == nil || !original.valid() || state == nil || !state.Exited() ||
+	if db == nil || !original.valid() || state == nil ||
 		state.Pid() != original.ProcessPID || len(signer) != ed25519.PrivateKeySize {
 		return TerminalReceipt{}, ErrUnverified
 	}
+	// Linux Wait reports normal exit and signal termination as distinct
+	// states. os.ProcessState.Exited() is false after SIGKILL even though
+	// the authoritative supervisor has reaped the original process.
+	// Reject stopped/continued/incomplete status, but persist an actual
+	// signaled Wait as FAILED_CONFIRMED instead of losing its source proof.
+	ws, ok := state.Sys().(syscall.WaitStatus)
+	if !ok || (!ws.Exited() && !ws.Signaled()) {
+		return TerminalReceipt{}, ErrUnverified
+	}
 	signal := 0
-	if ws, ok := state.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+	if ws.Signaled() {
 		signal = int(ws.Signal())
 	}
 	code := state.ExitCode()
