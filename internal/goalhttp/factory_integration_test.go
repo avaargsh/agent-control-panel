@@ -243,7 +243,7 @@ func TestCatalogGoalHTTPRealTLSIntrospectionAndPostgres(t *testing.T) {
 	if code, _ := lookupStatus("invalid-test-bearer"); code != http.StatusUnauthorized {
 		t.Fatalf("invalid OAuth bearer could inspect status: HTTP %d", code)
 	}
-// A newly authorized OAuth client with the SAME subject/principal and
+	// A newly authorized OAuth client with the SAME subject/principal and
 	// live Catalog membership must not inspect another client's original
 	// admission receipt. The persisted admission origin is immutable.
 	if _, err := pool.Exec(ctx,
