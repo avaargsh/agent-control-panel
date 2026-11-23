@@ -1,0 +1,68 @@
+name: AgentD original-command Inspect (non-production)
+
+on:
+  pull_request:
+    paths:
+      - 'services/sandbox-journal/agentd/**'
+      - 'services/sandbox-journal/migrations/0013_agentd_attempt_terminal.sql'
+      - '.github/workflows/agentd-inspect.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GOTOOLCHAIN: local
+
+jobs:
+  source-owned-inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: sandbox_ci
+          POSTGRES_PASSWORD: sandbox-test-only
+          POSTGRES_DB: sandbox_journal_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sandbox_ci -d sandbox_journal_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      SANDBOX_JOURNAL_TEST_DSN: postgres://sandbox_ci:sandbox-test-only@127.0.0.1:5432/sandbox_journal_ci?sslmode=disable
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Verify exact candidate HEAD
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version: '1.27.4'
+          cache: false
+      - name: Go version / independent module graph
+        working-directory: services/sandbox-journal
+        run: |
+          test "$(go env GOVERSION)" = 'go1.27.4'
+          go mod verify
+      - name: Verify source Go formatting
+        run: |
+          dirty="$(gofmt -l services/sandbox-journal/agentd)"
+          if [ -n "$dirty" ]; then
+            printf '%s\n' "$dirty"
+            gofmt -d services/sandbox-journal/agentd
+            exit 1
+          fi
+      - name: Actual PostgreSQL and Linux OS-process inspection
+        working-directory: services/sandbox-journal
+        run: go test -p 1 -race -count=1 -v ./agentd
+      - name: Vet isolated AgentD source
+        working-directory: services/sandbox-journal
+        run: go vet ./agentd

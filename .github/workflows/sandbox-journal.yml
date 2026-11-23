@@ -37,6 +37,19 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           persist-credentials: false
+          # Never silently test GitHub's synthetic PR merge tree and report
+          # its outcome as a verified candidate HEAD.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Assert exact source checkout
+        env:
+          EXPECTED_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          actual="$(git rev-parse --verify HEAD)"
+          if [[ ! "$actual" =~ ^[a-f0-9]{40}$ || "$actual" != "$EXPECTED_SOURCE_SHA" ]]; then
+            echo "sandbox source SHA mismatch: actual=$actual expected=$EXPECTED_SOURCE_SHA" >&2
+            exit 1
+          fi
+          printf 'verified_sandbox_source_sha=%s\n' "$actual"
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
         with:
           go-version: '1.27.4'
@@ -46,13 +59,87 @@ jobs:
       - name: Verify Go formatting
         run: |
           files="$(gofmt -l services/sandbox-journal)"
-          test -z "$files" || { echo "$files"; exit 1; }
+          if [ -n "$files" ]; then
+            echo "$files"
+            gofmt -d services/sandbox-journal
+            exit 1
+          fi
       - name: Verify independent module hashes
         working-directory: services/sandbox-journal
         run: go mod verify
       - name: Sandbox journal PostgreSQL replay and rollback tests
         working-directory: services/sandbox-journal
-        run: go test -race -count=1 ./...
+        # All Go packages share one disposable PostgreSQL database. Serializing
+        # package execution avoids concurrent DDL/role migrations while -race
+        # still instruments every test and its internal concurrent goroutines.
+        run: go test -p 1 -race -count=1 -v ./...
       - name: Vet independent sandbox module
         working-directory: services/sandbox-journal
         run: go vet ./...
+      - name: One-command disposable demo (Docker Compose)
+        working-directory: services/sandbox-journal
+        timeout-minutes: 8
+        run: |
+          bash -n scripts/demo.sh
+          docker compose -f compose.demo.yaml config --quiet
+          bash scripts/demo.sh > "$RUNNER_TEMP/sandbox-demo.log"
+          grep -q 'SANDBOX_DEMO_PASS' "$RUNNER_TEMP/sandbox-demo.log"
+          grep -q 'UNATTESTED_DB_SNAPSHOT' "$RUNNER_TEMP/sandbox-demo.log"
+          grep -q 'Dispatch: DENIED' "$RUNNER_TEMP/sandbox-demo.log"
+          grep -q '"can_declare_released": false' "$RUNNER_TEMP/sandbox-demo.log"
+          if docker ps -a --format '{{.Names}}' | grep -Eq '^acp-sandbox-demo-[0-9]+-'; then
+            echo 'Demo left a Docker container running or stopped' >&2
+            exit 1
+          fi
+          if docker network ls --format '{{.Name}}' | grep -Eq '^acp-sandbox-demo-[0-9]+_'; then
+            echo 'Demo left a Docker network' >&2
+            exit 1
+          fi
+      - name: Smoke sandboxctl against isolated PostgreSQL (read-only)
+        working-directory: services/sandbox-journal
+        run: |
+          set -euo pipefail
+          psql "$SANDBOX_JOURNAL_TEST_DSN" -v ON_ERROR_STOP=1 -f migrations/tests/0001_sandboxctl_smoke.sql
+          # Roles exist only in this disposable PostgreSQL service. The CLI
+          # must never receive the database owner/migration credential.
+          psql "$SANDBOX_JOURNAL_TEST_DSN" -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE ROLE sandbox_ci_reader LOGIN PASSWORD 'sandbox-ci-reader-only' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
+          CREATE ROLE sandbox_ci_writer LOGIN PASSWORD 'sandbox-ci-writer-only' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
+          CREATE ROLE sandbox_ci_delegated LOGIN PASSWORD 'sandbox-ci-delegated' NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
+          GRANT CONNECT ON DATABASE sandbox_journal_ci TO sandbox_ci_reader,sandbox_ci_writer,sandbox_ci_delegated;
+          GRANT USAGE ON SCHEMA public TO sandbox_ci_reader,sandbox_ci_writer,sandbox_ci_delegated;
+          GRANT acp_sandbox_lease_reader,acp_sandbox_command_reader TO sandbox_ci_reader;
+          -- Writer/delegated negative fixtures retain forbidden write grants.
+          GRANT SELECT ON sandbox_journal_commands TO sandbox_ci_writer,sandbox_ci_delegated;
+          GRANT UPDATE ON sandbox_journal_commands TO sandbox_ci_writer;
+          GRANT sandbox_ci_writer TO sandbox_ci_delegated;
+          INSERT INTO public.sandbox_lease_db_principals(login_name,tenant_id)
+          VALUES ('sandbox_ci_reader','sandboxctl-smoke');
+          SQL
+          export SANDBOX_JOURNAL_READ_DSN='postgres://sandbox_ci_reader:sandbox-ci-reader-only@127.0.0.1:5432/sandbox_journal_ci?sslmode=disable'
+          for unsafe_dsn in "$SANDBOX_JOURNAL_TEST_DSN" \
+            'postgres://sandbox_ci_writer:sandbox-ci-writer-only@127.0.0.1:5432/sandbox_journal_ci?sslmode=disable' \
+            'postgres://sandbox_ci_delegated:sandbox-ci-delegated@127.0.0.1:5432/sandbox_journal_ci?sslmode=disable'; do
+            if SANDBOX_JOURNAL_READ_DSN="$unsafe_dsn" go run ./cmd/sandboxctl inspect --tenant sandboxctl-smoke --lease-intent lease-smoke-1 --format json >"$RUNNER_TEMP/unsafe-reader.json" 2>"$RUNNER_TEMP/unsafe-reader.err"; then
+              echo 'sandboxctl accepted an overprivileged PostgreSQL account' >&2
+              exit 1
+            fi
+            test ! -s "$RUNNER_TEMP/unsafe-reader.json"
+            grep -q 'READ_SOURCE_UNAVAILABLE' "$RUNNER_TEMP/unsafe-reader.err"
+          done
+          go run ./cmd/sandboxctl inspect --tenant sandboxctl-smoke --lease-intent lease-smoke-1 --sandbox-uid sandbox-smoke-1 --command-id command-smoke-1 --format json > "$RUNNER_TEMP/sandboxctl-smoke.json"
+          go run ./cmd/sandboxctl inspect --tenant sandboxctl-smoke --lease-intent lease-smoke-1 --format text > "$RUNNER_TEMP/sandboxctl-smoke.txt"
+          python3 - "$RUNNER_TEMP/sandboxctl-smoke.json" "$RUNNER_TEMP/sandboxctl-smoke.txt" <<'PY'
+          import json
+          import pathlib
+          import sys
+          report = json.loads(pathlib.Path(sys.argv[1]).read_text())
+          assert report["source"] == "UNATTESTED_DB_SNAPSHOT"
+          assert report["lease"]["state"] == "WAITING_FOR_PERMIT"
+          assert report["command"]["state"] == "PERMIT_UNAVAILABLE"
+          assert report["next_action"] == "HOLD"
+          for flag in ("can_dispatch", "can_retry", "can_declare_success", "can_declare_released"):
+              assert report[flag] is False, flag
+          text = pathlib.Path(sys.argv[2]).read_text()
+          assert "Dispatch: DENIED" in text and "Release: UNVERIFIED" in text
+          PY
