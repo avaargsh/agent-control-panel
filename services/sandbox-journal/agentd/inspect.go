@@ -177,7 +177,12 @@ func verifyTerminal(raw, signature []byte, storedDigest string, original Ref, tr
 	if (terminal.Status == Exited) != (terminal.ExitCode == 0 && terminal.Signal == 0) {
 		return TerminalReceipt{}, ErrUnverified
 	}
+	// A normal Linux Wait exit has an unsigned 8-bit status. ExitCode=-1
+	// is reserved for a signaled process, and cannot prove termination
+	// without the corresponding original Wait signal number. A valid
+	// source signature must not launder an impossible OS outcome.
 	if terminal.Signal < 0 || terminal.Signal > 128 ||
+		(terminal.Signal == 0 && (terminal.ExitCode < 0 || terminal.ExitCode > 255)) ||
 		(terminal.Signal != 0 && terminal.ExitCode != -1) {
 		return TerminalReceipt{}, ErrUnverified
 	}
