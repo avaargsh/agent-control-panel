@@ -193,7 +193,7 @@ func serve(ctx context.Context, c config) error {
 }
 
 // requireAuthorityReadRole prevents a new Guard route from bypassing
- // the already-required fresh dedicated PostgreSQL reader-role check.
+// the already-required fresh dedicated PostgreSQL reader-role check.
 func requireAuthorityReadRole(next http.Handler, check func(context.Context) error) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if next == nil || check == nil || check(r.Context()) != nil {
