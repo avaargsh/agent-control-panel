@@ -52,6 +52,9 @@ const admissionOriginMigrationName = "0012_run_intent_admission_origin.sql"
 const optimizationAttemptMigrationVersion int64 = 13
 const optimizationAttemptMigrationName = "0013_optimization_verification_attempts.sql"
 
+const guardRunLookupMigrationVersion int64 = 14
+const guardRunLookupMigrationName = "0014_guard_accepted_run_lookup.sql"
+
 var (
 	ErrSchemaDrift       = errors.New("RunIntent schema migration checksum or relation drift")
 	ErrUnversionedSchema = errors.New("RunIntent schema exists without migration history")
@@ -276,12 +279,17 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 		return fmt.Errorf("read optimization verification attempt migration: %w", err)
 	}
 	optimizationAttemptChecksum := fmt.Sprintf("%x", sha256.Sum256(optimizationAttemptSource))
+	guardRunLookupSource, err := migrations.FS.ReadFile(guardRunLookupMigrationName)
+	if err != nil {
+		return fmt.Errorf("read guarded Run lookup index migration: %w", err)
+	}
+	guardRunLookupChecksum := fmt.Sprintf("%x", sha256.Sum256(guardRunLookupSource))
 
 	rows, err := tx.Query(ctx, "SELECT version, name, checksum FROM schema_migrations")
 	if err != nil {
 		return fmt.Errorf("read schema migration history: %w", err)
 	}
-	var appliedVersion, conflictApplied, dispositionApplied, principalSnapshotApplied, capabilityLockApplied, workspaceApplied, blobStageApplied, uploadIntentApplied, gcClaimApplied, executionInputApplied, admissionCatalogApplied, admissionOriginApplied, optimizationAttemptApplied bool
+	var appliedVersion, conflictApplied, dispositionApplied, principalSnapshotApplied, capabilityLockApplied, workspaceApplied, blobStageApplied, uploadIntentApplied, gcClaimApplied, executionInputApplied, admissionCatalogApplied, admissionOriginApplied, optimizationAttemptApplied, guardRunLookupApplied bool
 	for rows.Next() {
 		var version int64
 		var name, appliedChecksum string
@@ -368,6 +376,12 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 				return ErrSchemaDrift
 			}
 			optimizationAttemptApplied = true
+		case guardRunLookupMigrationVersion:
+			if name != guardRunLookupMigrationName || appliedChecksum != guardRunLookupChecksum || guardRunLookupApplied {
+				rows.Close()
+				return ErrSchemaDrift
+			}
+			guardRunLookupApplied = true
 		default:
 			rows.Close()
 			return ErrSchemaDrift
@@ -389,7 +403,8 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 		executionInputApplied && !gcClaimApplied ||
 		admissionCatalogApplied && !executionInputApplied ||
 		admissionOriginApplied && !admissionCatalogApplied ||
-		optimizationAttemptApplied && !admissionOriginApplied {
+		optimizationAttemptApplied && !admissionOriginApplied ||
+		guardRunLookupApplied && !optimizationAttemptApplied {
 		return ErrSchemaDrift
 	}
 
@@ -431,6 +446,9 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 			return err
 		}
 		if err := ensureOptimizationAttemptMigration(ctx, tx, optimizationAttemptApplied, optimizationAttemptSource, optimizationAttemptChecksum); err != nil {
+			return err
+		}
+		if err := ensureGuardRunLookupMigration(ctx, tx, guardRunLookupApplied, guardRunLookupSource, guardRunLookupChecksum); err != nil {
 			return err
 		}
 		if err := tx.Commit(ctx); err != nil {
@@ -526,6 +544,9 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 		return err
 	}
 	if err := ensureOptimizationAttemptMigration(ctx, tx, false, optimizationAttemptSource, optimizationAttemptChecksum); err != nil {
+		return err
+	}
+	if err := ensureGuardRunLookupMigration(ctx, tx, false, guardRunLookupSource, guardRunLookupChecksum); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
