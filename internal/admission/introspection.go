@@ -75,6 +75,8 @@ func NewIntrospector(cfg IntrospectionConfig) (*Introspector, error) {
 		return nil, ErrIdentityConfig
 	}
 	transport := base.Clone()
+	// Never accept a silently decompressed identity-authority response.
+	transport.DisableCompression = true
 	if transport.TLSClientConfig == nil {
 		transport.TLSClientConfig = &tls.Config{}
 	}
@@ -132,11 +134,20 @@ func (a *Introspector) Authenticate(ctx context.Context, token string) (Identity
 	req.SetBasicAuth(url.QueryEscape(a.id), url.QueryEscape(a.secret))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Accept-Encoding", "identity")
 	resp, err := a.client.Do(req)
 	if err != nil {
 		return Identity{}, ErrIdentityUnavailable
 	}
 	defer resp.Body.Close()
+	// The configured IdP response must preserve its declared representation.
+	// Go may otherwise decompress gzip and erase Content-Encoding before
+	// ACP can distinguish the original authenticated message metadata.
+	encodings := resp.Header.Values("Content-Encoding")
+	if resp.Uncompressed || len(encodings) > 1 ||
+		(len(encodings) == 1 && encodings[0] != "identity") {
+		return Identity{}, ErrIdentityUnavailable
+	}
 	// Header.Get returns only the first field value. Never accept
 	// an authenticated principal from ambiguous IdP response metadata.
 	contentTypes := resp.Header.Values("Content-Type")
