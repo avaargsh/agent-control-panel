@@ -2,6 +2,7 @@ package postfault
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -241,5 +242,36 @@ func TestAgentDEvidenceClientExportsCanonicalLowercaseHeadKey(t *testing.T) {
 	if !bytes.Contains(raw, []byte(`"head":`)) ||
 		bytes.Contains(raw, []byte(`"Head":`)) {
 		t.Fatalf("ACP canonical source export has incorrect head field spelling: %s", raw)
+	}
+}
+
+func TestAgentDEvidenceClientRejectsTransparentGzipBeforeSignedRead(t *testing.T) {
+	// Go's default Transport automatically advertises gzip and silently
+	// decompresses a gzip response, stripping Content-Encoding. A signed,
+	// canonical source payload must not bypass the evidence wire rule that
+	// requires identity/unencoded bytes.
+	b, keys, expected, waitRaw, waitSig, events, head, now, _ := g05SourceFixture(t)
+	response := agentDEvidenceResponseFixture(t, expected, waitRaw, waitSig, events, head, "EXITED")
+	var requestAcceptEncoding string
+	server, client := newAgentDEvidenceMTLSServer(t, expected.Ref, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestAcceptEncoding = r.Header.Get("Accept-Encoding")
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Encoding", "gzip")
+		writer := gzip.NewWriter(w)
+		if err := json.NewEncoder(writer).Encode(response); err != nil {
+			t.Errorf("encode compressed signed response: %v", err)
+		}
+		if err := writer.Close(); err != nil {
+			t.Errorf("close compressed response: %v", err)
+		}
+	}))
+	defer server.Close()
+	api := AgentDEvidenceClient{Endpoint: server.URL, HTTPClient: client}
+	if err := api.Verify(context.Background(), b, keys, expected, head, now); err == nil {
+		t.Fatalf("accepted transparently decompressed gzip evidence; request Accept-Encoding=%q", requestAcceptEncoding)
+	}
+	if requestAcceptEncoding != "identity" {
+		t.Fatalf("evidence reader allowed transparent response encoding: Accept-Encoding=%q", requestAcceptEncoding)
 	}
 }
