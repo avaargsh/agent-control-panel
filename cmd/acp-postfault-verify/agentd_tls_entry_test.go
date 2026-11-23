@@ -119,7 +119,7 @@ func TestPostfaultCLIUsesAuthenticatedAgentDServerIdentityBeforeAnyRunRead(t *te
 			}))
 			server.TLS = &tls.Config{
 				Certificates: []tls.Certificate{issue(tc.serverScope, true)},
-				ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: roots,
+				ClientAuth:   tls.RequireAndVerifyClientCert, ClientCAs: roots,
 				MinVersion: tls.VersionTLS13,
 			}
 			server.StartTLS()
