@@ -45,8 +45,7 @@ func persistGoalHoldRecord(path string, proposal issuegoal.Prepared) error {
 	if err != nil {
 		return errors.New("hold record cannot be encoded")
 	}
-	payload = append(payload, '
-')
+	payload = append(payload, byte(10))
 	// Exclusive create rejects existing files and symlinks. Do not overwrite
 	// an earlier unknown attempt or depend on a caller-readable audit path.
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
