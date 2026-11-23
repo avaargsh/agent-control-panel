@@ -144,3 +144,27 @@ func TestG05RejectsMissingTamperedOrMismatchedTerminalDigest(t *testing.T) {
 		})
 	}
 }
+
+func TestG05RejectsOutOfRangeNormalWaitExitDespiteMatchingSignedSource(t *testing.T) {
+	for _, code := range []int{-1, 256} {
+		t.Run(fmt.Sprintf("exit_code_%d", code), func(t *testing.T) {
+			b, keys, signers, expected, source, now := waitSourceFixture(t)
+			// The owner also signs an otherwise consistent failed terminal:
+			// status and the postfault journal must match. An invalid OS
+			// exit status must be rejected at the source Wait checker itself.
+			source.Status = "FAILED_CONFIRMED"
+			source.ExitCode, source.Signal = code, 0
+			raw, sig := signedWaitBytes(t, source, signers["agentd"])
+			bindG05ExitDigest(t, &b, signers, raw)
+			mutateReport(t, &b, signers, "agentd", "after_recovery", func(o *Observation) {
+				o.Command.State = "FAILED_CONFIRMED"
+			})
+			if err := Verify(b, keys, now); err != nil {
+				t.Fatalf("precondition: matching postfault evidence is invalid: %v", err)
+			}
+			if err := VerifyWithAgentDWait(b, keys, expected, raw, sig, keys["agentd"], now); err == nil {
+				t.Fatalf("accepted impossible unsigned normal OS wait exit code %d", code)
+			}
+		})
+	}
+}
