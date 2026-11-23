@@ -16,10 +16,10 @@ func TestAgentDEvidenceReadRejectsConflictingOrRepeatedWireMetadata(t *testing.T
 	_, _, expected, waitRaw, waitSig, events, head, _, _ := g05SourceFixture(t)
 	evidence := agentDEvidenceResponseFixture(t, expected, waitRaw, waitSig, events, head, "EXITED")
 	tests := []struct {
-		name          string
-		contentTypes  []string
-		encodings     []string
-		allow         bool
+		name         string
+		contentTypes []string
+		encodings    []string
+		allow        bool
 	}{
 		{name: "canonical_json", contentTypes: []string{"application/json"}, allow: true},
 		{name: "explicit_identity", contentTypes: []string{"application/json"}, encodings: []string{"identity"}, allow: true},
