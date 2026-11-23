@@ -173,6 +173,24 @@ func LoadInspectChain(ctx context.Context, db *pgxpool.Pool, expected Ref,
 		return nil, ErrUnverified
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
+	events, err := loadInspectChainTx(ctx, tx, expected, key, now)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, ErrUnverified
+	}
+	return events, nil
+}
+
+// loadInspectChainTx verifies the complete source history inside a caller-owned
+// transaction. The HTTP reader uses this to keep tenant GUC, RLS, attempt,
+// terminal and Inspect rows in one repeatable-read snapshot.
+func loadInspectChainTx(ctx context.Context, tx pgx.Tx, expected Ref,
+	key ed25519.PublicKey, now time.Time) ([]JournaledInspection, error) {
+	if tx == nil || !expected.valid() || len(key) != ed25519.PublicKeySize {
+		return nil, ErrUnverified
+	}
 	if err := readOriginal(ctx, tx, expected); err != nil {
 		return nil, err
 	}
@@ -182,9 +200,6 @@ func LoadInspectChain(ctx context.Context, db *pgxpool.Pool, expected Ref,
 	}
 	if err := VerifyInspectChain(events, expected, key, now); err != nil {
 		return nil, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return nil, ErrUnverified
 	}
 	return events, nil
 }
