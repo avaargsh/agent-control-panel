@@ -150,6 +150,10 @@ SELECT COALESCE((
            OR has_table_privilege(r.oid,c.oid,'TRUNCATE')
            OR has_table_privilege(r.oid,c.oid,'REFERENCES')
            OR has_table_privilege(r.oid,c.oid,'TRIGGER')
+           -- Table-level privilege checks do NOT detect column-only GRANTs.
+           -- An unrelated SELECT(col) can disclose data without SELECT on
+           -- the whole table; INSERT/UPDATE/REFERENCES(col) are also ACLs.
+           OR has_any_column_privilege(r.oid,c.oid,'SELECT,INSERT,UPDATE,REFERENCES')
          )
          AND NOT (
            n.nspname='public'
@@ -166,6 +170,9 @@ SELECT COALESCE((
              OR has_table_privilege(r.oid,c.oid,'TRUNCATE')
              OR has_table_privilege(r.oid,c.oid,'REFERENCES')
              OR has_table_privilege(r.oid,c.oid,'TRIGGER')
+             -- The three AgentD source tables may be read but not
+             -- mutated, even if a DBA grants only UPDATE(status), etc.
+             OR has_any_column_privilege(r.oid,c.oid,'INSERT,UPDATE,REFERENCES')
            )
          )
      )
