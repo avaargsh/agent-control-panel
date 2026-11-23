@@ -135,7 +135,7 @@ func NewClient(originRaw, expectedRuntimeSPIFFE string, roots *x509.CertPool, cl
 		TLSHandshakeTimeout:   5 * time.Second,
 		ResponseHeaderTimeout: 5 * time.Second,
 		DisableCompression:    true, // inspect authority receipts before any transparent decompression
-		Proxy:                 nil, // no environment-controlled proxy for privileged traffic
+		Proxy:                 nil,  // no environment-controlled proxy for privileged traffic
 	}
 	return &Client{
 		base: originRaw,
