@@ -148,7 +148,12 @@ func TestCatalogAdmissionEnforcesRolesAndResourceAttributesAtCommit(t *testing.T
 func dropAdmissionCatalogMigrationForTest(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 	ctx := context.Background()
+	// Historical pre-v11 fixtures must first remove v14's new tenant+Run
+	// index and its checksum ledger entry. Keeping a future migration while
+	// deleting v11-v13 history is correctly rejected as schema drift.
 	for _, stmt := range []string{
+		"DROP INDEX run_intents_guard_accepted_runtime_lookup",
+		"DELETE FROM schema_migrations WHERE version=14",
 		"DROP TABLE optimization_verification_attempts",
 		"DROP FUNCTION reject_optimization_attempt_mutation()",
 		"DELETE FROM schema_migrations WHERE version=13",
