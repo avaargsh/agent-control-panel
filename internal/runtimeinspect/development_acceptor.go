@@ -134,6 +134,7 @@ func (a *DevelopmentAcceptor) Accept(ctx context.Context, claimed runintent.Inte
 	req.GetBody = nil // never authorize automatic replay of this POST
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Accept-Encoding", "identity")
 	resp, err := a.client.client.Do(req)
 	if err != nil {
 		return runintent.DispatchOutcome{}, ErrUnavailable
@@ -152,7 +153,7 @@ func (a *DevelopmentAcceptor) Accept(ctx context.Context, claimed runintent.Inte
 	default:
 		return runintent.DispatchOutcome{}, ErrUnavailable
 	}
-	if !singleRuntimeJSONContentType(resp.Header) {
+	if !validRuntimeJSONIdentityResponse(resp) {
 		return runintent.DispatchOutcome{}, ErrInvalidResponse
 	}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
