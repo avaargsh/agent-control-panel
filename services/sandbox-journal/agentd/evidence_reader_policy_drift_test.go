@@ -98,8 +98,8 @@ func TestEvidenceReaderRejectsAdditionalPermissivePublicPolicy(t *testing.T) {
 }
 
 // A policy can be widened in place without adding any extra row. The
- // old presence check (3 named policies, qual LIKE '%function%') erroneously
- // accepted "tenant_id = tenant_func() OR true" and exposed foreign tenants.
+// old presence check (3 named policies, qual LIKE '%function%') erroneously
+// accepted "tenant_id = tenant_func() OR true" and exposed foreign tenants.
 func TestEvidenceReaderRejectsModifiedExpectedPolicy(t *testing.T) {
 	owner := testDatabase(t)
 	cmd, ref := startOwnedTestProcess(t, "10")
