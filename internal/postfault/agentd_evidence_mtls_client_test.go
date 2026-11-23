@@ -108,7 +108,7 @@ func newG05EvidenceTLSServer(t *testing.T, ca evidenceTestCA, handler http.Handl
 	t.Helper()
 	s := httptest.NewUnstartedServer(handler)
 	s.TLS = &tls.Config{
-		Certificates: []tls.Certificate{ca.certificate(t, true, "")},
+		Certificates: []tls.Certificate{ca.certificate(t, true, "spiffe://sandbox.test/role/agentd-evidence-server")},
 		ClientCAs:    ca.pool,
 		ClientAuth:   tls.RequireAndVerifyClientCert,
 		MinVersion:   tls.VersionTLS13,
