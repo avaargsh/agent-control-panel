@@ -206,7 +206,6 @@ func singleRuntimeJSONContentType(headers http.Header) bool {
 	return err == nil && media == "application/json"
 }
 
-
 // validRuntimeJSONIdentityResponse requires an untransformed Runtime receipt.
 // Go's default Transport can auto-decompress gzip and remove Content-Encoding;
 // the Uncompressed marker catches that case if a caller changes the Transport.
