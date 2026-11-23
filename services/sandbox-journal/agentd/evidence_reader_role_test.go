@@ -238,7 +238,6 @@ func TestEvidenceReaderGUCForgeryOIDMismatchAndRevocationFailClosed(t *testing.T
 	checkNoReads("revoked binding")
 }
 
-
 func TestEvidenceReaderDatabaseTemporaryPrivilegeFailsClosed(t *testing.T) {
 	// A SELECT-only LOGIN must not retain database TEMP privilege. The
 	// default PostgreSQL PUBLIC TEMP grant or an explicit re-grant permits
