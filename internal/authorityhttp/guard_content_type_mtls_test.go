@@ -98,10 +98,10 @@ func TestGuardReadEndpointsRejectDuplicateContentTypeBeforeAuthorityReadOverMTLS
 		},
 	}
 	headerCases := []struct {
-		name string
+		name   string
 		values []string
-		want int
-		read bool
+		want   int
+		read   bool
 	}{
 		{name: "canonical_one", values: []string{"application/json"}, want: http.StatusForbidden, read: true},
 		{name: "same_value_repeated", values: []string{"application/json", "application/json"}, want: http.StatusBadRequest},
