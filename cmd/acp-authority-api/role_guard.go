@@ -45,6 +45,11 @@ SELECT COALESCE((
        -- CREATE at database scope permits making an entirely new schema;
        -- checking grants on the configured schema alone is insufficient.
        AND NOT has_database_privilege(current_database(), 'CREATE')
+       -- A default PUBLIC TEMP grant lets a LOGIN create pg_temp.run_intents.
+       -- PostgreSQL resolves temp relations ahead of ordinary search_path,
+       -- so raw unqualified catalog reads can be shadowed despite table ACLs.
+       -- Require an isolated authority DB with TEMP revoked from PUBLIC.
+       AND NOT has_database_privilege(current_database(), 'TEMP')
        -- A foreign application schema may grant DDL without granting
        -- SELECT or other privileges on any existing relations. Reject
        -- effective CREATE anywhere outside PostgreSQL system namespaces.

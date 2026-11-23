@@ -74,6 +74,18 @@ jobs:
             echo 'PGTEST_DSN role test was skipped: refuse security receipt' >&2
             exit 1
           fi
+      # A PostgreSQL TEMP relation can shadow unqualified application tables.
+      # Test on a disposable DB so shared PGTEST_DSN permissions stay unchanged.
+      - name: Enforce real PostgreSQL TEMP-shadow rejection
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -count=1 -v -run TestAuthorityDatabaseRoleRejectsTempShadow ./cmd/acp-authority-api | tee temp-shadow-test.log
+          grep -F -- '--- PASS: TestAuthorityDatabaseRoleRejectsTempShadow' temp-shadow-test.log
+          if grep -F -- '--- SKIP: TestAuthorityDatabaseRoleRejectsTempShadow' temp-shadow-test.log; then
+            echo 'PostgreSQL TEMP-shadow role test was skipped' >&2
+            exit 1
+          fi
       - name: Enforce live authority HTTP database-role drift gate
         shell: bash
         run: |

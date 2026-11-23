@@ -29,7 +29,6 @@ import (
 	"github.com/avaargsh/agent-control-panel/internal/authorityhttp"
 	"github.com/avaargsh/agent-control-panel/internal/runintent"
 	runpg "github.com/avaargsh/agent-control-panel/internal/runintent/postgres"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -48,10 +47,7 @@ func TestAuthorityHTTPRejectsRuntimeRoleDrift(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 
-	admin, err := pgx.Connect(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
+	admin, databaseName := isolatedAuthorityRoleTestDatabase(t, ctx, dsn)
 	defer admin.Close(context.Background())
 
 	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
@@ -64,6 +60,7 @@ func TestAuthorityHTTPRejectsRuntimeRoleDrift(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	poolConfig.ConnConfig.Database = databaseName
 	poolConfig.ConnConfig.RuntimeParams["search_path"] = schema
 	migrator, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {
@@ -111,6 +108,7 @@ func TestAuthorityHTTPRejectsRuntimeRoleDrift(t *testing.T) {
 		t.Fatal(err)
 	}
 	roleURL.User = url.UserPassword(role, password)
+	roleURL.Path = "/" + databaseName
 	q := roleURL.Query()
 	q.Set("search_path", schema)
 	roleURL.RawQuery = q.Encode()
