@@ -12,14 +12,18 @@ on:
       - '.github/workflows/real-oidc-admission.yml'
   workflow_dispatch:
 
+# Only read-only repository/Issue access; this workflow never writes GitHub.
 permissions:
   contents: read
+  issues: read
 
 env:
   GOTOOLCHAIN: local
 
 jobs:
   live-issuer:
+    # Do not expose the ephemeral GitHub API token to untrusted fork PR code.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
@@ -48,6 +52,9 @@ jobs:
         run: test "$(go env GOVERSION)" = "go1.27.4"
       - name: Real Keycloak + PostgreSQL admission and live public GitHub Issue GoalSubmit
         env:
+          # GitHub's automatically expiring job token; read-only scopes above.
+          # Never echo or persist it in logs/artifacts.
+          ACP_REAL_GITHUB_READ_TOKEN: ${{ github.token }}
           PGTEST_DSN: postgres://postgres:acp-test-only@127.0.0.1:5432/acp_oidc?sslmode=disable
         run: bash scripts/test-real-oidc-admission.sh
 
