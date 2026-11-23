@@ -94,7 +94,6 @@ func (c AgentDEvidenceClient) httpClient() *http.Client {
 	return &client
 }
 
-
 // hasNoStoreCacheDirective requires an actual standalone HTTP cache directive.
 // Merely finding the substring "no-store" in a different directive or value
 // must never allow an evidence response to pass its no-cache boundary.
