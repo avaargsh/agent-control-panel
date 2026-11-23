@@ -1,6 +1,12 @@
 package main
 
-import "testing"
+import (
+	"context"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+)
 
 func TestGuardAuthorityRequiresDedicatedListenerAndLiveReleasePublication(t *testing.T) {
 	env := map[string]string{
@@ -38,5 +44,29 @@ func TestGuardAuthorityRequiresDedicatedListenerAndLiveReleasePublication(t *tes
 	delete(env, "ACP_AUTHORITY_GUARD_PEER_SPIFFE_ID")
 	if _, err := readConfig(get); err == nil {
 		t.Fatal("unbound Guard listener accepted")
+	}
+}
+
+func TestGuardReadRoutesRequireFreshAuthorityRole(t *testing.T) {
+	called := 0
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called++
+		w.WriteHeader(http.StatusNoContent)
+	})
+	req := httptest.NewRequest(http.MethodPost, "/internal/v1/guard-capabilities:verify", nil)
+	denied := httptest.NewRecorder()
+	requireAuthorityReadRole(next, func(context.Context) error { return errors.New("role drift") }).ServeHTTP(denied, req)
+	if denied.Code != http.StatusServiceUnavailable || called != 0 {
+		t.Fatalf("Guard route bypassed role drift: status=%d calls=%d", denied.Code, called)
+	}
+	missing := httptest.NewRecorder()
+	requireAuthorityReadRole(next, nil).ServeHTTP(missing, req)
+	if missing.Code != http.StatusServiceUnavailable || called != 0 {
+		t.Fatalf("Guard route accepted missing role guard: status=%d calls=%d", missing.Code, called)
+	}
+	ok := httptest.NewRecorder()
+	requireAuthorityReadRole(next, func(context.Context) error { return nil }).ServeHTTP(ok, req)
+	if ok.Code != http.StatusNoContent || called != 1 {
+		t.Fatalf("Guard route rejected eligible reader: status=%d calls=%d", ok.Code, called)
 	}
 }

@@ -86,6 +86,14 @@ func serve(ctx context.Context, c config) error {
 	if err != nil {
 		return errors.New("authority database unavailable")
 	}
+	// Fail closed before startup and every authenticated read, including
+	// both Guard-only catalog observation endpoints.
+	if err := verifyAuthorityDatabaseRole(ctx, pool); err != nil {
+		return err
+	}
+	readGuard := func(requestCtx context.Context) error {
+		return verifyAuthorityDatabaseRole(requestCtx, pool)
+	}
 	repo := runpg.New(pool)
 	var handler http.Handler
 	var guardHandler http.Handler
@@ -107,7 +115,7 @@ func serve(ctx context.Context, c config) error {
 			return err
 		}
 		defer publisher.Close()
-		handler, err = authorityhttp.NewPublicationHandler(repo, publisher, c.peer, c.tenant)
+		handler, err = authorityhttp.NewGuardedPublicationHandler(repo, publisher, c.peer, c.tenant, readGuard)
 		if err != nil {
 			return err
 		}
@@ -126,10 +134,10 @@ func serve(ctx context.Context, c config) error {
 			mux := http.NewServeMux()
 			mux.Handle(authorityhttp.GuardCapabilityPath, readOnlyGuard)
 			mux.Handle(authorityhttp.GuardProtectedWorkspacePath, protectedGuard)
-			guardHandler = mux
+			guardHandler = requireAuthorityReadRole(mux, readGuard)
 		}
 	} else {
-		handler, err = authorityhttp.NewHandler(repo, c.peer, c.tenant)
+		handler, err = authorityhttp.NewGuardedHandler(repo, c.peer, c.tenant, readGuard)
 		if err != nil {
 			return err
 		}
@@ -182,6 +190,19 @@ func serve(ctx context.Context, c config) error {
 		}
 		return nil
 	}
+}
+
+// requireAuthorityReadRole prevents a new Guard route from bypassing
+ // the already-required fresh dedicated PostgreSQL reader-role check.
+func requireAuthorityReadRole(next http.Handler, check func(context.Context) error) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if next == nil || check == nil || check(r.Context()) != nil {
+			w.Header().Set("Cache-Control", "no-store")
+			http.Error(w, "authority database role unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func main() {

@@ -87,6 +87,8 @@ jobs:
           PGPASSWORD: acp-test-only
         run: |
           psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE acp_golden'
+          # Reject the default PUBLIC TEMP privilege for this dedicated reader database.
+          psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 -c 'REVOKE TEMPORARY ON DATABASE acp_golden FROM PUBLIC'
           psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE runtime_golden'
           psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE decision_golden'
       - name: Compile actual ACP authority API
