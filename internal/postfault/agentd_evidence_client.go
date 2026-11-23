@@ -137,6 +137,9 @@ func (c AgentDEvidenceClient) Read(ctx context.Context, ref AgentDWaitRef,
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
+	// Force an explicit identity request so Go's default Transport cannot
+	// transparently decompress gzip and erase the response's wire encoding.
+	req.Header.Set("Accept-Encoding", "identity")
 	response, err := c.httpClient().Do(req)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -145,7 +148,9 @@ func (c AgentDEvidenceClient) Read(ctx context.Context, ref AgentDWaitRef,
 		return empty, ErrAgentDEvidenceUnavailable
 	}
 	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
+	if response.StatusCode != http.StatusOK || response.Uncompressed {
+		// A caller-supplied Transport may have already decoded wire bytes.
+		// Never accept bytes whose original Content-Encoding was hidden.
 		return empty, ErrAgentDEvidenceUnavailable
 	}
 	mediaType, _, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
