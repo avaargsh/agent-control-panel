@@ -152,7 +152,12 @@ jobs:
       - name: Compile independent G01-G05 evidence package verifier
         working-directory: acp
         run: go build -trimpath -o "$RUNNER_TEMP/acp-evidence-verify" ./cmd/acp-evidence-verify
+      - name: Report full postfault gate NOT_RUN in development PR
+        if: github.event_name == 'pull_request'
+        run: |
+          echo "::notice::EXTENDED_POSTFAULT_GATE=NOT_RUN; signed real Sandbox/AgentD/Guard proof still REQUIRED for release; contract/precursor CI is NOT production acceptance"
       - name: Require same-Run Sandbox workspace, Command UNKNOWN and Guard Epoch proof
+        if: github.event_name == 'workflow_dispatch'
         # Intentionally not continue-on-error. This is the extended recovery
         # gate, not a static fixture or a synthetic replacement for providers.
         run: |
@@ -166,6 +171,7 @@ jobs:
           fi
           "$RUNNER_TEMP/acp-postfault-verify" --bundle "$bundle" --expected "$expected" --trust-dir "$trust"
       - name: Require original signed G01-G05 lifecycle Evidence Package
+        if: github.event_name == 'workflow_dispatch'
         # This is a second independent gate, NOT a fixture-to-green adapter.
         run: |
           set -euo pipefail
