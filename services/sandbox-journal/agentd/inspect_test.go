@@ -27,7 +27,13 @@ func testDatabase(t *testing.T) *pgxpool.Pool {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
-	for _, name := range []string{"0013_agentd_attempt_terminal.sql", "0014_agentd_inspect_events.sql", "0015_agentd_evidence_reader_rls.sql", "0016_agentd_reader_login_oid_fence.sql"} {
+	for _, name := range []string{
+		"0013_agentd_attempt_terminal.sql",
+		"0014_agentd_inspect_events.sql",
+		"0015_agentd_evidence_reader_rls.sql",
+		"0016_agentd_reader_login_oid_fence.sql",
+		"0017_agentd_reader_database_temp_fence.sql",
+	} {
 		raw, err := os.ReadFile(filepath.Join("..", "migrations", name))
 		if err != nil {
 			t.Fatal(err)

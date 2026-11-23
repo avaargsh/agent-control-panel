@@ -147,4 +147,27 @@ func TestAgentDEvidenceReaderOIDUpgradeRequiresExplicitReenrollment(t *testing.T
 		loginName).Scan(&boundOID, &tenant); err != nil || boundOID != replacementOID || tenant != "tenant-new" {
 		t.Fatalf("fresh enrollment has wrong authenticated identity: oid=%d tenant=%q err=%v", boundOID, tenant, err)
 	}
+	// Historical 0015 and 0016 must remain intact. A separate forward-only
+	// migration closes PostgreSQL's PUBLIC TEMP privilege in the isolated
+	// database, including an actual 0015 -> 0016 -> 0017 upgrade path.
+	if _, err := upgradePool.Exec(ctx, "GRANT TEMPORARY ON DATABASE "+qDB+" TO PUBLIC"); err != nil {
+		t.Fatal(err)
+	}
+	var tempAllowed bool
+	if err := upgradePool.QueryRow(ctx,
+		"SELECT has_database_privilege($1::name, current_database(), 'TEMP')", loginName).
+		Scan(&tempAllowed); err != nil || !tempAllowed {
+		t.Fatalf("upgrade fixture lacks pre-0017 PUBLIC TEMP privilege: allowed=%v err=%v", tempAllowed, err)
+	}
+	if err := apply("0017_agentd_reader_database_temp_fence.sql"); err != nil {
+		t.Fatalf("forward-only TEMP revocation migration failed: %v", err)
+	}
+	if err := upgradePool.QueryRow(ctx,
+		"SELECT has_database_privilege($1::name, current_database(), 'TEMP')", loginName).
+		Scan(&tempAllowed); err != nil || tempAllowed {
+		t.Fatalf("upgrade still lets reader create TEMP objects: allowed=%v err=%v", tempAllowed, err)
+	}
+	if err := apply("0017_agentd_reader_database_temp_fence.sql"); err != nil {
+		t.Fatalf("forward-only migration replay was not idempotent: %v", err)
+	}
 }
