@@ -32,16 +32,17 @@ import (
 // invoking the HTTP handler/CLI inside the test runner. All authorities are
 // disposable except the read-only public GitHub source.
 type liveGoalProcessInput struct {
-	DSN            string
-	Schema         string
-	Issuer         string
-	IssuerCA       string
-	ResourceSecret string
-	Bearer         string
-	Manifest       issuegoal.Manifest
-	Prepared       []byte
-	RequestDigest  string
-	Pool           *pgxpool.Pool
+	DSN             string
+	Schema          string
+	Issuer          string
+	IssuerCA        string
+	ResourceSecret  string
+	Bearer          string
+	GitHubReadToken string
+	Manifest        issuegoal.Manifest
+	Prepared        []byte
+	RequestDigest   string
+	Pool            *pgxpool.Pool
 }
 
 func runLiveGoalProcessCLI(t *testing.T, ctx context.Context, in liveGoalProcessInput) {
@@ -98,6 +99,7 @@ func runLiveGoalProcessCLI(t *testing.T, ctx context.Context, in liveGoalProcess
 	keyFile := write("goal-server.key", pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}), 0600)
 	CAFile := write("goal-server-ca.pem", certPEM, 0600)
 	tokenFile := write("goal-token", []byte(in.Bearer+"\n"), 0600)
+	githubReadFile := write("github-read-token", []byte(in.GitHubReadToken+"\n"), 0600)
 	secretFile := write("introspection-secret", []byte(in.ResourceSecret+"\n"), 0600)
 	proposalFile := write("prepared-goal.json", in.Prepared, 0600)
 
@@ -131,13 +133,26 @@ func runLiveGoalProcessCLI(t *testing.T, ctx context.Context, in liveGoalProcess
 		t.Fatal("disposable Goal API TLS CA unusable")
 	}
 
+	// Do not propagate live GitHub/Keycloak tokens as environment variables
+	// to either child process. Each receives only its own private file path.
+	childEnv := make([]string, 0, len(os.Environ()))
+	for _, variable := range os.Environ() {
+		key, _, _ := strings.Cut(variable, "=")
+		switch key {
+		case "ACP_REAL_GITHUB_READ_TOKEN", "GITHUB_TOKEN", "GH_TOKEN",
+			"ACP_REAL_IDP_SECRET", "ACP_REAL_RUNNER_SECRET":
+			continue
+		}
+		childEnv = append(childEnv, variable)
+	}
 	command := exec.CommandContext(ctx, apiBin)
 	var apiStdout, apiStderr bytes.Buffer
 	command.Stdout = &apiStdout
 	command.Stderr = &apiStderr
-	command.Env = append(os.Environ(),
+	command.Env = append(childEnv,
 		"ACP_GOAL_ENV=test",
 		"ACP_GOAL_ALLOW_UNPROTECTED_TEST_BRANCH=true",
+		"ACP_GOAL_GITHUB_READ_TOKEN_FILE="+githubReadFile,
 		"ACP_GOAL_LISTEN_ADDR="+address,
 		"ACP_GOAL_TLS_CERT_FILE="+certFile,
 		"ACP_GOAL_TLS_KEY_FILE="+keyFile,
@@ -213,10 +228,12 @@ func runLiveGoalProcessCLI(t *testing.T, ctx context.Context, in liveGoalProcess
 		defer cancel()
 		cli := exec.CommandContext(cliCtx, cliBin, "submit", "--file", proposalFile,
 			"--url", endpoint, "--token-file", tokenFile, "--ca-file", CAFile)
+		cli.Env = childEnv
 		var output, diagnostics bytes.Buffer
 		cli.Stdout, cli.Stderr = &output, &diagnostics
 		err := cli.Run()
-		if strings.Contains(output.String(), in.Bearer) || strings.Contains(diagnostics.String(), in.Bearer) {
+		if strings.Contains(output.String(), in.Bearer) || strings.Contains(diagnostics.String(), in.Bearer) ||
+			strings.Contains(output.String(), in.GitHubReadToken) || strings.Contains(diagnostics.String(), in.GitHubReadToken) {
 			t.Fatal("operator CLI leaked disposable OAuth bearer")
 		}
 		if err != nil {
