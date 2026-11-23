@@ -4,12 +4,16 @@
 package main
 
 import (
+	"context"
 	"crypto/ed25519"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,15 +24,24 @@ import (
 
 const maxBundleBytes = 128 << 10
 
-const expectedBindingVersion = "acp.postfault-expected/v1"
+const expectedBindingVersion = "acp.postfault-expected/v2"
 
 // The expected binding must be read independently from the actual ACP/Runtime
 // authority and fault injector, not copied from the submitted bundle.
+type agentDHeadBinding struct {
+	InspectCount   uint64 `json:"inspect_count"`
+	JournalVersion uint64 `json:"journal_version"`
+	Digest         string `json:"digest"`
+}
+
 type expectedBinding struct {
-	Schema  string            `json:"schema"`
-	Subject postfault.Subject `json:"subject"`
-	FaultID string            `json:"fault_id"`
-	FaultAt time.Time         `json:"fault_at"`
+	Schema                 string                   `json:"schema"`
+	Subject                postfault.Subject        `json:"subject"`
+	FaultID                string                   `json:"fault_id"`
+	FaultAt                time.Time                `json:"fault_at"`
+	AgentDRef              *postfault.AgentDWaitRef `json:"agentd_ref"`
+	AgentDGuardOperationID string                   `json:"agentd_guard_operation_id"`
+	AgentDHead             *agentDHeadBinding       `json:"agentd_trusted_head"`
 }
 
 func matchesExpected(bundle postfault.Bundle, expected expectedBinding) error {
@@ -45,18 +58,26 @@ func main() {
 		fmt.Fprintln(os.Stderr, "POSTFAULT RECOVERY BLOCKED:", err)
 		os.Exit(1)
 	}
-	fmt.Println("POSTFAULT RECOVERY VERIFIED: signed cross-authority continuity contract satisfied")
+	fmt.Println("POSTFAULT RECOVERY VERIFIED: signed cross-authority continuity and original AgentD source chain satisfied")
 }
 
 func run(args []string) error {
 	flags := flag.NewFlagSet("acp-postfault-verify", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	bundlePath := flags.String("bundle", "", "externally signed recovery bundle")
-	expectedPath := flags.String("expected", "", "independent ACP/Runtime same-Run and injected-fault binding")
+	expectedPath := flags.String("expected", "", "original ACP/Runtime/AgentD same-Run binding and pinned Inspect Head")
+	headAcceptancePath := flags.String("head-acceptance", "", "independently signed Run/Guard/AgentD Head acceptance envelope")
 	trustDir := flags.String("trust-dir", "", "out-of-band trusted authority public keys")
+	agentDEndpoint := flags.String("agentd-evidence-endpoint", "", "trusted HTTPS AgentD evidence endpoint")
+	agentDClientCert := flags.String("agentd-client-cert", "", "per-tenant mTLS client certificate PEM")
+	agentDClientKey := flags.String("agentd-client-key", "", "per-tenant mTLS client private key PEM (0600)")
+	agentDServerCA := flags.String("agentd-server-ca", "", "trusted AgentD HTTPS server CA PEM")
+	agentDServerName := flags.String("agentd-server-name", "", "expected AgentD HTTPS server certificate name")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 ||
-		*bundlePath == "" || *expectedPath == "" || *trustDir == "" {
-		return errors.New("requires --bundle, --expected and --trust-dir; absence is not a PASS")
+		*bundlePath == "" || *expectedPath == "" || *headAcceptancePath == "" || *trustDir == "" ||
+		*agentDEndpoint == "" || *agentDClientCert == "" || *agentDClientKey == "" ||
+		*agentDServerCA == "" || *agentDServerName == "" {
+		return errors.New("requires bundle, expected binding, independently signed Head acceptance, trust keys and AgentD mTLS endpoint/certificate/CA/server-name; absence is not a PASS")
 	}
 	data, err := privateBoundedInput(*bundlePath)
 	if err != nil || len(data) > maxBundleBytes {
@@ -72,8 +93,15 @@ func run(args []string) error {
 	}
 	var expected expectedBinding
 	if !postfault.StrictDecode(bindingBytes, &expected) ||
-		expected.Schema != expectedBindingVersion || expected.FaultID == "" || expected.FaultAt.IsZero() {
-		return errors.New("independent authoritative Run/fault binding is invalid")
+		expected.Schema != expectedBindingVersion || expected.FaultID == "" || expected.FaultAt.IsZero() ||
+		expected.AgentDRef == nil || expected.AgentDGuardOperationID == "" ||
+		expected.AgentDHead == nil || expected.AgentDHead.InspectCount == 0 ||
+		expected.AgentDHead.JournalVersion != expected.AgentDHead.InspectCount ||
+		expected.AgentDHead.Digest == "" ||
+		expected.AgentDRef.TenantID != expected.Subject.TenantID ||
+		expected.AgentDRef.RunID != expected.Subject.RunID ||
+		expected.AgentDGuardOperationID != expected.Subject.GuardOperationID {
+		return errors.New("independent authoritative Run/fault/AgentD source binding is invalid")
 	}
 	if err := matchesExpected(bundle, expected); err != nil {
 		return err
@@ -91,10 +119,103 @@ func run(args []string) error {
 		}
 		keys[authority] = ed25519.PublicKey(raw)
 	}
-	if err := postfault.Verify(bundle, keys, time.Now().UTC()); err != nil {
+	now := time.Now().UTC()
+	// The expected Head is a claim until an INDEPENDENT acceptor signs the
+	// exact original Run/Guard/Permit/Attempt/Head. A copied AgentD response
+	// or locally edited expected JSON must never become its own trust anchor.
+	acceptanceBytes, err := privateBoundedInput(*headAcceptancePath)
+	if err != nil || len(acceptanceBytes) > maxHeadAcceptanceBytes {
+		return errHeadAcceptance
+	}
+	headKeyBytes, err := privateBoundedInput(filepath.Join(*trustDir, "head-acceptor.pub"))
+	if err != nil || len(headKeyBytes) > 128 {
+		return errHeadAcceptance
+	}
+	headKey, err := hex.DecodeString(strings.TrimSpace(string(headKeyBytes)))
+	if err != nil || len(headKey) != ed25519.PublicKeySize {
+		return errHeadAcceptance
+	}
+	if err := verifyHeadAcceptance(acceptanceBytes, expected, ed25519.PublicKey(headKey), keys, now); err != nil {
 		return err
 	}
-	return nil
+	if err := postfault.Verify(bundle, keys, now); err != nil {
+		return err
+	}
+	credentials, err := newAgentDEvidenceTLSConfig(*agentDClientCert, *agentDClientKey,
+		*agentDServerCA, *agentDServerName)
+	if err != nil {
+		return errors.New("per-tenant AgentD mTLS client configuration unavailable")
+	}
+	expectedWait := postfault.ExpectedAgentDWait{
+		Ref: *expected.AgentDRef, GuardOperationID: expected.AgentDGuardOperationID,
+	}
+	trustedHead := postfault.TrustedAgentDInspectHead{
+		InspectCount:   expected.AgentDHead.InspectCount,
+		JournalVersion: expected.AgentDHead.JournalVersion,
+		Digest:         expected.AgentDHead.Digest,
+	}
+	return verifyBoundAgentDEvidence(context.Background(), *agentDEndpoint,
+		credentials, bundle, keys, expectedWait, trustedHead, now)
+}
+
+// verifyBoundAgentDEvidence preserves the original CLI base-URL contract,
+// while enforcing the SAME mandatory mTLS identity boundary as the G05
+// verifier library. Never fall back to the raw AgentDEvidenceClient transport.
+func verifyBoundAgentDEvidence(ctx context.Context, endpoint string, credentials *tls.Config,
+	bundle postfault.Bundle, keys map[string]ed25519.PublicKey,
+	expected postfault.ExpectedAgentDWait, head postfault.TrustedAgentDInspectHead,
+	now time.Time) error {
+	uri, err := url.Parse(endpoint)
+	if err != nil || uri.Scheme != "https" || uri.Host == "" || uri.Hostname() == "" ||
+		uri.User != nil || uri.RawQuery != "" || uri.ForceQuery ||
+		uri.Fragment != "" || uri.Opaque != "" || uri.RawPath != "" ||
+		(uri.Path != "" && uri.Path != "/" && uri.Path != postfault.AgentDEvidenceReadPath) {
+		return errors.New("untrusted AgentD evidence endpoint")
+	}
+	uri.Path = postfault.AgentDEvidenceReadPath
+	return postfault.FetchAndVerifyAgentDEvidence(ctx, uri.String(), credentials,
+		bundle, keys, expected, head, now)
+}
+
+func newAgentDEvidenceTLSConfig(certPath, keyPath, caPath, serverName string) (*tls.Config, error) {
+	if strings.TrimSpace(serverName) == "" || strings.TrimSpace(serverName) != serverName {
+		return nil, errors.New("invalid AgentD TLS server name")
+	}
+	certPEM, err := privateBoundedInput(certPath)
+	if err != nil {
+		return nil, errors.New("AgentD client certificate unavailable")
+	}
+	keyPEM, err := privateSecretInput(keyPath)
+	if err != nil {
+		return nil, errors.New("AgentD client private key unavailable")
+	}
+	certificate, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		return nil, errors.New("AgentD mTLS client certificate/key invalid")
+	}
+	caPEM, err := privateBoundedInput(caPath)
+	if err != nil {
+		return nil, errors.New("AgentD server CA unavailable")
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(caPEM) {
+		return nil, errors.New("AgentD server CA invalid")
+	}
+	return &tls.Config{
+		MinVersion:   tls.VersionTLS13,
+		RootCAs:      roots,
+		Certificates: []tls.Certificate{certificate},
+		ServerName:   serverName,
+	}, nil
+}
+
+func privateSecretInput(path string) ([]byte, error) {
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 ||
+		info.Size() <= 0 || info.Size() > maxBundleBytes {
+		return nil, errors.New("private key file unavailable or permissions too broad")
+	}
+	return privateBoundedInput(path)
 }
 
 func privateBoundedInput(path string) ([]byte, error) {

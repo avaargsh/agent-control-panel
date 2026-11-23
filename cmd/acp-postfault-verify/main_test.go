@@ -74,7 +74,7 @@ func TestPostfaultCLIRejectsDuplicateBundleAndExpectedKeys(t *testing.T) {
 			name:         "escaped_duplicate_expected_schema",
 			bundleJSON:   bundleOK,
 			expectedJSON: `{"\u0073chema":"untrusted","schema":"acp.postfault-expected/v1","subject":{},"fault_id":"worker-fault-1","fault_at":"2026-11-22T04:00:00Z"}`,
-			wantError:    "independent authoritative Run/fault binding is invalid",
+			wantError:    "independent authoritative Run/fault/AgentD source binding is invalid",
 		},
 	}
 	for _, tc := range cases {
@@ -87,7 +87,18 @@ func TestPostfaultCLIRejectsDuplicateBundleAndExpectedKeys(t *testing.T) {
 			if err := os.WriteFile(expected, []byte(tc.expectedJSON), 0600); err != nil {
 				t.Fatal(err)
 			}
-			err := run([]string{"--bundle", bundle, "--expected", expected, "--trust-dir", root})
+			// Supply all required mTLS flag names so duplicate JSON validation
+			// is reached before trust-key or client-certificate lookup.
+			err := run([]string{
+				"--bundle", bundle, "--expected", expected,
+				"--head-acceptance", filepath.Join(root, "missing-head-acceptance.json"),
+				"--trust-dir", root,
+				"--agentd-evidence-endpoint", "https://127.0.0.1:9443",
+				"--agentd-client-cert", filepath.Join(root, "not-used-client.pem"),
+				"--agentd-client-key", filepath.Join(root, "not-used-client.key"),
+				"--agentd-server-ca", filepath.Join(root, "not-used-ca.pem"),
+				"--agentd-server-name", "agentd.test",
+			})
 			if err == nil || !strings.Contains(err.Error(), tc.wantError) {
 				t.Fatalf("duplicate input was not rejected at the parsing boundary: %v", err)
 			}
