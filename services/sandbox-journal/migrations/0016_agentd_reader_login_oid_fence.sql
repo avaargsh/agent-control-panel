@@ -6,16 +6,28 @@ BEGIN;
 ALTER TABLE public.sandbox_agentd_evidence_reader_tenants
     ADD COLUMN IF NOT EXISTS login_oid oid;
 
--- For an existing owner-managed binding, an absent or unsafe LOGIN cannot
--- silently inherit another principal's identity. Fail the whole migration
--- instead of deleting, bypassing or inventing a mapping.
-UPDATE public.sandbox_agentd_evidence_reader_tenants AS b
-   SET login_oid = r.oid
-  FROM pg_catalog.pg_roles AS r
- WHERE b.login_role = r.rolname
-   AND r.rolcanlogin
-   AND NOT r.rolsuper
-   AND NOT r.rolbypassrls;
+-- 0015 stored only a LOGIN name, not its original role OID. Looking up
+-- pg_roles NOW cannot prove that an old login was not dropped and recreated
+-- under the same name. Never auto-backfill that untrusted name-only mapping.
+--
+-- A trusted owner must stop source readers, revoke legacy bindings under
+-- the original 0015 schema, run 0016, then explicitly re-enroll each LOGIN
+-- with its freshly verified OID and tenant. A failed upgrade rolls back the
+-- ADD COLUMN as well; no partially upgraded authorization is acceptable.
+-- On an already-upgraded schema, non-null OIDs support safe idempotent replay.
+DO $agentd_reader_upgrade$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+          FROM public.sandbox_agentd_evidence_reader_tenants
+         WHERE login_oid IS NULL
+    ) THEN
+        RAISE EXCEPTION
+            'AgentD 0016 blocked: unverifiable legacy LOGIN binding; owner must revoke and re-enroll'
+            USING ERRCODE = '23514';
+    END IF;
+END
+$agentd_reader_upgrade$;
 ALTER TABLE public.sandbox_agentd_evidence_reader_tenants
     ALTER COLUMN login_oid SET NOT NULL;
 
