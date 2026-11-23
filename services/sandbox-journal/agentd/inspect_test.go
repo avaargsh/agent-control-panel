@@ -273,7 +273,6 @@ func TestPermitUnavailableOrUnknownAttemptCannotMintWaitReceipt(t *testing.T) {
 	}
 }
 
-
 func TestLegacyAgentDEvidenceReaderMigrationIsByteImmutable(t *testing.T) {
 	// Existing installations may have already applied 0015 before the
 	// separate 0016 OID-fencing migration. Never rewrite 0015 to add a
@@ -282,7 +281,7 @@ func TestLegacyAgentDEvidenceReaderMigrationIsByteImmutable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	prefix := fmt.Sprintf("blob %d\\x00", len(raw))
+	prefix := fmt.Sprintf("blob %d%c", len(raw), byte(0))
 	sum := sha1.Sum(append([]byte(prefix), raw...))
 	const originalGitBlob = "370318cae5deb5357eeccc951d676a5af357caeb"
 	if got := fmt.Sprintf("%x", sum); got != originalGitBlob {
