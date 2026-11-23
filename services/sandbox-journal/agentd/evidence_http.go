@@ -76,7 +76,14 @@ func decodeReadRequest(r *http.Request) (EvidenceReadRequest, int) {
 	if r.Body == nil {
 		return req, http.StatusBadRequest
 	}
-	contentType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	// Header.Get uses only the first value, so a second conflicting
+	// Content-Type could reach the signed original source export.
+	// Require exactly one explicit media type before the Head lookup or DB.
+	contentTypes := r.Header.Values("Content-Type")
+	if len(contentTypes) != 1 {
+		return req, http.StatusUnsupportedMediaType
+	}
+	contentType, _, err := mime.ParseMediaType(contentTypes[0])
 	if err != nil || contentType != "application/json" {
 		return req, http.StatusUnsupportedMediaType
 	}
