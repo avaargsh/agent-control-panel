@@ -223,3 +223,23 @@ func TestAgentDEvidenceClientDoesNotFollowRedirects(t *testing.T) {
 		t.Fatal("evidence client followed or accepted an HTTP redirect")
 	}
 }
+
+func TestAgentDEvidenceClientExportsCanonicalLowercaseHeadKey(t *testing.T) {
+	// The authoritative AgentD HTTP exporter declares json:"head" on its
+	// EvidenceReadResponse. Uppercase "Head" changes canonical bytes, so
+	// the ACP strict response re-marshaler would reject a legitimate source.
+	raw, err := json.Marshal(AgentDEvidenceReadResponse{
+		Schema: AgentDEvidenceReadSchema,
+		Head: TrustedAgentDInspectHead{
+			InspectCount: 1, JournalVersion: 1,
+			Digest: "sha256:" + strings.Repeat("a", 64),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(raw, []byte(`"head":`)) ||
+		bytes.Contains(raw, []byte(`"Head":`)) {
+		t.Fatalf("ACP canonical source export has incorrect head field spelling: %s", raw)
+	}
+}
