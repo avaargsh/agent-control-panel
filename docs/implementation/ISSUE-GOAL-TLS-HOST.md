@@ -122,4 +122,4 @@ Expected: HTTP `201` for the first authorized request and `200` for an exact sam
 - Public GitHub Issues can change or be closed; their snapshot and pinned branch HEAD must be freshly re-observed on each authorized submission, including replay.
 - Operator must independently verify the exact HEAD SHA, authenticated GitHub logs, failure/negative matrix, database role least privilege, branch protections and a separate reviewer before promoting this candidate.
 
-Related: [HTTP handler contract](ISSUE-GOAL-HTTP.md), [input preparation](ISSUE-GOAL-PREPARE.md), [portfolio demo](PORTFOLIO-VALIDATION-DEMO.md), [PR #86](https://github.com/avaargsh/agent-control-panel/pull/86).
+Related: [HTTP handler contract](ISSUE-GOAL-HTTP.md), [input preparation](ISSUE-GOAL-PREPARE.md), [PR #86](https://github.com/avaargsh/agent-control-panel/pull/86).
