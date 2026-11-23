@@ -148,10 +148,18 @@ func submit(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 }
 
 func validGoalSubmitURL(raw string) error {
+	return validGoalLoopbackURL(raw, goalhttp.SubmitPath)
+}
+
+func validGoalStatusURL(raw string) error {
+	return validGoalLoopbackURL(raw, goalhttp.StatusPath)
+}
+
+func validGoalLoopbackURL(raw, path string) error {
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme != "https" || u.User != nil || u.Opaque != "" ||
 		u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.RawFragment != "" ||
-		u.Path != goalhttp.SubmitPath || u.RawPath != "" || u.String() != raw {
+		u.Path != path || u.RawPath != "" || u.String() != raw {
 		return errors.New("submit URL must be an exact direct HTTPS GoalSubmit endpoint")
 	}
 	ip := net.ParseIP(u.Hostname())

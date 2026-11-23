@@ -383,7 +383,11 @@ func serve(ctx context.Context, c config) error {
 	if err != nil {
 		return errors.New("GitHub source policy configuration rejected")
 	}
-	handler, err := goalhttp.NewHandler(factory, source)
+	statusLookup, err := goalhttp.NewCatalogGoalStatusLookup(repo, auth)
+	if err != nil {
+		return errors.New("Goal status authority configuration rejected")
+	}
+	handler, err := goalhttp.NewHandlerWithStatus(factory, source, statusLookup)
 	if err != nil {
 		return errors.New("Goal API handler configuration rejected")
 	}

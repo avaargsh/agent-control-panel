@@ -25,7 +25,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 
 func runWithIssueReader(args []string, stdin io.Reader, stdout, stderr io.Writer, reader issueReader) error {
 	if len(args) == 0 {
-		return errors.New("usage: acp-goal prepare | snapshot | inspect | submit")
+		return errors.New("usage: acp-goal prepare | snapshot | inspect | submit | status")
 	}
 	switch args[0] {
 	case "prepare":
@@ -34,6 +34,8 @@ func runWithIssueReader(args []string, stdin io.Reader, stdout, stderr io.Writer
 		return snapshot(args, stdout, stderr, reader)
 	case "submit":
 		return submit(args, stdin, stdout, stderr)
+	case "status":
+		return status(args, stdin, stdout, stderr)
 	case "inspect":
 		baselines, ok := reader.(baselineReader)
 		if !ok {
