@@ -55,7 +55,7 @@ These generate **test-only signing keys** and validate signature/tamper/identity
 
 ## Mandatory CI fail-closed behavior
 
-The existing acp-temporal-golden-path.yml now builds the verifier **after** the existing real Worker/Decision recovery stage. Its final required step reads the same-job RUNNER_TEMP independently accepted expected Run/fault binding, signed postfault proof and external trust directory. If no real producers have supplied both, the workflow **fails with an explicit BLOCKED error**. There is no continue-on-error and no synthetic artifact generator.
+During open-development pull requests, `acp-temporal-golden-path.yml` runs the actual same-Run Worker/Decision/Guard read-only checks, local SIGKILL negative tests and compiles independent verifiers. It prints `EXTENDED_POSTFAULT_GATE=NOT_RUN`; a green PR job is **development contract coverage only**, never full G01–G05 acceptance. The complete signed postfault and lifecycle checks are invoked on `workflow_dispatch` and still **fail CLOSED** with BLOCKED if real owner-issued same-Run proof, independent expected binding or trust anchors are missing. They are not `continue-on-error`, and no synthetic artifact generator is supplied. Production promotion MUST require explicit success of those independent full checks, not inference from green development CI.
 
 At the time of this change the pinned workflow does not build SandboxService/AgentD nor an issuing Guard Permit/PEP, so the expanded full Golden Path **cannot pass**. The legacy Workflow/Decision step may still pass on its own; that is not full business recovery acceptance.
 
@@ -67,10 +67,20 @@ At the time of this change the pinned workflow does not build SandboxService/Age
 - ACP Issue #71: scoped Credential Broker and default-deny egress; no token in workspace, stdout or Temporal history.
 - ACP Issue #72: independent Verifier/evidence signatures and authorized resource release, provider UID absence; human control for GitHub write effects.
 - EngageGuard owner: actual Scoped Permit, issuer and executor PEP with fresh postfault authorization and revocation checks. A read-only Guard mTLS client is not enough.
-- All external repositories and images must be pinned to exact SHA/digest, and a separate reviewer must validate the trust roots, fault transcript and complete negative matrix before any main or production promotion.
+- All external repositories and images must be pinned to exact SHA/digest, and a separate reviewer must validate the trust roots, fault transcript and complete negative matrix before protected-effect enablement or production promotion.
 
 **Claim boundary:** A Green contract unit suite means the *checker* works. Only externally signed real Sandbox/AgentD/Guard evidence for the same Run can turn the **full** Golden Path GREEN.
 
+
+## Pinned Sandbox PostgreSQL source boundary (PR #91 ↔ Draft #102)
+
+The `sandbox-db-boundary` job in [the local postfault CI](../../.github/workflows/postfault-local-precursor.yml) checks out **two distinct exact source commits**: its own current #91 HEAD and the standalone Sandbox Journal from Draft #102 at `7abe480007692e370c790957baf12acf923b36c6`. The checkout action is also SHA-pinned. It verifies both source HEADs and Go module checksums, runs #102's real disposable **PostgreSQL 16** migrations/least-privileged `sandboxctl inspect` demo, and securely tears down the one-off Docker database. This is **cross-source execution with actual SQL and authenticated reader**, not an in-memory or source-signature fixture.
+
+The test parses the read-only JSON from PostgreSQL and asserts that the Lease and Command have exactly the same fixture Tenant, Run and Runtime Attempt, the lease state is `WAITING_FOR_PERMIT`, the command is `PERMIT_UNAVAILABLE`, the source label is `UNATTESTED_DB_SNAPSHOT` and all dispatch, retry, success and release authority fields remain false. It then passes the actual raw snapshot to `acp-postfault-verify` as a proposed signed bundle and **requires explicit rejection** as an invalid recovery bundle. This prevents a successful local database inspection from being silently promoted into an AgentD exit or workspace persistence receipt. CI prints `SANDBOX_SOURCE_BOUNDARY=PASS; REAL_SIGNED_RUNTIME_SANDBOX_AGENTD_GUARD_PROOF=NOT_VERIFIED` only when the negative boundary holds.
+
+**Critical scope limits:** This exercises a *separate synthetic pre-Permit Run* from #102, not the canonical live Run in the Temporal Golden Path. It creates no SandboxLease, Guard Permit, AgentD side effect, live `UNKNOWN` inspection, terminal receipt or physical release. Source pinning fixes the repository tree but the demo's `postgres:16-alpine` image is still tag-based, so exact image digest provenance must be established before treating the experiment as fully reproducible production evidence. The current #102 branch is Draft. **The full Golden Path's missing independently signed, same-Run Sandbox/AgentD/Guard/Runtime producers remains mandatory BLOCKED.**
+
+The next authority-producing integration must use owner-controlled service credentials and an independently provisioned trust root to bind an actual Sandbox UID/generation/workspace readback and an **original, durable `UNKNOWN` CommandID/AttemptID** to a new authenticated `InspectCommand` result without repeating dispatch. AgentD must durably own the terminal receipt/journal revision; no ACP test fixture, `sandboxctl` snapshot, model decision or client-provided signature may substitute.
 
 ## Local physical workspace crash precursor (PR #92)
 
@@ -86,7 +96,7 @@ Reproduce this **local-only** precursor using:
 go test -race -count=1 -v -run '^TestPhysicalWorkspace(SurvivesWorkerSIGKILL|RecoveryRejectsCorruptionAndStaleBinding)$' ./internal/postfault
 ```
 
-The existing ACP Temporal Golden Path CI now also invokes this specific test explicitly **before** the mandatory source-signed full recovery gate. A local PASS does **not** create Sandbox/AgentD/Guard authority receipts, attest a KVM/Pod mount, prove UID lease renewal, reconcile a real externally executed command, or revalidate a genuine Guard Permit. The final step must still report **BLOCKED** until #70/#71/#72 deliver those real producers.
+The existing ACP Temporal Golden Path CI now also invokes this specific test explicitly **before** the mandatory source-signed full recovery gate. A local PASS does **not** create Sandbox/AgentD/Guard authority receipts, attest a KVM/Pod mount, prove UID lease renewal, reconcile a real externally executed command, or revalidate a genuine Guard Permit. The separate full-evidence dispatch must still report **BLOCKED** until #70/#71/#72 deliver those real producers.
 
 
 ### Disposable local filesystem boundary regressions (2026-11-22)
@@ -105,4 +115,4 @@ Reproduce:
 go test -race -count=1 -v -run '^(TestLocalUnknownCommandAfterSIGKILLRemainsBlocked|TestLocalUnknownCommandRejectsForgedReconciliation)$' ./internal/postfault
 ```
 
-**Do not promote this precursor as a full recovery proof.** The local file named journal is test-generated and unauthenticated; actual external process exit may have occurred, but no independent AgentD/Guard signed terminal receipt exists. It proves the conservative rule: visible side effects following a lost ACK do **not** authorize blind retry or success declaration. Production requires a real SandboxService-owned journal and separately authenticated AgentD InspectCommand response for the same Run, fresh Guard epoch/Permit and independent evidence authority. The Golden Path's mandatory final step remains **BLOCKED** until these are available.
+**Do not promote this precursor as a full recovery proof.** The local file named journal is test-generated and unauthenticated; actual external process exit may have occurred, but no independent AgentD/Guard signed terminal receipt exists. It proves the conservative rule: visible side effects following a lost ACK do **not** authorize blind retry or success declaration. Production requires a real SandboxService-owned journal and separately authenticated AgentD InspectCommand response for the same Run, fresh Guard epoch/Permit and independent evidence authority. The full-evidence dispatch remains **BLOCKED** until these are available; PR contract checks explicitly report **NOT_RUN**.
