@@ -176,7 +176,7 @@ func TestPostfaultCLIMandatorySignedHeadGateBeforeSourceOrRecoveryCheck(t *testi
 	binding := headAcceptanceTestBinding()
 	binding.FaultAt = now.Add(-time.Hour)
 	bundle := postfault.Bundle{
-		Schema: postfault.BundleVersion,
+		Schema:  postfault.BundleVersion,
 		Subject: binding.Subject,
 		Fault: postfault.Fault{
 			ID: binding.FaultID, Kind: "worker_sigkill", At: binding.FaultAt,
@@ -253,9 +253,9 @@ func TestPostfaultCLIMandatorySignedHeadGateBeforeSourceOrRecoveryCheck(t *testi
 	}
 	edited := binding
 	edited.AgentDHead = &agentDHeadBinding{
-		InspectCount: binding.AgentDHead.InspectCount,
+		InspectCount:   binding.AgentDHead.InspectCount,
 		JournalVersion: binding.AgentDHead.JournalVersion,
-		Digest: "sha256:" + strings.Repeat("f", 64),
+		Digest:         "sha256:" + strings.Repeat("f", 64),
 	}
 	writeJSON(expectedFile, edited)
 	assertUntrusted("copied or altered Head in locally supplied expected file")
