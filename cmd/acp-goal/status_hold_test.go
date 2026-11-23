@@ -108,13 +108,21 @@ func TestGoalStatusCLIRejectsUnboundOrUnsafeHoldWithoutNetwork(t *testing.T) {
 		}},
 		{"symlink-record", func(t *testing.T, path string) {
 			data := mustReadHold(t, path)
-			if err := os.Remove(path); err != nil { t.Fatal(err) }
+			if err := os.Remove(path); err != nil {
+				t.Fatal(err)
+			}
 			target := filepath.Join(filepath.Dir(path), "target.json")
-			if err := os.WriteFile(target, data, 0600); err != nil { t.Fatal(err) }
-			if err := os.Symlink(target, path); err != nil { t.Fatal(err) }
+			if err := os.WriteFile(target, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, path); err != nil {
+				t.Fatal(err)
+			}
 		}},
 		{"missing-record", func(t *testing.T, path string) {
-			if err := os.Remove(path); err != nil { t.Fatal(err) }
+			if err := os.Remove(path); err != nil {
+				t.Fatal(err)
+			}
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -141,23 +149,37 @@ func TestGoalStatusCLIRejectsUnboundOrUnsafeHoldWithoutNetwork(t *testing.T) {
 func changeHoldJSON(t *testing.T, path, key string, value any) {
 	t.Helper()
 	var obj map[string]any
-	if err := json.Unmarshal(mustReadHold(t, path), &obj); err != nil { t.Fatal(err) }
+	if err := json.Unmarshal(mustReadHold(t, path), &obj); err != nil {
+		t.Fatal(err)
+	}
 	obj[key] = value
 	raw, err := json.Marshal(obj)
-	if err != nil { t.Fatal(err) }
-	if err := os.WriteFile(path, raw, 0600); err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func changeHoldTarget(t *testing.T, path, key, value string) {
 	t.Helper()
 	var obj map[string]any
-	if err := json.Unmarshal(mustReadHold(t, path), &obj); err != nil { t.Fatal(err) }
+	if err := json.Unmarshal(mustReadHold(t, path), &obj); err != nil {
+		t.Fatal(err)
+	}
 	target, ok := obj["target"].(map[string]any)
-	if !ok { t.Fatal("missing target") }
+	if !ok {
+		t.Fatal("missing target")
+	}
 	target[key] = value
 	raw, err := json.Marshal(obj)
-	if err != nil { t.Fatal(err) }
-	if err := os.WriteFile(path, raw, 0600); err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestGoalStatusCLIMatchingHoldStillPreservesUnknownOn404(t *testing.T) {
