@@ -49,6 +49,12 @@ const admissionCatalogMigrationName = "0011_admission_catalog.sql"
 const admissionOriginMigrationVersion int64 = 12
 const admissionOriginMigrationName = "0012_run_intent_admission_origin.sql"
 
+const optimizationAttemptMigrationVersion int64 = 13
+const optimizationAttemptMigrationName = "0013_optimization_verification_attempts.sql"
+
+const guardRunLookupMigrationVersion int64 = 14
+const guardRunLookupMigrationName = "0014_guard_accepted_run_lookup.sql"
+
 var (
 	ErrSchemaDrift       = errors.New("RunIntent schema migration checksum or relation drift")
 	ErrUnversionedSchema = errors.New("RunIntent schema exists without migration history")
@@ -105,6 +111,26 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 		return fmt.Errorf("verify migration ledger storage: %w", err)
 	}
 	if !ledgerDurable {
+		return ErrSchemaDrift
+	}
+
+	// A matching set of object owners is not itself an authenticated trust
+	// anchor: an out-of-band privileged actor could transfer the ledger,
+	// attempt journal and trigger function together. Migrations must run as
+	// the LOGIN that owns the ledger, not via SET ROLE or any untrusted
+	// session; session_user is the PostgreSQL-authenticated identity.
+	// A superuser could also change session authorization, so this guards
+	// accidental/coordinated delegated ownership drift, not hostile DBAs.
+	var migrationLoginOwnsLedger bool
+	if err := tx.QueryRow(ctx, `SELECT current_user=session_user AND EXISTS (
+		SELECT 1 FROM pg_class c
+		JOIN pg_roles r ON r.oid=c.relowner
+		WHERE c.oid=to_regclass('schema_migrations')
+		  AND r.rolname=session_user
+	)`).Scan(&migrationLoginOwnsLedger); err != nil {
+		return fmt.Errorf("verify authenticated migration ledger owner: %w", err)
+	}
+	if !migrationLoginOwnsLedger {
 		return ErrSchemaDrift
 	}
 
@@ -248,12 +274,22 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 		return fmt.Errorf("read embedded admission origin migration: %w", err)
 	}
 	admissionOriginChecksum := fmt.Sprintf("%x", sha256.Sum256(admissionOriginSource))
+	optimizationAttemptSource, err := migrations.FS.ReadFile(optimizationAttemptMigrationName)
+	if err != nil {
+		return fmt.Errorf("read optimization verification attempt migration: %w", err)
+	}
+	optimizationAttemptChecksum := fmt.Sprintf("%x", sha256.Sum256(optimizationAttemptSource))
+	guardRunLookupSource, err := migrations.FS.ReadFile(guardRunLookupMigrationName)
+	if err != nil {
+		return fmt.Errorf("read guarded Run lookup index migration: %w", err)
+	}
+	guardRunLookupChecksum := fmt.Sprintf("%x", sha256.Sum256(guardRunLookupSource))
 
 	rows, err := tx.Query(ctx, "SELECT version, name, checksum FROM schema_migrations")
 	if err != nil {
 		return fmt.Errorf("read schema migration history: %w", err)
 	}
-	var appliedVersion, conflictApplied, dispositionApplied, principalSnapshotApplied, capabilityLockApplied, workspaceApplied, blobStageApplied, uploadIntentApplied, gcClaimApplied, executionInputApplied, admissionCatalogApplied, admissionOriginApplied bool
+	var appliedVersion, conflictApplied, dispositionApplied, principalSnapshotApplied, capabilityLockApplied, workspaceApplied, blobStageApplied, uploadIntentApplied, gcClaimApplied, executionInputApplied, admissionCatalogApplied, admissionOriginApplied, optimizationAttemptApplied, guardRunLookupApplied bool
 	for rows.Next() {
 		var version int64
 		var name, appliedChecksum string
@@ -334,6 +370,18 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 				return ErrSchemaDrift
 			}
 			admissionOriginApplied = true
+		case optimizationAttemptMigrationVersion:
+			if name != optimizationAttemptMigrationName || appliedChecksum != optimizationAttemptChecksum || optimizationAttemptApplied {
+				rows.Close()
+				return ErrSchemaDrift
+			}
+			optimizationAttemptApplied = true
+		case guardRunLookupMigrationVersion:
+			if name != guardRunLookupMigrationName || appliedChecksum != guardRunLookupChecksum || guardRunLookupApplied {
+				rows.Close()
+				return ErrSchemaDrift
+			}
+			guardRunLookupApplied = true
 		default:
 			rows.Close()
 			return ErrSchemaDrift
@@ -354,7 +402,9 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 		gcClaimApplied && !uploadIntentApplied ||
 		executionInputApplied && !gcClaimApplied ||
 		admissionCatalogApplied && !executionInputApplied ||
-		admissionOriginApplied && !admissionCatalogApplied {
+		admissionOriginApplied && !admissionCatalogApplied ||
+		optimizationAttemptApplied && !admissionOriginApplied ||
+		guardRunLookupApplied && !optimizationAttemptApplied {
 		return ErrSchemaDrift
 	}
 
@@ -395,6 +445,12 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 		if err := ensureAdmissionOriginMigration(ctx, tx, admissionOriginApplied, admissionOriginSource, admissionOriginChecksum); err != nil {
 			return err
 		}
+		if err := ensureOptimizationAttemptMigration(ctx, tx, optimizationAttemptApplied, optimizationAttemptSource, optimizationAttemptChecksum); err != nil {
+			return err
+		}
+		if err := ensureGuardRunLookupMigration(ctx, tx, guardRunLookupApplied, guardRunLookupSource, guardRunLookupChecksum); err != nil {
+			return err
+		}
 		if err := tx.Commit(ctx); err != nil {
 			return fmt.Errorf("commit schema verification: %w", err)
 		}
@@ -424,6 +480,7 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 		OR to_regclass('admission_memberships') IS NOT NULL
 		OR to_regclass('admission_releases') IS NOT NULL
 		OR to_regclass('admission_sessions') IS NOT NULL
+		OR to_regclass('optimization_verification_attempts') IS NOT NULL
 	`).Scan(&anySchemaExists); err != nil {
 		return fmt.Errorf("inspect existing RunIntent schema: %w", err)
 	}
@@ -484,6 +541,12 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 		return err
 	}
 	if err := ensureAdmissionOriginMigration(ctx, tx, false, admissionOriginSource, admissionOriginChecksum); err != nil {
+		return err
+	}
+	if err := ensureOptimizationAttemptMigration(ctx, tx, false, optimizationAttemptSource, optimizationAttemptChecksum); err != nil {
+		return err
+	}
+	if err := ensureGuardRunLookupMigration(ctx, tx, false, guardRunLookupSource, guardRunLookupChecksum); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {

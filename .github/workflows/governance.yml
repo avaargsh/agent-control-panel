@@ -8,14 +8,18 @@ on:
       - "tests/test_pr_topology.py"
       - "scripts/check_governance.py"
       - "tests/test_governance.py"
+      - "scripts/check_p0_merge_readiness.py"
+      - "tests/test_p0_merge_readiness.py"
       - ".github/workflows/governance.yml"
       - "docs/governance/**"
   push:
-    branches: [main, governance/platform-v0.3]
+    branches: [main]
     paths:
       - "governance/**"
       - "scripts/check_governance.py"
       - "tests/test_governance.py"
+      - "scripts/check_p0_merge_readiness.py"
+      - "tests/test_p0_merge_readiness.py"
       - ".github/workflows/governance.yml"
       - "docs/governance/**"
 

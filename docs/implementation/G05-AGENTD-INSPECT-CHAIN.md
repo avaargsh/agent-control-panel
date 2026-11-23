@@ -18,6 +18,6 @@
 - Source #111 runs actual OS process SIGKILL / PostgreSQL tests, while #112's root tests use independent ephemeral test keys and signed synthetic evidence. These test suites must not be conflated into a single live same-Run end-to-end proof.
 - The provider process may have produced external side effects even after a local terminal OS Wait; inspection does not authorize retry or resource release.
 - Production still needs a dedicated authenticated AgentD inspect writer role with tenant-bound RLS, trustworthy source keys/key rotation, Guard issuer/PEP and authorization epoch fencing, consistent mTLS identity, trusted independent Head distribution, and verified Sandbox/Compute resource absence.
-- Do not mark Draft #111/#112 READY or merge `main` solely because these isolated verifiers pass CI.
+- Do not claim G01–G05 production readiness from these isolated tests. Open-development merge requires exact-head regression checks and scoped technical review; live source and release proof remain independent.
 
 Related: [ACP G05 Wait join Draft #110](https://github.com/avaargsh/agent-control-panel/pull/110), [source-owned AgentD inspect Draft #111](https://github.com/avaargsh/agent-control-panel/pull/111), [original postfault gate Draft #91](https://github.com/avaargsh/agent-control-panel/pull/91).

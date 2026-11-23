@@ -1,8 +1,8 @@
 # PostgreSQL Persistence Contract — P0
 
-Status: **transactional RunIntent/Outbox repository and generic Outbox dispatcher implemented; broker adapter, Inbox worker and Runtime integration remain pending**.
+The PostgreSQL foundation includes transactional RunIntent persistence, an [Outbox dispatcher](OUTBOX-PUBLISHER.md), and an [ordered Inbox consumer](INBOX-CONSUMER.md).
 
-This migration persists only Control Plane-owned RunIntent and messaging delivery state. It deliberately does not create a \`runs\` table: Agent Runtime owns Run/Task/RunAttempt lifecycle and identifiers.
+The initial migration persists Control Plane-owned RunIntent and messaging delivery state. Agent Runtime owns the Run, Task, and RunAttempt lifecycle and identifiers.
 
 ## Migration
 
@@ -32,7 +32,7 @@ Expired publish leases return to retryable state. Never mark an event PUBLISHED 
 
 ## Repository implementation foundation
 
-### Implemented behavior (PR #5 — still Draft)
+### Repository behavior
 
 The Go repository foundation now provides:
 - `Repository.Create`: tenant/principal-scoped idempotency claim, RunIntent insert and `agent.run-intent.created` Outbox append in one transaction.
@@ -41,9 +41,9 @@ The Go repository foundation now provides:
 - `Repository.CompareAndSwap` locks the row, validates allowed transitions, immutable identity, optimistic version and fencing progression, then writes the transition and Outbox event atomically.
 - Outbox insert failure rolls back the state transition. PostgreSQL integration tests cover concurrent idempotency, digest and owner-metadata conflicts, CAS, transaction rollback and migration re-entry.
 - `Migrate` uses a PostgreSQL advisory lock and one transaction for schema DDL plus a version/name/SHA-256 migration ledger. It rejects changed checksums, incomplete schemas and unversioned pre-existing relations rather than silently adopting them.
-- CI runs the repository tests against PostgreSQL via `PGTEST_DSN`, in addition to parent-branch migration and tenant-isolation smoke checks.
+- CI runs the repository tests against PostgreSQL via `PGTEST_DSN`, in addition to migration and tenant-isolation smoke checks.
 
-## PostgreSQL-clock RunIntent CAS gate (stacked Draft PR #13)
+## PostgreSQL-clock RunIntent CAS gate
 
 `Repository.CompareAndSwap` validates lease lifetime using PostgreSQL's
 `clock_timestamp()` under the locked RunIntent row, then repeats the guard in
@@ -59,23 +59,13 @@ lease has expired.
   existing token; an expired lease may move to UNKNOWN only with `fence+1`.
   Premature expiry and post-expiry ACK/reconciliation are rejected without
   changing the RunIntent row or appending an Outbox event.
-- This is a repository persistence guarantee, **not** a cryptographic Runtime
-  receipt, mTLS authenticator, trusted principal snapshot, or an implementation
-  of the cross-repository `StartRun/InspectRunIntent` protocol. Those remain
-  blocked by ACP #10 / Runtime #20 owner-ratified contracts and recovery tests.
+- The repository enforces version and lease constraints. Runtime workload authentication and receipt verification are separate transport checks.
 - CI verifies these cases using PostgreSQL 16 and synthetic typed outcomes;
   it does not establish staging recovery or database role/IAM hardening.
 
-## Explicit remaining implementation gaps
+## Integration boundaries
 
-- Inbox ingestion/consumer workers, including deduplication, tenant-scoped aggregate ordering, cursor advancement, gap recovery and quarantine.
-- Production `EventPublisher` adapter with transport authentication, TLS, schema compatibility, metrics and deployment configuration.
-- Authenticated Runtime `StartRun` / `InspectRunIntent` adapter and durable reconciliation worker.
-- Service connection lifecycle, dependency-aware readiness, deployment configuration and operational metrics.
-- Restart, lost-ACK, duplicate-start and cross-process recovery tests around the real Runtime adapter.
-- Migration forward/rollback and backup/restore operational policy beyond the checksummed initial migration.
-
-Do not expose mutating HTTP endpoints until Runtime authentication, durable dispatch/reconciliation, Outbox/Inbox workers and their failure-recovery tests are complete.
+See the [Runtime Inspect guide](RUNTIME-INSPECT-CLIENT.md) for authenticated reconciliation and the [Inbox settlement guide](INBOX-SETTLEMENT-GATE.md) for the transport boundary. Production transport configuration, service lifecycle, and backup and restore remain deployment concerns.
 
 ## Tenant-isolated messaging invariants (migration smoke)
 
@@ -88,7 +78,4 @@ an event from one tenant from being attributed to another.
 
 The `migrations/tests/0001_tenant_isolation.sql` smoke test checks two-tenant
 same-ID acceptance, same-tenant duplicate version refusal and cross-tenant
-event attribution refusal. This verifies **schema constraints only**, not a
-trusted broker consumer, authenticated principal, PostgreSQL Repository
-transactions, or a production migration runner. Until these exist, do not
-expose mutating Control Plane APIs.
+event attribution refusal. Repository transaction and transport behavior are covered by separate tests.

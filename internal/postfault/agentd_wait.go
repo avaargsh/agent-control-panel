@@ -99,6 +99,7 @@ func VerifyWithAgentDWait(b Bundle, keys map[string]ed25519.PublicKey, expected 
 	}
 	if (terminal.Status == "EXITED") != (terminal.ExitCode == 0 && terminal.Signal == 0) ||
 		terminal.Signal < 0 || terminal.Signal > 128 ||
+		(terminal.Signal == 0 && (terminal.ExitCode < 0 || terminal.ExitCode > 255)) ||
 		(terminal.Signal != 0 && terminal.ExitCode != -1) {
 		return failure("AgentD terminal Wait exit/signal/status contradict one another")
 	}

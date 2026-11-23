@@ -92,7 +92,7 @@ func Prepare(raw []byte) (Prepared, error) {
 	if _, err := runintent.ExecutionInputDigest(probe, raw); err != nil {
 		return Prepared{}, fmt.Errorf("%w: invalid or ambiguous JSON", ErrInvalidGoal)
 	}
-	if err := rejectCaseFoldKeyCollisions(raw); err != nil {
+	if err := ValidateUniqueJSONKeys(raw); err != nil {
 		return Prepared{}, err
 	}
 	var m Manifest
@@ -164,7 +164,7 @@ func validGitHubIssueURL(value string) bool {
 	parts := strings.Split(u.Path, "/")
 	if len(parts) != 5 || parts[0] != "" || parts[3] != "issues" ||
 		!ownerPattern.MatchString(parts[1]) || strings.HasSuffix(parts[1], "-") ||
-		!repoPattern.MatchString(parts[2]) {
+		!repoPattern.MatchString(parts[2]) || parts[2] == "." || parts[2] == ".." {
 		return false
 	}
 	n, err := strconv.ParseUint(parts[4], 10, 64)

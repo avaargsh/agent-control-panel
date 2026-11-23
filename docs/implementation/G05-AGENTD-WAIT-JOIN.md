@@ -19,7 +19,7 @@ The source `acp.agentd-wait-terminal/v1` includes:
 - A valid source Wait proves a *local process terminal observation*. It does not prove that a networked/external effect was undone, that a Guard Permit was valid at execution time, that the workspace persisted, or that the Sandbox/Compute allocation was physically released.
 - The existing `postfault.Verify` also requires a **fresh source-owned, journal-persisted `agentd.inspect` event with incrementing `InspectCount` and `JournalVersion`**. Draft #108 presently persists the terminal but not that separate fresh inspection event. An invented count is NOT acceptable.
 - Even after the new join accepts a complete synthetic fixture, **live G01–G05 remains BLOCKED** until Guard issuer/PEP, authenticated source mTLS and independent key lifecycle, original Run/Attempt/Permit journal references, real Sandbox/Sentinel readback, source postfault inspection counts, provider UID absence and cost FINAL are proven.
-- CLI and production runtime are NOT yet wired to call this extra source gate; the helper is an independent read-only opt-in verification primitive for future trusted integration. No protected command execution, PR merge or resource release is granted by it.
+- CLI and production runtime are NOT yet wired to call this extra source gate; the helper is an independent read-only opt-in verification primitive for future trusted integration. No protected command execution, production authorization or resource release is granted by it. Open-development merge is limited to this independently tested read-only verifier.
 
 ## CI and evidence standard
 
