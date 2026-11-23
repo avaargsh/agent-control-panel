@@ -36,10 +36,12 @@ func newEvidenceReaderPool(t *testing.T, owner *pgxpool.Pool, tenantID string) *
 		_, _ = owner.Exec(context.Background(), "DROP ROLE "+roleSQL)
 		t.Fatalf("grant the dedicated tenant-scoped evidence reader role: %v", err)
 	}
-	if _, err := owner.Exec(ctx, "INSERT INTO public.sandbox_agentd_evidence_reader_tenants(login_role,tenant_id) VALUES($1,$2)", role, tenantID); err != nil {
+	tag, err := owner.Exec(ctx, `INSERT INTO public.sandbox_agentd_evidence_reader_tenants(login_role,login_oid,tenant_id)
+		SELECT r.rolname,r.oid,$2 FROM pg_catalog.pg_roles r WHERE r.rolname=$1 AND r.rolcanlogin`, role, tenantID)
+	if err != nil || tag.RowsAffected() != 1 {
 		_, _ = owner.Exec(context.Background(), "REVOKE sandbox_agentd_evidence_reader FROM "+roleSQL)
 		_, _ = owner.Exec(context.Background(), "DROP ROLE "+roleSQL)
-		t.Fatalf("bind authenticated reader LOGIN to one tenant: %v", err)
+		t.Fatalf("bind authenticated reader LOGIN and original role OID to one tenant: rows=%d err=%v", tag.RowsAffected(), err)
 	}
 	t.Cleanup(func() {
 		if _, err := owner.Exec(context.Background(), "DELETE FROM public.sandbox_agentd_evidence_reader_tenants WHERE login_role=$1", role); err != nil {
@@ -147,4 +149,86 @@ func TestEvidenceReaderLoginIsTenantScopedAndReadOnly(t *testing.T) {
 		t.Fatalf("evidence reader could mutate source attempts: pgErr=%v err=%v", pgErr, err)
 	}
 	_ = writeTx.Rollback(ctx)
+}
+
+ 
+// A mutable PostgreSQL custom GUC cannot switch the tenant associated with
+// the authenticated LOGIN. A revoked binding or mismatched role OID must also
+// hide every source row, even when the connection remains open.
+func TestEvidenceReaderGUCForgeryOIDMismatchAndRevocationFailClosed(t *testing.T) {
+	owner := testDatabase(t)
+	cmd, original := startOwnedTestProcess(t, "10")
+	defer func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }()
+	seedAlreadyAuthorizedAttempt(t, owner, original)
+
+	foreign := original
+	foreign.TenantID = "agentd-tenant-b"
+	foreign.RunID = "22222222-2222-4222-8222-222222222222"
+	foreign.CommandID = "foreign-command"
+	foreign.AttemptID = "foreign-attempt"
+	foreign.ProviderCommandUID = "foreign-provider-command"
+	seedAlreadyAuthorizedAttempt(t, owner, foreign)
+
+	reader := newEvidenceReaderPool(t, owner, original.TenantID)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	var login string
+	if err := reader.QueryRow(ctx, "SELECT session_user").Scan(&login); err != nil || login == "" {
+		t.Fatalf("reader identity unavailable: %q %v", login, err)
+	}
+	tx, err := reader.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil { t.Fatal(err) }
+	if _, err := tx.Exec(ctx, "SELECT set_config('app.tenant_id',$1,true)", foreign.TenantID); err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	var own, leaked int
+	if err := tx.QueryRow(ctx, "SELECT count(*) FROM public.sandbox_agentd_attempts WHERE tenant_id=$1", original.TenantID).Scan(&own); err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if err := tx.QueryRow(ctx, "SELECT count(*) FROM public.sandbox_agentd_attempts WHERE tenant_id=$1", foreign.TenantID).Scan(&leaked); err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if own != 1 || leaked != 0 {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("GUC changed source tenant scope: own=%d foreign=%d", own, leaked)
+	}
+	if err := tx.Commit(ctx); err != nil { t.Fatal(err) }
+
+	// Simulate a stale role mapping after a LOGIN was recreated: the saved
+	// name remains but its owner-maintained role OID no longer matches.
+	tag, err := owner.Exec(ctx, `UPDATE public.sandbox_agentd_evidence_reader_tenants
+		SET login_oid=(SELECT oid FROM pg_catalog.pg_roles WHERE rolname=current_user)
+		WHERE login_role=$1`, login)
+	if err != nil || tag.RowsAffected() != 1 {
+		t.Fatalf("could not simulate stale role OID: rows=%d err=%v", tag.RowsAffected(), err)
+	}
+	checkNoReads := func(stage string) {
+		t.Helper()
+		var count int
+		if err := reader.QueryRow(ctx, "SELECT count(*) FROM public.sandbox_agentd_attempts WHERE tenant_id=$1", original.TenantID).Scan(&count); err != nil || count != 0 {
+			t.Fatalf("%s: original rows visible after binding lost: count=%d err=%v", stage, count, err)
+		}
+		txn, err := reader.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+		if err != nil { t.Fatal(err) }
+		if err := verifyEvidenceReaderLogin(ctx, txn, original.TenantID); err == nil {
+			_ = txn.Rollback(ctx)
+			t.Fatalf("%s: untrusted binding accepted", stage)
+		}
+		_ = txn.Rollback(ctx)
+	}
+	checkNoReads("role OID mismatch")
+	tag, err = owner.Exec(ctx, `UPDATE public.sandbox_agentd_evidence_reader_tenants b
+		SET login_oid=r.oid FROM pg_catalog.pg_roles r
+		WHERE b.login_role=r.rolname AND b.login_role=$1`, login)
+	if err != nil || tag.RowsAffected() != 1 {
+		t.Fatalf("could not restore authenticated role OID: rows=%d err=%v", tag.RowsAffected(), err)
+	}
+	tag, err = owner.Exec(ctx, "DELETE FROM public.sandbox_agentd_evidence_reader_tenants WHERE login_role=$1", login)
+	if err != nil || tag.RowsAffected() != 1 {
+		t.Fatalf("owner failed to revoke reader binding: rows=%d err=%v", tag.RowsAffected(), err)
+	}
+	checkNoReads("revoked binding")
 }

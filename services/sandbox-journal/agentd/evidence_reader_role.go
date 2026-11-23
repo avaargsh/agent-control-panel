@@ -46,6 +46,11 @@ SELECT COALESCE((
      AND NOT has_database_privilege(r.oid, current_database(), 'CREATE')
      AND NOT pg_has_role(r.oid, owner_row.relowner, 'MEMBER')
      AND public.sandbox_agentd_evidence_tenant() = $1
+     AND EXISTS (
+       SELECT 1 FROM pg_catalog.pg_attribute a
+       WHERE a.attrelid=to_regclass('public.sandbox_agentd_evidence_reader_tenants')
+         AND a.attname='login_oid' AND a.attnotnull AND NOT a.attisdropped
+     )
      AND NOT has_table_privilege(r.oid, 'public.sandbox_agentd_evidence_reader_tenants', 'SELECT')
      AND (SELECT relowner FROM pg_class WHERE oid=to_regclass('public.sandbox_agentd_evidence_reader_tenants')) = owner_row.relowner
      AND NOT EXISTS (
