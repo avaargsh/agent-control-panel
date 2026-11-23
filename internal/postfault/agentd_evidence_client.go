@@ -94,6 +94,21 @@ func (c AgentDEvidenceClient) httpClient() *http.Client {
 	return &client
 }
 
+// hasNoStoreCacheDirective requires an actual standalone HTTP cache directive.
+// Merely finding the substring "no-store" in a different directive or value
+// must never allow an evidence response to pass its no-cache boundary.
+// Header.Values also considers distinct Cache-Control header lines.
+func hasNoStoreCacheDirective(header http.Header) bool {
+	for _, value := range header.Values("Cache-Control") {
+		for _, directive := range strings.Split(value, ",") {
+			if strings.EqualFold(strings.TrimSpace(directive), "no-store") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // Read validates transport metadata, canonical response JSON, exact original
 // Ref and independently pinned Head, complete event count, per-record content
 // digests, HOLD semantics and terminal-presence consistency. Cryptographic
@@ -135,7 +150,7 @@ func (c AgentDEvidenceClient) Read(ctx context.Context, ref AgentDWaitRef,
 	}
 	mediaType, _, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
 	if err != nil || mediaType != "application/json" ||
-		!strings.Contains(strings.ToLower(response.Header.Get("Cache-Control")), "no-store") {
+		!hasNoStoreCacheDirective(response.Header) {
 		return empty, ErrAgentDEvidenceUnavailable
 	}
 	if encoding := strings.TrimSpace(strings.ToLower(response.Header.Get("Content-Encoding"))); encoding != "" && encoding != "identity" {
