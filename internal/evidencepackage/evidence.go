@@ -68,29 +68,32 @@ type Package struct {
 // Statement is a versioned source-signed EXPORT view, not a replacement for
 // a service's own authoritative command/decision/permit/provider record.
 type Statement struct {
-	Schema             string            `json:"schema"`
-	Authority          string            `json:"authority"`
-	Stage              string            `json:"stage"`
-	Subject            postfault.Subject `json:"subject"`
-	RunIntentID        string            `json:"run_intent_id"`
-	RequestDigest      string            `json:"request_digest"`
-	OriginalDigest     string            `json:"original_digest"`
-	SourceRevision     uint64            `json:"source_revision"`
-	ObservedAt         time.Time         `json:"observed_at"`
-	Status             string            `json:"status"`
-	DecisionID         string            `json:"decision_id,omitempty"`
-	DecisionDigest     string            `json:"decision_digest,omitempty"`
-	ActionDigest       string            `json:"action_digest,omitempty"`
-	PermitID           string            `json:"permit_id,omitempty"`
-	PermitEpoch        uint64            `json:"permit_epoch,omitempty"`
-	BreakerEpoch       uint64            `json:"breaker_epoch,omitempty"`
-	CommandID          string            `json:"command_id,omitempty"`
-	CheckpointDigest   string            `json:"checkpoint_digest,omitempty"`
-	SandboxUID         string            `json:"sandbox_uid,omitempty"`
-	AllocationID       string            `json:"allocation_id,omitempty"`
-	ProviderUID        string            `json:"provider_uid,omitempty"`
-	ProviderGeneration uint64            `json:"provider_generation,omitempty"`
-	ProviderAbsent     bool              `json:"provider_absent,omitempty"`
+	Schema         string            `json:"schema"`
+	Authority      string            `json:"authority"`
+	Stage          string            `json:"stage"`
+	Subject        postfault.Subject `json:"subject"`
+	RunIntentID    string            `json:"run_intent_id"`
+	RequestDigest  string            `json:"request_digest"`
+	OriginalDigest string            `json:"original_digest"`
+	// ParentExportDigest is a candidate link to an upstream owner-signed export.
+	// It is NOT interpreted by the v2 Verify API; callers must opt into VerifyLinked.
+	ParentExportDigest string    `json:"parent_export_digest,omitempty"`
+	SourceRevision     uint64    `json:"source_revision"`
+	ObservedAt         time.Time `json:"observed_at"`
+	Status             string    `json:"status"`
+	DecisionID         string    `json:"decision_id,omitempty"`
+	DecisionDigest     string    `json:"decision_digest,omitempty"`
+	ActionDigest       string    `json:"action_digest,omitempty"`
+	PermitID           string    `json:"permit_id,omitempty"`
+	PermitEpoch        uint64    `json:"permit_epoch,omitempty"`
+	BreakerEpoch       uint64    `json:"breaker_epoch,omitempty"`
+	CommandID          string    `json:"command_id,omitempty"`
+	CheckpointDigest   string    `json:"checkpoint_digest,omitempty"`
+	SandboxUID         string    `json:"sandbox_uid,omitempty"`
+	AllocationID       string    `json:"allocation_id,omitempty"`
+	ProviderUID        string    `json:"provider_uid,omitempty"`
+	ProviderGeneration uint64    `json:"provider_generation,omitempty"`
+	ProviderAbsent     bool      `json:"provider_absent,omitempty"`
 }
 
 var stages = []struct{ stage, authority string }{
