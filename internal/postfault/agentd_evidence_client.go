@@ -153,12 +153,20 @@ func (c AgentDEvidenceClient) Read(ctx context.Context, ref AgentDWaitRef,
 		// Never accept bytes whose original Content-Encoding was hidden.
 		return empty, ErrAgentDEvidenceUnavailable
 	}
-	mediaType, _, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
+	// Header.Get only returns the first value. Ambiguous repeated metadata
+	// must never be accepted for source-signed evidence, even if the first
+	// value looks like a canonical identity-encoded JSON response.
+	contentTypes := response.Header.Values("Content-Type")
+	encodings := response.Header.Values("Content-Encoding")
+	if len(contentTypes) != 1 || len(encodings) > 1 {
+		return empty, ErrAgentDEvidenceUnavailable
+	}
+	mediaType, _, err := mime.ParseMediaType(contentTypes[0])
 	if err != nil || mediaType != "application/json" ||
 		!hasNoStoreCacheDirective(response.Header) {
 		return empty, ErrAgentDEvidenceUnavailable
 	}
-	if encoding := strings.TrimSpace(strings.ToLower(response.Header.Get("Content-Encoding"))); encoding != "" && encoding != "identity" {
+	if len(encodings) == 1 && strings.TrimSpace(strings.ToLower(encodings[0])) != "identity" {
 		return empty, ErrAgentDEvidenceUnavailable
 	}
 	raw, err := io.ReadAll(io.LimitReader(response.Body, maxAgentDEvidenceBody+1))
