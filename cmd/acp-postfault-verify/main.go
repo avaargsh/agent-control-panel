@@ -145,7 +145,6 @@ func run(args []string) error {
 	return nil
 }
 
-
 func newAgentDEvidenceHTTPClient(certPath, keyPath, caPath, serverName string) (*http.Client, error) {
 	if strings.TrimSpace(serverName) == "" || strings.TrimSpace(serverName) != serverName {
 		return nil, errors.New("invalid AgentD TLS server name")
@@ -173,12 +172,12 @@ func newAgentDEvidenceHTTPClient(certPath, keyPath, caPath, serverName string) (
 	transport := &http.Transport{
 		Proxy: nil,
 		TLSClientConfig: &tls.Config{
-			MinVersion: tls.VersionTLS13,
-			RootCAs: roots,
+			MinVersion:   tls.VersionTLS13,
+			RootCAs:      roots,
 			Certificates: []tls.Certificate{certificate},
-			ServerName: serverName,
+			ServerName:   serverName,
 		},
-		MaxIdleConns: 4,
+		MaxIdleConns:        4,
 		MaxIdleConnsPerHost: 2,
 	}
 	return &http.Client{Transport: transport, Timeout: 10 * time.Second}, nil
