@@ -1,0 +1,177 @@
+name: Local postfault and signed evidence precursor (non-production)
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/postfault-local-precursor.yml'
+      - 'internal/postfault/**'
+      - 'internal/evidencepackage/**'
+      - 'docs/implementation/POSTFAULT-RECOVERY-GATE.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GOTOOLCHAIN: local
+
+jobs:
+  local-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # Intentionally test literal PR source, not Github's synthetic merge SHA.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Assert exact source SHA
+        env:
+          EXPECTED_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse --verify HEAD)" = "$EXPECTED_SOURCE_SHA"
+          printf 'VERIFIED_LOCAL_PRECURSOR_SOURCE_SHA=%s\n' "$EXPECTED_SOURCE_SHA"
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version: '1.27.4'
+          cache: false
+      - name: Assert patched Go toolchain and dependencies
+        run: |
+          set -euo pipefail
+          test "$(go env GOVERSION)" = "go1.27.4"
+          go mod verify
+      - name: Reject ambiguous signed JSON field aliases (all evidence verifiers)
+        shell: bash
+        run: |
+          set -euo pipefail
+          log="$RUNNER_TEMP/postfault-strict-json.log"
+          go test -race -count=1 -v -run '^(TestStrictDecodeRejectsCaseFoldedDuplicateKeys|TestEvidenceStrictDecodeRejectsCaseFoldedKeys|TestEvidencePackageRejectsResignedCaseFoldedStatus)$' ./internal/postfault ./internal/evidencepackage | tee "$log"
+          for receipt in TestStrictDecodeRejectsCaseFoldedDuplicateKeys TestEvidenceStrictDecodeRejectsCaseFoldedKeys TestEvidencePackageRejectsResignedCaseFoldedStatus; do
+            grep -Fq -- "--- PASS: $receipt " "$log" || {
+              echo "missing strict signed JSON evidence test: $receipt" >&2
+              exit 1
+            }
+          done
+      - name: Require fresh AgentD InspectCount across signed before/after recovery
+        shell: bash
+        run: |
+          set -euo pipefail
+          log="$RUNNER_TEMP/postfault-inspect-count.log"
+          go test -race -count=1 -v -run '^(TestPostfaultRejectsReplayedCommandInspectCount|TestPostfaultAcceptsFreshCommandInspectCountAfterPriorInspect)$' ./internal/postfault | tee "$log"
+          for mandatory in \
+            '--- PASS: TestPostfaultRejectsReplayedCommandInspectCount ' \
+            '--- PASS: TestPostfaultAcceptsFreshCommandInspectCountAfterPriorInspect '; do
+            grep -Fq -- "$mandatory" "$log" || { echo "missing signed InspectCount contract test: $mandatory" >&2; exit 1; }
+          done
+          printf 'POSTFAULT_SIGNED_AGENTD_INSPECT_COUNT_GATE=PASS; REAL_AGENTD_RECONCILIATION=NOT_VERIFIED\n'
+
+      - name: Require canonical Sandbox root and consistent UNKNOWN signed observations
+        shell: bash
+        run: |
+          set -euo pipefail
+          log="$RUNNER_TEMP/postfault-signed-continuity.log"
+          go test -race -count=1 -v -run '^(TestPostfaultRejectsNoncanonicalSignedSandboxRoot|TestPostfaultRejectsPreFaultUnknownWithTerminalReceipt)$' ./internal/postfault | tee "$log"
+          for testname in TestPostfaultRejectsNoncanonicalSignedSandboxRoot TestPostfaultRejectsPreFaultUnknownWithTerminalReceipt; do
+            grep -Fq -- "--- PASS: $testname " "$log" || { echo "missing mandatory signed continuity test: $testname" >&2; exit 1; }
+          done
+          for scenario in parent_escape dot_segment duplicate_separator root_only control_byte; do
+            grep -Fq -- "--- PASS: TestPostfaultRejectsNoncanonicalSignedSandboxRoot/$scenario " "$log" || { echo "missing canonical root negative: $scenario" >&2; exit 1; }
+          done
+          printf 'POSTFAULT_SIGNED_CONTINUITY_CONTRACT=PASS; PHYSICAL_SANDBOX_AGENTD_EVIDENCE=NOT_VERIFIED\n'
+
+      - name: Compile and run real local process SIGKILL, UNKNOWN and negative matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+          log="$RUNNER_TEMP/acp-local-postfault-precursor.log"
+          go test -race -count=1 -v -run '^(TestPhysicalWorkspace|TestLocalWorkspaceRejects|TestLocalWorkspaceReadRejects|TestLocalUnknownCommandAfterSIGKILLRemainsBlocked|TestLocalUnknownCommandRejectsForgedReconciliation)' ./internal/postfault | tee "$log"
+          for marker in \
+            '--- PASS: TestPhysicalWorkspaceSurvivesWorkerSIGKILL ' \
+            '--- PASS: TestPhysicalWorkspaceRecoveryRejectsCorruptionAndStaleBinding ' \
+            '--- PASS: TestLocalWorkspaceRejectsHardLinkedSiblingTenantFile ' \
+            '--- PASS: TestLocalUnknownCommandAfterSIGKILLRemainsBlocked ' \
+            '--- PASS: TestLocalUnknownCommandRejectsForgedReconciliation ' \
+            'LOCAL_UNKNOWN_COMMAND_SIGKILL_HOLD_CONFIRMED'; do
+            grep -Fq -- "$marker" "$log" || { echo "missing mandatory local test receipt: $marker" >&2; exit 1; }
+          done
+          for negative in wrong_run wrong_attempt wrong_command missing_effect duplicated_effect fabricated_terminal double_dispatch replaced_workspace_identical_files symlink_effect; do
+            grep -Fq -- "--- PASS: TestLocalUnknownCommandRejectsForgedReconciliation/$negative " "$log" || {
+              echo "missing local UNKNOWN negative case: $negative" >&2
+              exit 1
+            }
+          done
+          printf 'LOCAL_PRECURSOR_ONLY=PASS; REAL_AGENTD_GUARD_RUNTIME_EVIDENCE=NOT_VERIFIED\n'
+
+  sandbox-db-boundary:
+    name: Pinned Sandbox PostgreSQL read-only boundary (NOT AgentD evidence)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact ACP postfault verifier
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Checkout pinned independent Sandbox-owned Journal candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+          ref: 7abe480007692e370c790957baf12acf923b36c6
+          path: .sandbox-source
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version: '1.27.4'
+          cache: false
+      - name: Verify both independent source commits and module checksums
+        env:
+          EXPECTED_POSTFAULT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          PINNED_SANDBOX_SHA: 7abe480007692e370c790957baf12acf923b36c6
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse --verify HEAD)" = "$EXPECTED_POSTFAULT_SHA"
+          test "$(git -C .sandbox-source rev-parse --verify HEAD)" = "$PINNED_SANDBOX_SHA"
+          test "$(go env GOVERSION)" = "go1.27.4"
+          go mod verify
+          (cd .sandbox-source/services/sandbox-journal && go mod verify)
+          printf "POSTFAULT_SOURCE_SHA=%s\nSANDBOX_SOURCE_SHA=%s\n" "$EXPECTED_POSTFAULT_SHA" "$PINNED_SANDBOX_SHA"
+      - name: Real disposable PG16 Sandbox snapshot must not become an AgentD recovery receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker compose version
+          log="$RUNNER_TEMP/sandbox-source-boundary.log"
+          bash .sandbox-source/services/sandbox-journal/scripts/demo.sh | tee "$log"
+          grep -Fq 'SANDBOX_DEMO_PASS: no dispatch, retry, success or release authority' "$log"
+          python3 - "$log" "$RUNNER_TEMP/sandbox-snapshot.json" <<'PY'
+          import json, pathlib, sys
+          raw = pathlib.Path(sys.argv[1]).read_text()
+          boundary = '=== Safe Sandbox inspection (unattested, read-only) ==='
+          assert raw.count(boundary) == 1, 'missing or duplicate real Sandbox read result'
+          rest = raw.split(boundary, 1)[1].lstrip()
+          snapshot, _ = json.JSONDecoder().raw_decode(rest)
+          assert snapshot['schema'] == 'sandboxctl.inspect.v0'
+          assert snapshot['source'] == 'UNATTESTED_DB_SNAPSHOT'
+          assert snapshot['tenant_id'] == 'sandboxctl-smoke'
+          assert snapshot['lease']['run_id'] == snapshot['command']['run_id'] == 'run-smoke-1'
+          assert snapshot['lease']['runtime_attempt_id'] == snapshot['command']['runtime_attempt_id'] == 'runtime-smoke-1'
+          assert snapshot['lease']['state'] == 'WAITING_FOR_PERMIT'
+          assert snapshot['command']['state'] == 'PERMIT_UNAVAILABLE'
+          assert snapshot['next_action'] == 'HOLD'
+          for flag in ('can_dispatch', 'can_retry', 'can_declare_success', 'can_declare_released'):
+              assert snapshot[flag] is False, 'local database snapshot promoted authority: ' + flag
+          pathlib.Path(sys.argv[2]).write_text(json.dumps(snapshot))
+          print('CROSS_SOURCE_PREPERMIT_BINDING=PASS; AGENTD_COMMAND_INSPECT=NOT_PRODUCED')
+          PY
+          go build -trimpath -o "$RUNNER_TEMP/acp-postfault-verify" ./cmd/acp-postfault-verify
+          if "$RUNNER_TEMP/acp-postfault-verify" \
+            --bundle "$RUNNER_TEMP/sandbox-snapshot.json" \
+            --expected "$RUNNER_TEMP/sandbox-snapshot.json" \
+            --trust-dir "$RUNNER_TEMP" >"$RUNNER_TEMP/sandbox-promotion-refusal.log" 2>&1; then
+            echo "INVALID_PROMOTION: an unsigned Sandbox DB snapshot passed the cross-authority postfault verifier" >&2
+            exit 1
+          fi
+          grep -Fq "POSTFAULT RECOVERY BLOCKED: postfault bundle is invalid" "$RUNNER_TEMP/sandbox-promotion-refusal.log"
+          printf 'SANDBOX_SOURCE_BOUNDARY=PASS; REAL_SIGNED_RUNTIME_SANDBOX_AGENTD_GUARD_PROOF=NOT_VERIFIED\n'

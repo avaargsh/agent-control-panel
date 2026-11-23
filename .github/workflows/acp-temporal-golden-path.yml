@@ -4,6 +4,10 @@ on:
   pull_request:
     paths:
       - 'internal/runtimeinspect/**'
+      - 'internal/postfault/**'
+      - 'internal/evidencepackage/**'
+      - 'cmd/acp-postfault-verify/**'
+      - 'cmd/acp-evidence-verify/**'
       - 'internal/admission/**'
       - 'internal/authorityhttp/**'
       - 'cmd/acp-authority-api/**'
@@ -134,9 +138,60 @@ jobs:
           ACP_RUNTIME_TEMPORAL_TEST_BIN: ${{ runner.temp }}/runtime-temporal-acceptance
           PGTEST_DSN: postgres://postgres:acp-test-only@127.0.0.1:5432/acp_golden?sslmode=disable
         run: bash ../issuer-fixture/scripts/test-real-oidc-admission.sh golden-path
+      - name: Real Linux process SIGKILL and physical workspace re-read (local-only precursor)
+        working-directory: acp
+        run: |
+          set -euo pipefail
+          go test -race -count=1 -v -run '^(TestPhysicalWorkspace|TestLocalWorkspaceRejects|TestLocalWorkspaceReadRejects|TestLocalUnknownCommandAfterSIGKILLRemainsBlocked|TestLocalUnknownCommandRejectsForgedReconciliation)' ./internal/postfault | tee "$RUNNER_TEMP/acp-local-workspace.log"
+          grep -q -- '--- PASS: TestPhysicalWorkspaceSurvivesWorkerSIGKILL ' "$RUNNER_TEMP/acp-local-workspace.log"
+          grep -q -- '--- PASS: TestPhysicalWorkspaceRecoveryRejectsCorruptionAndStaleBinding ' "$RUNNER_TEMP/acp-local-workspace.log"
+          grep -q -- '--- PASS: TestLocalWorkspaceRejectsHardLinkedSiblingTenantFile ' "$RUNNER_TEMP/acp-local-workspace.log"
+          grep -q -- '--- PASS: TestLocalUnknownCommandAfterSIGKILLRemainsBlocked ' "$RUNNER_TEMP/acp-local-workspace.log"
+          grep -q -- '--- PASS: TestLocalUnknownCommandRejectsForgedReconciliation ' "$RUNNER_TEMP/acp-local-workspace.log"
+          grep -q -- 'LOCAL_UNKNOWN_COMMAND_SIGKILL_HOLD_CONFIRMED' "$RUNNER_TEMP/acp-local-workspace.log"
+      - name: Compile independent post-fault continuity verifier
+        working-directory: acp
+        run: go build -trimpath -o "$RUNNER_TEMP/acp-postfault-verify" ./cmd/acp-postfault-verify
+      - name: Compile independent G01-G05 evidence package verifier
+        working-directory: acp
+        run: go build -trimpath -o "$RUNNER_TEMP/acp-evidence-verify" ./cmd/acp-evidence-verify
+      - name: Report full postfault gate NOT_RUN in development PR
+        if: github.event_name == 'pull_request'
+        run: |
+          echo "::notice::EXTENDED_POSTFAULT_GATE=NOT_RUN; signed real Sandbox/AgentD/Guard proof still REQUIRED for release; contract/precursor CI is NOT production acceptance"
+      - name: Require same-Run Sandbox workspace, Command UNKNOWN and Guard Epoch proof
+        if: github.event_name == 'workflow_dispatch'
+        # Intentionally not continue-on-error. This is the extended recovery
+        # gate, not a static fixture or a synthetic replacement for providers.
+        run: |
+          set -euo pipefail
+          bundle="$RUNNER_TEMP/acp-postfault/proof.json"
+          expected="$RUNNER_TEMP/acp-postfault/expected.json"
+          trust="$RUNNER_TEMP/acp-postfault/trust"
+          if [ ! -s "$bundle" ] || [ ! -s "$expected" ] || [ ! -d "$trust" ]; then
+            echo "::error::EXTENDED GOLDEN PATH BLOCKED: no real, independently signed Sandbox/AgentD/Guard/Runtime post-fault proof for this Run. Workflow/Decision recovery alone is not a complete release gate."
+            exit 1
+          fi
+          "$RUNNER_TEMP/acp-postfault-verify" --bundle "$bundle" --expected "$expected" --trust-dir "$trust"
+      - name: Require original signed G01-G05 lifecycle Evidence Package
+        if: github.event_name == 'workflow_dispatch'
+        # This is a second independent gate, NOT a fixture-to-green adapter.
+        run: |
+          set -euo pipefail
+          package="$RUNNER_TEMP/acp-evidence/package.json"
+          expected="$RUNNER_TEMP/acp-evidence/expected.json"
+          trust="$RUNNER_TEMP/acp-evidence/trust"
+          if [ ! -s "$package" ] || [ ! -s "$expected" ] || [ ! -d "$trust" ]; then
+            echo "::error::G01-G05 EVIDENCE BLOCKED: no same-Run independently signed lifecycle, Sandbox and Compute release artifacts. Source-owned physical provider inspection is still required."
+            exit 1
+          fi
+          "$RUNNER_TEMP/acp-evidence-verify" --package "$package" --expected "$expected" --trust-dir "$trust"
+
 
 # One pinned Runtime candidate provides v12 API and business driver.
 # The driver uses the actually accepted Run, not a probe or seeded Run.
 # Actual Decision API/source registries remain live through post-CAS Worker
 # SIGKILL recovery. New Guard-only mTLS test shares committed live
 # DecisionRecord and denies source revocation. No Permit or effect.
+# Full same-Run signed Sandbox/AgentD/Guard/Compute evidence is NOT_RUN in
+# development PR CI; the separate full-evidence dispatch stays fail-closed.
