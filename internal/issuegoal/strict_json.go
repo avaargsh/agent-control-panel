@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"strings"
+	"unicode"
 )
 
 // ValidateUniqueJSONKeys closes a mismatch between Go's case-insensitive
@@ -45,7 +46,13 @@ func walkFoldedKeys(dec *json.Decoder, token json.Token, depth int) error {
 			if err != nil || !ok {
 				return ErrInvalidGoal
 			}
-			folded := strings.ToLower(name)
+			folded := strings.Map(func(r rune) rune {
+				// Match the full Unicode folding used by encoding/json.
+				for next := unicode.SimpleFold(r); next > r; next = unicode.SimpleFold(r) {
+					r = next
+				}
+				return unicode.SimpleFold(r)
+			}, name)
 			if _, exists := seen[folded]; exists {
 				return ErrInvalidGoal
 			}

@@ -272,6 +272,7 @@ func TestSubmitCLIUntrustedSuccessRemainsUnknown(t *testing.T) {
 		{"quoted cache directive", `other=",no-store,"`, ""},
 		{"duplicate status", "no-store", `,"status":"PENDING"`},
 		{"case alias", "no-store", `,"STATUS":"PENDING"`},
+		{"Unicode case alias", "no-store", `,"ſtatus":"PENDING"`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var received atomic.Int32
