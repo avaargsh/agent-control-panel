@@ -96,11 +96,11 @@ For a Goal whose HTTP acceptance ACK could disappear after PostgreSQL commit, ad
 
 ```sh
 install -d -m 0700 /run/acp/goal-hold
-go run ./cmd/acp-goal submit \\
-  --file /tmp/acp-proposal.json \\
-  --url https://127.0.0.1:9443/api/v1/goals:submit \\
-  --token-file /run/acp/secrets/goal-bearer \\
-  --ca-file /run/acp/ca/goal-server-ca.pem \\
+go run ./cmd/acp-goal submit \
+  --file /tmp/acp-proposal.json \
+  --url https://127.0.0.1:9443/api/v1/goals:submit \
+  --token-file /run/acp/secrets/goal-bearer \
+  --ca-file /run/acp/ca/goal-server-ca.pem \
   --hold-record /run/acp/goal-hold/attempt-001.json
 ```
 
