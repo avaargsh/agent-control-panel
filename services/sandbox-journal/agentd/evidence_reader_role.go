@@ -9,6 +9,20 @@ import (
 
 var ErrEvidenceReaderUntrusted = errors.New("AgentD evidence reader database identity is unavailable or overprivileged")
 
+// Pin the exact 0016 owner-managed SECURITY DEFINER function body.
+// Metadata alone cannot detect a rewritten resolver trusting caller GUCs.
+// Any legitimate upgrade needs a forward-only migration and matching pin.
+const trustedAgentDEvidenceTenantBody = `
+    SELECT b.tenant_id
+      FROM public.sandbox_agentd_evidence_reader_tenants AS b
+      JOIN pg_catalog.pg_roles AS r
+        ON r.oid = b.login_oid AND r.rolname = b.login_role
+     WHERE r.rolname = session_user
+       AND r.rolcanlogin
+       AND NOT r.rolsuper
+       AND NOT r.rolbypassrls
+`
+
 // verifyEvidenceReaderLogin rejects owner, migrator, superuser, BYPASSRLS and
 // broadly privileged connections before a read endpoint touches source rows.
 // Each authenticated LOGIN is mapped to exactly one tenant in an owner-only
@@ -184,6 +198,8 @@ SELECT COALESCE((
            AND f.proowner=owner_row.relowner
            AND f.prorettype='text'::regtype
            AND f.provolatile='s'
+           AND f.prolang=(SELECT oid FROM pg_catalog.pg_language WHERE lanname='sql')
+           AND f.prosrc=$2
            AND f.proconfig @> ARRAY['search_path=pg_catalog, public']
          )
      )
@@ -205,7 +221,7 @@ SELECT COALESCE((
   WHERE r.rolname=current_user
 ), false)`
 	var allowed bool
-	if err := tx.QueryRow(ctx, check, expectedTenant).Scan(&allowed); err != nil || !allowed {
+	if err := tx.QueryRow(ctx, check, expectedTenant, trustedAgentDEvidenceTenantBody).Scan(&allowed); err != nil || !allowed {
 		return ErrEvidenceReaderUntrusted
 	}
 	return nil
