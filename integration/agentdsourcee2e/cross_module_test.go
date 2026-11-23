@@ -231,6 +231,13 @@ func (ca testCA) issue(t *testing.T, server bool, scope string) tls.Certificate 
 	if server {
 		leaf.IPAddresses = []net.IP{net.ParseIP("127.0.0.1")}
 		leaf.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}
+		if scope != "" {
+			uri, err := url.Parse(scope)
+			if err != nil {
+				t.Fatal(err)
+			}
+			leaf.URIs = []*url.URL{uri}
+		}
 	} else {
 		uri, err := url.Parse(scope)
 		if err != nil {
@@ -460,7 +467,7 @@ func TestAgentDRealCrossModuleOriginalWaitInspectAndMTLS(t *testing.T) {
 	srv := httptest.NewUnstartedServer(agentd.NewReadOnlyEvidenceHandler(
 		reader, sourcePub, "sandbox.test", readHead))
 	srv.TLS = &tls.Config{
-		Certificates: []tls.Certificate{ca.issue(t, true, "")},
+		Certificates: []tls.Certificate{ca.issue(t, true, "spiffe://sandbox.test/role/agentd-evidence-server")},
 		ClientAuth:   tls.RequireAndVerifyClientCert, ClientCAs: ca.roots,
 		MinVersion: tls.VersionTLS13,
 	}
