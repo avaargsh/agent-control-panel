@@ -3,8 +3,10 @@ package agentd
 import (
 	"context"
 	"crypto/ed25519"
+	"crypto/sha1"
 	"crypto/rand"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -268,5 +270,22 @@ func TestPermitUnavailableOrUnknownAttemptCannotMintWaitReceipt(t *testing.T) {
 	if err := pool.QueryRow(context.Background(),
 		"SELECT count(*) FROM public.sandbox_agentd_terminal_receipts").Scan(&count); err != nil || count != 0 {
 		t.Fatalf("unregistered attempt produced terminal: count=%d err=%v", count, err)
+	}
+}
+
+
+func TestLegacyAgentDEvidenceReaderMigrationIsByteImmutable(t *testing.T) {
+	// Existing installations may have already applied 0015 before the
+	// separate 0016 OID-fencing migration. Never rewrite 0015 to add a
+	// privilege fix: ship it as a new forward-only migration instead.
+	raw, err := os.ReadFile(filepath.Join("..", "migrations", "0015_agentd_evidence_reader_rls.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	prefix := fmt.Sprintf("blob %d\\x00", len(raw))
+	sum := sha1.Sum(append([]byte(prefix), raw...))
+	const originalGitBlob = "370318cae5deb5357eeccc951d676a5af357caeb"
+	if got := fmt.Sprintf("%x", sum); got != originalGitBlob {
+		t.Fatalf("historical 0015 migration checksum changed: original=%s actual=%s; use 0017+ instead", originalGitBlob, got)
 	}
 }
