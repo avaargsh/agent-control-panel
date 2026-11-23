@@ -1,0 +1,140 @@
+name: Same ACP Run protected-write denial (non-production)
+
+on:
+  pull_request:
+    paths:
+      - 'internal/runtimeinspect/**'
+      - 'internal/admission/**'
+      - 'internal/authorityhttp/**'
+      - 'cmd/acp-authority-api/**'
+      - 'internal/runintent/**'
+      - 'migrations/**'
+      - '.github/workflows/acp-temporal-guard-protected.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GOTOOLCHAIN: local
+
+jobs:
+  protected-write-denial:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: acp-test-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          path: acp
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: avaargsh/agent-control-panel
+          ref: 5b0109cbafcf659f2230f7a38fc560b8644332a9
+          path: issuer-fixture
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: avaargsh/agent-runtime
+          ref: 8e0c25a77f9e17e944e34f836bf83bdbac85ed56
+          path: runtime-api
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: avaargsh/agent-decision
+          ref: 975a052995e1f779413dfe2a7fadba7abafafabc
+          path: decision
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: avaargsh/EngageGuard
+          ref: 5daece13c366d2d83e98f51e1716b18900d969b6
+          path: guard
+          persist-credentials: false
+      - name: Verify immutable external source pins
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          test "$(git -C acp rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$(git -C issuer-fixture rev-parse HEAD)" = '5b0109cbafcf659f2230f7a38fc560b8644332a9'
+          test "$(git -C runtime-api rev-parse HEAD)" = '8e0c25a77f9e17e944e34f836bf83bdbac85ed56'
+          test "$(git -C decision rev-parse HEAD)" = '975a052995e1f779413dfe2a7fadba7abafafabc'
+          test "$(git -C guard rev-parse HEAD)" = '5daece13c366d2d83e98f51e1716b18900d969b6'
+          git -C acp rev-parse HEAD
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version: '1.27.4'
+          cache: false
+      - name: Verify patched toolchain
+        run: test "$(go env GOVERSION)" = "go1.27.4"
+      - name: Create separate authoritative databases
+        env:
+          PGPASSWORD: acp-test-only
+        run: |
+          psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE acp_golden'
+          psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE runtime_golden'
+          psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE decision_golden'
+      - name: Compile actual ACP authority API
+        working-directory: acp
+        run: go build -trimpath -o "$RUNNER_TEMP/acp-authority-api" ./cmd/acp-authority-api
+      - name: Compile actual authenticated Runtime API
+        working-directory: runtime-api
+        run: go build -trimpath -o "$RUNNER_TEMP/acp-runtime-api" ./cmd/acp-api
+      - name: Compile actual Runtime Decision authority process
+        working-directory: runtime-api
+        run: go build -trimpath -o "$RUNNER_TEMP/runtime-decision-authority" ./cmd/decision-authority-api
+      - name: Compile actual Temporal integration driver
+        working-directory: runtime-api
+        run: go test -race -c -o "$RUNNER_TEMP/runtime-temporal-acceptance" ./internal/store/postgres
+      - name: Compile independent Decision publication verifier
+        working-directory: decision
+        run: go test -race -c -o "$RUNNER_TEMP/decision-publication-verifier" ./internal/decision
+      - name: Compile independently authenticated actual Decision Core acceptance
+        working-directory: decision
+        run: go test -race -c -o "$RUNNER_TEMP/live-decision-core" ./internal/evidenceauthority
+      - name: Compile actual EngageGuard mTLS DecisionPlanClient driver
+        working-directory: guard
+        run: go test -race -c -o "$RUNNER_TEMP/live-guard-client" ./internal/admission
+      - name: Execute live OAuth to same Run Temporal recovery and Decision acceptance
+        working-directory: acp
+        env:
+          ACP_CROSS_SERVICE: '1'
+          ACP_LIVE_DECISION: '1'
+          ACP_LIVE_GUARD_STEP: '1'
+          ACP_LIVE_GUARD_CLIENT: '1'
+          ACP_LIVE_GUARD_CAPABILITY: '1'
+          ACP_LIVE_GUARD_PROTECTED: '1'
+          ACP_GUARD_TEST_BIN: ${{ runner.temp }}/live-guard-client
+          ACP_LIVE_CONTINUATION: '1'
+          ACP_RUNTIME_DECISION_AUTHORITY_BIN: ${{ runner.temp }}/runtime-decision-authority
+          ACP_DECISION_LIVE_CORE_BIN: ${{ runner.temp }}/live-decision-core
+          ACP_DECISION_DATABASE_URL: postgres://postgres:acp-test-only@127.0.0.1:5432/decision_golden?sslmode=disable
+          ACP_AUTHORITY_API_BIN: ${{ runner.temp }}/acp-authority-api
+          ACP_DECISION_PUBLICATION_TEST_BIN: ${{ runner.temp }}/decision-publication-verifier
+          ACP_DATABASE_URL: postgres://postgres:acp-test-only@127.0.0.1:5432/acp_golden?sslmode=disable
+          ACP_RUNTIME_DATABASE_URL: postgres://postgres:acp-test-only@127.0.0.1:5432/runtime_golden?sslmode=disable
+          ACP_RUNTIME_API_BIN: ${{ runner.temp }}/acp-runtime-api
+          ACP_RUNTIME_TEMPORAL_TEST_BIN: ${{ runner.temp }}/runtime-temporal-acceptance
+          PGTEST_DSN: postgres://postgres:acp-test-only@127.0.0.1:5432/acp_golden?sslmode=disable
+        run: bash ../issuer-fixture/scripts/test-real-oidc-admission.sh golden-path
+
+# One pinned Runtime candidate provides v12 API and business driver.
+# The driver uses the actually accepted Run, not a probe or seeded Run.
+# Actual Decision API/source registries remain live through post-CAS Worker
+# SIGKILL recovery. New Guard-only mTLS test shares committed live
+# DecisionRecord and denies source revocation. No Permit or effect.

@@ -112,10 +112,21 @@ func serve(ctx context.Context, c config) error {
 			return err
 		}
 		if c.guardPeer != "" {
-			guardHandler, err = authorityhttp.NewGuardCapabilityHandler(repo, publisher, c.guardPeer, c.tenant)
+			readOnlyGuard, err := authorityhttp.NewGuardCapabilityHandler(repo, publisher, c.guardPeer, c.tenant)
 			if err != nil {
 				return err
 			}
+			protectedGuard, err := authorityhttp.NewGuardProtectedWorkspaceHandler(repo, publisher, c.guardPeer, c.tenant)
+			if err != nil {
+				return err
+			}
+			// Two independent, mutually exclusive read-only observation
+			// protocols share the already isolated Guard-only mTLS listener.
+			// Neither handler exposes or issues a protected-action Permit.
+			mux := http.NewServeMux()
+			mux.Handle(authorityhttp.GuardCapabilityPath, readOnlyGuard)
+			mux.Handle(authorityhttp.GuardProtectedWorkspacePath, protectedGuard)
+			guardHandler = mux
 		}
 	} else {
 		handler, err = authorityhttp.NewHandler(repo, c.peer, c.tenant)
