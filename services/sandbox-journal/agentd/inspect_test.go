@@ -3,8 +3,8 @@ package agentd
 import (
 	"context"
 	"crypto/ed25519"
-	"crypto/sha1"
 	"crypto/rand"
+	"crypto/sha1"
 	"errors"
 	"fmt"
 	"os"
