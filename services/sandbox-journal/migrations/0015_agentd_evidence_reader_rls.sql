@@ -9,13 +9,13 @@ BEGIN;
 -- privilege for all connections; a separate reader LOGIN must also fail
 -- validation if an operator later re-grants TEMP directly or through a role.
 -- Never run this owner-only migration against a shared database.
-DO $
+DO $$
 BEGIN
   EXECUTE format('REVOKE TEMPORARY ON DATABASE %I FROM PUBLIC', current_database());
 END;
-$;
+$$;
 
-DO $
+DO $$
 DECLARE
   reader pg_roles%ROWTYPE;
 BEGIN
