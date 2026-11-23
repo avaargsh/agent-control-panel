@@ -13,8 +13,8 @@ import (
 )
 
 const (
-	headAcceptanceSchema = "acp.g05-head-acceptance/v1"
-	headAcceptanceDomain = "acp.g05-head-acceptance/v1\x00"
+	headAcceptanceSchema   = "acp.g05-head-acceptance/v1"
+	headAcceptanceDomain   = "acp.g05-head-acceptance/v1\x00"
 	maxHeadAcceptanceBytes = 8192
 )
 
