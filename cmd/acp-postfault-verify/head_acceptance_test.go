@@ -25,8 +25,8 @@ func headAcceptanceTestBinding() expectedBinding {
 			TenantID: "tenant-a", RunID: "run-a", RuntimeAttemptID: "runtime-attempt-a",
 			SandboxUID: "sandbox-a", CommandID: "command-a", AttemptID: "command-attempt-a",
 			ProviderCommandUID: "provider-a",
-			RequestDigest: "sha256:" + strings.Repeat("a", 64),
-			GuardPermitID: "permit-a", PermitEpoch: 8,
+			RequestDigest:      "sha256:" + strings.Repeat("a", 64),
+			GuardPermitID:      "permit-a", PermitEpoch: 8,
 			ProcessPID: 1111, ProcessStartTicks: 2222,
 			HostBootID: "11111111-1111-1111-1111-111111111111",
 		},
@@ -68,10 +68,10 @@ func TestHeadAcceptanceRequiresIndependentSignerAndExactOriginalRunPermitHead(t 
 	expected := headAcceptanceTestBinding()
 	otherKeys := map[string]ed25519.PublicKey{"agentd": sourcePublic}
 	base := headAcceptanceStatement{
-		Schema: headAcceptanceSchema,
+		Schema:  headAcceptanceSchema,
 		Binding: expected, Revision: 7,
 		AcceptedAt: now.Add(-30 * time.Minute),
-		ExpiresAt: now.Add(30 * time.Minute),
+		ExpiresAt:  now.Add(30 * time.Minute),
 	}
 	if err := verifyHeadAcceptance(signAcceptedHead(t, base, acceptorPrivate),
 		expected, acceptorPublic, otherKeys, now); err != nil {
@@ -89,7 +89,10 @@ func TestHeadAcceptanceRequiresIndependentSignerAndExactOriginalRunPermitHead(t 
 		{"stale_permit_epoch", func(a *headAcceptanceStatement) { a.Binding.AgentDRef.PermitEpoch-- }},
 		{"foreign_command", func(a *headAcceptanceStatement) { a.Binding.AgentDRef.CommandID = "command-other" }},
 		{"different_head_digest", func(a *headAcceptanceStatement) { a.Binding.AgentDHead.Digest = "sha256:" + strings.Repeat("c", 64) }},
-		{"head_rollback", func(a *headAcceptanceStatement) { a.Binding.AgentDHead.InspectCount--; a.Binding.AgentDHead.JournalVersion-- }},
+		{"head_rollback", func(a *headAcceptanceStatement) {
+			a.Binding.AgentDHead.InspectCount--
+			a.Binding.AgentDHead.JournalVersion--
+		}},
 		{"not_yet_accepted", func(a *headAcceptanceStatement) { a.AcceptedAt = now.Add(time.Second) }},
 		{"expired", func(a *headAcceptanceStatement) { a.ExpiresAt = now }},
 		{"overlong_validity", func(a *headAcceptanceStatement) { a.ExpiresAt = a.AcceptedAt.Add(25 * time.Hour) }},
@@ -139,10 +142,10 @@ func TestHeadAcceptanceRejectsUnsignedNoncanonicalAndAlteredEnvelope(t *testing.
 	}
 	good := signAcceptedHead(t, st, private)
 	cases := map[string][]byte{
-		"no_signature": bytes.Replace(good, []byte(`"signature_b64":"`), []byte(`"signature_b64":"bad`), 1),
-		"extra_envelope_key": bytes.Replace(good, []byte(`{"payload_b64":`), []byte(`{"untrusted":1,"payload_b64":`), 1),
+		"no_signature":           bytes.Replace(good, []byte(`"signature_b64":"`), []byte(`"signature_b64":"bad`), 1),
+		"extra_envelope_key":     bytes.Replace(good, []byte(`{"payload_b64":`), []byte(`{"untrusted":1,"payload_b64":`), 1),
 		"duplicate_envelope_key": append(bytes.TrimSuffix(good, []byte("}")), []byte(`,"payload_b64":"malicious"}`)...),
-		"trailing_data": append(bytes.Clone(good), []byte("{}")...),
+		"trailing_data":          append(bytes.Clone(good), []byte("{}")...),
 	}
 	for name, raw := range cases {
 		t.Run(name, func(t *testing.T) {
