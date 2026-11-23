@@ -5,7 +5,11 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -164,5 +168,102 @@ func TestHeadAcceptanceRejectsUnsignedNoncanonicalAndAlteredEnvelope(t *testing.
 	if err := verifyHeadAcceptance(signAcceptedHead(t, st, sourceSigner),
 		binding, public, map[string]ed25519.PublicKey{"agentd": source}, now); err == nil {
 		t.Fatal("AgentD source-issued Head was accepted using independent verifier key")
+	}
+}
+
+func TestPostfaultCLIMandatorySignedHeadGateBeforeSourceOrRecoveryCheck(t *testing.T) {
+	now := time.Now().UTC()
+	binding := headAcceptanceTestBinding()
+	binding.FaultAt = now.Add(-time.Hour)
+	bundle := postfault.Bundle{
+		Schema: postfault.BundleVersion,
+		Subject: binding.Subject,
+		Fault: postfault.Fault{
+			ID: binding.FaultID, Kind: "worker_sigkill", At: binding.FaultAt,
+		},
+	}
+	root := t.TempDir()
+	trustDir := filepath.Join(root, "trust")
+	if err := os.Mkdir(trustDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	writeJSON := func(path string, object any) {
+		t.Helper()
+		raw, err := json.Marshal(object)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, raw, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, role := range []string{"runtime", "sandbox", "agentd", "guard"} {
+		pub, _, err := ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(trustDir, role+".pub"),
+			[]byte(hex.EncodeToString(pub)), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pub, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(trustDir, "head-acceptor.pub"),
+		[]byte(hex.EncodeToString(pub)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	bundleFile := filepath.Join(root, "bundle.json")
+	expectedFile := filepath.Join(root, "expected.json")
+	acceptedFile := filepath.Join(root, "accepted.json")
+	writeJSON(bundleFile, bundle)
+	writeJSON(expectedFile, binding)
+	statement := headAcceptanceStatement{
+		Schema: headAcceptanceSchema, Binding: binding,
+		Revision: 3, AcceptedAt: now.Add(-time.Minute), ExpiresAt: now.Add(time.Hour),
+	}
+	args := []string{
+		"--bundle", bundleFile, "--expected", expectedFile,
+		"--head-acceptance", acceptedFile, "--trust-dir", trustDir,
+		"--agentd-evidence-endpoint", "https://127.0.0.1:9443",
+		"--agentd-client-cert", filepath.Join(root, "no-client.crt"),
+		"--agentd-client-key", filepath.Join(root, "no-client.key"),
+		"--agentd-server-ca", filepath.Join(root, "no-server-ca.pem"),
+		"--agentd-server-name", "agentd.test",
+	}
+	assertUntrusted := func(stage string) {
+		t.Helper()
+		if err := run(args); !errors.Is(err, errHeadAcceptance) {
+			t.Fatalf("%s: CLI failed to enforce signed Head gate before source: %v", stage, err)
+		}
+	}
+	assertUntrusted("missing acceptance")
+	_, roguePrivate, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(acceptedFile, signAcceptedHead(t, statement, roguePrivate), 0600); err != nil {
+		t.Fatal(err)
+	}
+	assertUntrusted("wrong signing authority")
+	if err := os.WriteFile(acceptedFile, signAcceptedHead(t, statement, private), 0600); err != nil {
+		t.Fatal(err)
+	}
+	edited := binding
+	edited.AgentDHead = &agentDHeadBinding{
+		InspectCount: binding.AgentDHead.InspectCount,
+		JournalVersion: binding.AgentDHead.JournalVersion,
+		Digest: "sha256:" + strings.Repeat("f", 64),
+	}
+	writeJSON(expectedFile, edited)
+	assertUntrusted("copied or altered Head in locally supplied expected file")
+	writeJSON(expectedFile, binding)
+	// A correctly signed acceptance passes this provenance preflight, but
+	// cannot make an unsigned recovery bundle or missing TLS credentials
+	// into a valid source proof. The rest of G05 MUST still fail closed.
+	if err := run(args); err == nil || errors.Is(err, errHeadAcceptance) {
+		t.Fatalf("genuine signed Head acceptance bypassed other release gates, or was wrongly rejected: %v", err)
 	}
 }
