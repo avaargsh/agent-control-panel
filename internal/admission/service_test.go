@@ -3,6 +3,7 @@ package admission
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/avaargsh/agent-control-panel/internal/issuegoal"
 	"github.com/avaargsh/agent-control-panel/internal/runintent"
 	runpg "github.com/avaargsh/agent-control-panel/internal/runintent/postgres"
 	"github.com/jackc/pgx/v5"
@@ -272,4 +274,50 @@ func TestAdmitPostgresReplayAndPolicyConflict(t *testing.T) {
 	if intents != 3 || events != 3 {
 		t.Fatalf("catalog denial wrote unexpected state: %d,%d", intents, events)
 	}
+	// Exercise the new Issue Goal composition against the same real
+	// PostgreSQL catalog, input transaction and Outbox. Source verification
+	// is intentionally a test double here, NOT a real GitHub proof.
+	if _, err := pool.Exec(ctx, "UPDATE admission_memberships SET role='RUNNER' WHERE tenant_id='tenant-a'"); err != nil {
+		t.Fatal(err)
+	}
+	goalWire := preparedGoalWire(t)
+	allowFixtureSource := sourceVerifierFunc(func(_ context.Context, target Target, input issuegoal.Input) error {
+		if target.TenantID != "tenant-a" || input.IssueSnapshotDigest != "sha256:"+strings.Repeat("4", 64) && input.IssueSnapshotDigest != "sha256:"+strings.Repeat("5", 64) {
+			return errors.New("invalid fixture source")
+		}
+		return nil
+	})
+	goalFirst, goalCreated, err := catalogSvc.AdmitPreparedIssueGoal(ctx, goalWire, allowFixtureSource)
+	if err != nil || !goalCreated || goalFirst.PrincipalID != "catalog-principal" || goalFirst.RunID != "" {
+		t.Fatalf("real PG Issue Goal initial admission failed: created=%v err=%v", goalCreated, err)
+	}
+	goalReplay, goalCreated, err := catalogSvc.AdmitPreparedIssueGoal(ctx, goalWire, allowFixtureSource)
+	if err != nil || goalCreated || goalReplay.ID != goalFirst.ID {
+		t.Fatalf("real PG Issue Goal replay changed identity: created=%v err=%v", goalCreated, err)
+	}
+	changed, err := issuegoal.Prepare([]byte(strings.Replace(issueGoalManifest,
+		"sha256:"+strings.Repeat("4", 64), "sha256:"+strings.Repeat("5", 64), 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	changedWire, err := json.Marshal(changed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := catalogSvc.AdmitPreparedIssueGoal(ctx, changedWire, allowFixtureSource); !errors.Is(err, runpg.ErrIdempotencyConflict) {
+		t.Fatalf("changed immutable Issue snapshot bypassed replay conflict: %v", err)
+	}
+	if _, err := pool.Exec(ctx, "UPDATE admission_memberships SET role='VIEWER' WHERE tenant_id='tenant-a'"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := catalogSvc.AdmitPreparedIssueGoal(ctx, goalWire, allowFixtureSource); !errors.Is(err, ErrPolicyDenied) {
+		t.Fatalf("Issue Goal replay bypassed live catalog revocation: %v", err)
+	}
+	if err := pool.QueryRow(ctx, "SELECT (SELECT count(*) FROM run_intents), (SELECT count(*) FROM outbox_events)").Scan(&intents, &events); err != nil {
+		t.Fatal(err)
+	}
+	if intents != 4 || events != 4 {
+		t.Fatalf("Issue Goal idempotency/revocation emitted extra writes: %d,%d", intents, events)
+	}
+
 }

@@ -1,94 +1,49 @@
 # Agent Control Panel
 
-Agent Infrastructure Control Plane for self-hosted, Kubernetes-first agent workloads.
+Agent Control Panel (ACP) is the control plane for self-hosted agent workloads. It owns Tenant and Project scope, Agent and Release configuration, SessionIdentity, and durable RunIntent admission.
 
-> **Product boundary:** Agent Control Plane owns desired state, identity, governance, federation and lifecycle. Agent Runtime owns execution semantics. Sandbox and compute providers own the execution substrate.
+A RunIntent records ACP's acceptance of an execution request. Agent Runtime creates the canonical Run and Workflow IDs and owns execution, retries, and recovery. ACP can retain verified references to Runtime records. EngageGuard owns approvals and protected effects. External query executors retain authority over query execution. Sandbox and compute providers manage execution infrastructure.
 
-## Product intent
+## What this repository implements
 
-Build an API-first control plane to deploy, govern, observe and recover agent workloads across execution environments. The platform composes mature open-source systems instead of reimplementing workflow engines, sandbox runtimes, IAM, policy engines or GPU schedulers.
-
-The initial Golden Path is:
-
-`AgentBundle → AgentRelease → Agent Identity → Session → Run Intent → Workflow Adapter → Sandbox Provider → Execution → Evidence`
-
-This path must demonstrate stable identity, recoverable Session/Run state, safe reconciliation, authorization, credential revocation and linked audit evidence.
-
-## Core domain resources
-
-| Resource | Authority |
+| Component | Implementation |
 |---|---|
-| Agent | Logical agent identity and desired configuration |
-| AgentBundle | Versioned declarative agent package and runtime requirements |
-| AgentRelease | Release intent, rollout and release governance |
-| Session | Canonical user/agent conversation-work identity across Runs |
-| RunIntent | ACP-owned, durably accepted desired execution request; not a Run or execution receipt |
-| Run | Runtime-owned execution record and lifecycle, exposed here only as a verified read-only projection |
-| FederationBinding | Binding to a remote control plane/provider |
-| CredentialBinding | References to external credential authorities; never raw secret material |
-| ContextProjectionPolicy | Rules for selecting/projecting context into an execution |
-| Evidence | Immutable references and attestations for lifecycle and execution outcomes |
+| Operations HTTP service | [`cmd/agent-control-panel`](cmd/agent-control-panel) exposes liveness, readiness, and service metadata. Readiness reflects process availability. |
+| RunIntent admission | [`internal/admission`](internal/admission) validates execution input and authorizes it against the ACP catalog. The PostgreSQL repository persists the admitted input, principal snapshot, RunIntent, and Outbox event in one transaction. Admission is an internal Go interface. |
+| RunIntent persistence and messaging | [`internal/runintent`](internal/runintent) and [`internal/inboxtransport`](internal/inboxtransport) implement PostgreSQL persistence, transactional Outbox publishing, ordered Inbox consumption, and transport handling. Schema changes live in [`migrations`](migrations). |
+| Runtime reconciliation | [`internal/runtimeinspect`](internal/runtimeinspect) provides an authenticated, read-only client for inspecting RunIntent outcomes. Ambiguous outcomes remain `UNKNOWN` until reconciled with Runtime. |
+| Internal execution authority | [`cmd/acp-authority-api`](cmd/acp-authority-api) serves tenant-scoped RunIntent lookups over mTLS with read-only PostgreSQL access. It can also serve signed Decision publication records when configured with release artifacts and a signing key. |
+| Workspace persistence | [`internal/workspace`](internal/workspace) and the PostgreSQL repository implement manifest revisions, upload recovery, and verified reads of S3-compatible objects. |
 
-The Control Plane owns logical Agent/Session identity, RunIntent and desired state. **Agent Runtime alone creates canonical `run_id`/`workflow_id` and owns Run/Task/Attempt state**; ACP may retain verified, access-controlled references to those records. It does not duplicate workflow history, worker scheduling, step retries, checkpoints or sandbox internals.
+The operations HTTP service exposes GET endpoints only. The table describes repository components and does not establish production deployment or authorize Runtime dispatch, protected effects, or provider mutations.
 
-## Responsibility boundaries
+## Local development
 
-- **Agent Control Plane:** domain resources, desired state, lifecycle coordination, authorization delegation, release governance, federation and evidence links.
-- **Agent Runtime / workflow engine (Temporal or compatible):** durable execution, step semantics, retries, waits, checkpoints and worker orchestration.
-- **Sandbox Provider (OpenKruise Agents, OpenSandbox, etc.):** isolated execution environment lifecycle, filesystem/runtime and sandbox-level network enforcement.
-- **Compute Control Plane (`compute-control-panel`):** cluster/provider inventory, compute allocation and accelerator lifecycle.
-- **Identity / secrets / policy:** integrate Keycloak or an OIDC provider, OpenBao/Kubernetes Secret, and mature policy systems (OPA/Casbin/Cedar) through adapters.
-- **`agent-control-panel` UI:** operator and developer UX only; no separate authority or lifecycle source of truth.
+Use the Go version declared by [`go.mod`](go.mod) or the patched version pinned in [CI](.github/workflows/go.yml).
 
-`gpu-compute-platform` is retired as an active delivery repository and is retained only as historical migration/reference material. New Compute implementation and release evidence belong exclusively to `compute-control-panel`.
+```sh
+go run ./cmd/agent-control-panel
+```
 
-## Architecture principles
+In another terminal:
 
-1. API-first, Kubernetes-first, self-hosted.
-2. Reconcile desired state; persist identity and lifecycle state independently from runtime processes.
-3. Explicitly separate AgentIdentity, SessionIdentity and WorkloadIdentity.
-4. Treat provider operations as asynchronous, idempotent and recoverable; unknown outcomes remain unknown until reconciled.
-5. Evidence links outcomes to the exact release, run, provider operation and observation.
-6. Reuse Temporal, OpenKruise Agents, Kueue/KAI/Volcano, Keycloak/OpenBao and existing gateways through narrow adapters.
-7. Keep secrets out of Agent manifests, prompts, sandbox metadata and logs.
-8. Keep UI, Runtime and Compute Control Plane separate deployable/repository boundaries.
+```sh
+curl --fail http://127.0.0.1:8080/livez
+curl --fail http://127.0.0.1:8080/readyz
+curl --fail http://127.0.0.1:8080/api/v1/meta
+```
 
-## Initial implementation sequence
+`LISTEN_ADDR` defaults to `127.0.0.1:8080`.
 
-- **P0 — Contract and Golden Path:** resource/API contracts; AgentBundle → Release → Session → Run; persistence; Run state machine; workflow adapter contract; Sandbox Provider SPI; restart recovery and idempotent reconciliation.
-- **P0 — Identity and authorization:** identity separation; scoped authorization; credential binding/revocation; audit correlation.
-- **P0 — Evidence:** immutable references for release/run/provider operation and verification outcome.
-- **P1 — OpenKruise Agents adapter:** SandboxClaim/Set lifecycle, warm pool, pause/resume, network policy and credential injection references.
-- **P1 — Federation and multi-cluster:** explicit provider bindings and canonical IDs.
-- **P1 — UI:** operate the API contracts, with no duplicate business authority.
-- **P2 — GPU workloads:** integrate with Compute Control Plane and mature queue/scheduler providers.
+Run the Go test suite with `go test -race ./...`. PostgreSQL tests require `PGTEST_DSN` pointing to an isolated test database. The [Go and PostgreSQL workflow](.github/workflows/go.yml) shows the CI setup. The [RunIntent admission guide](docs/implementation/RUNINTENT-ADMISSION.md) documents the opt-in live identity-provider test.
 
-## Non-goals
+## Changes and release evidence
 
-This project does not implement a new Agent framework, model serving stack, durable workflow engine, sandbox runtime, MCP gateway, enterprise IAM, policy language or GPU scheduler. It does not treat a model response or workflow history as authorization evidence.
-
-## Development status
-
-This repository is the rewrite target. The architecture contract and P0 Golden Path should be established before broad feature porting. Legacy functionality is not presumed to be part of the new public contract; migrate only after mapping ownership, invariants and acceptance evidence.
-
-## Merge governance and evidence boundaries
-
-A green CI result is evidence only for its **exact commit, workflow, environment and exercised assertions**. A GitHub mergeable indicator, merged feature child PR, or historical test receipt does not establish production authorization. PRs must state the target (`main` or an internal feature branch), base/head SHAs, affected authoritative writer and interface revision, test/negative-case receipts, migrations/rollback, unresolved gates and explicit non-goals. See the [PR evidence template](.github/PULL_REQUEST_TEMPLATE.md).
-
-For changes involving runtime dispatch, protected effects, or provider release, the relevant owners must verify the applicable cross-service gates before promotion to `main`: [G01 RunIntent/Run identity and lost ACK](https://github.com/avaargsh/agent-control-panel/issues/3), [G02 Decision wire compatibility](https://github.com/avaargsh/agent-decision/issues/9), [G03 Guard ActionHash/Permit authority](https://github.com/avaargsh/EngageGuard/issues/3), [G04 Compute provider release/reconciliation](https://github.com/avaargsh/compute-control-panel/issues/3), and [G05 durable PostgreSQL/Temporal golden path](https://github.com/avaargsh/agent-runtime/issues/5). These issue references define review scope, **not** a claim that any gate has passed.
-
-Documentation-only governance corrections may be merged independently when they do not enable a runtime path, publish an unratified protocol as authoritative, or misrepresent historical PR topology as current. A Draft implementation stacked on a non-main parent is **not approved for main** merely because its local tests pass. External side-effect outcomes in `UNKNOWN` remain `UNKNOWN` until inspected by their owning service; do not blindly dispatch, mark FAILED, or finalize cost. Branch protection/required-check enforcement is a separate repository-settings obligation and is **not** established by this README or the PR template.
-
-## Development implementation (not a production release)
-
-The Go development baseline includes the RunIntent/PostgreSQL repository, transactional Outbox publisher, ordered Inbox consumer, broker settlement experiments and authenticated **read-only** Runtime InspectRunIntent client. The selected implementation is integrated from the reviewed internal stack through [ACP PR #14](https://github.com/avaargsh/agent-control-panel/pull/14); the historical cross-service Decision/Guard fixture snapshots are **not** normative protocol sources.
-
-- Source code: `internal/runintent/`, `internal/runtimeinspect/`, `internal/inboxtransport/`; PostgreSQL SQL: `migrations/`.
-- Tests: Go race/PostgreSQL, cross-process read-only Runtime lost-ACK, JetStream POC and contract compatibility.
-- Development means these components may be exercised in controlled test environments; it **does not** enable production dispatch, provide verified operator identity for all deployments, or prove G01–G05.
-- Real credential issuance/revocation, broker operations, Temporal restart, production delivery topology and protected-action Guard/Compute effects remain separate integration and release work.
+Use the [PR evidence template](.github/PULL_REQUEST_TEMPLATE.md) to record the base and head commits, affected authority boundaries, verification, and any open gates. CI evidence applies to the tested commit, environment, and assertions. Changes that enable Runtime dispatch, protected effects, or provider mutations require evidence from the services that own those operations.
 
 ## Documentation
 
+- [Domain ownership](docs/architecture/DOMAIN-OWNERSHIP.md)
 - [Architecture baseline](docs/architecture/BASELINE.md)
-- [P0 Golden Path](docs/roadmap/P0-GOLDEN-PATH.md)
+- [P0 Golden Path design](docs/roadmap/P0-GOLDEN-PATH.md)
+- [Workspace manifest persistence](docs/implementation/WORKSPACE-MANIFEST-CAS.md)
