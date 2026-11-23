@@ -74,6 +74,27 @@ SELECT COALESCE((
          AND p.roles @> ARRAY['sandbox_agentd_evidence_reader'::name]
          AND p.qual LIKE '%sandbox_agentd_evidence_tenant%'
      ) = 3
+     -- PostgreSQL OR-combines permissive policies. A newly granted
+     -- SELECT TO PUBLIC policy would expose foreign-tenant source rows
+     -- even while all three expected scoped policies remain installed.
+     -- Deny policy drift, rather than merely checking their presence.
+     AND NOT EXISTS (
+       SELECT 1 FROM pg_policies p
+       WHERE p.schemaname='public'
+         AND p.tablename IN (
+           'sandbox_agentd_attempts',
+           'sandbox_agentd_terminal_receipts',
+           'sandbox_agentd_inspect_events'
+         )
+         AND NOT (
+           (p.tablename='sandbox_agentd_attempts'
+             AND p.policyname='agentd_attempt_evidence_reader_tenant')
+           OR (p.tablename='sandbox_agentd_terminal_receipts'
+             AND p.policyname='agentd_terminal_evidence_reader_tenant')
+           OR (p.tablename='sandbox_agentd_inspect_events'
+             AND p.policyname='agentd_inspect_evidence_reader_tenant')
+         )
+     )
      AND NOT EXISTS (
        SELECT 1 FROM pg_auth_members m
        WHERE m.member = r.oid
