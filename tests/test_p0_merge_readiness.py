@@ -248,5 +248,44 @@ class P0MergePolicyTests(unittest.TestCase):
         self.assertDenied(state, "scope")
 
 
+    def test_pinned_required_app_rejects_matching_name_from_wrong_app(self):
+        state = complete()
+        state["protection"]["required_status_checks"]["checks"][0]["app_id"] = 15368
+        state["checks"][0]["app"] = {"id": 99999, "slug": "unrelated-app"}
+        state["checks"][0]["id"] = 101
+        self.assertDenied(state, "check")
+
+    def test_newer_unrelated_app_cannot_supersede_required_app_failure(self):
+        state = complete()
+        state["protection"]["required_status_checks"]["checks"][0]["app_id"] = 15368
+        state["checks"][0].update({
+            "id": 101, "app": {"id": 15368}, "conclusion": "failure",
+        })
+        state["checks"].append({
+            "id": 202, "name": "Go + PG + Race", "head_sha": HEAD,
+            "status": "completed", "conclusion": "success",
+            "app": {"id": 99999},
+        })
+        self.assertDenied(state, "check")
+
+    def test_newer_unrelated_failure_does_not_hide_required_app_success(self):
+        state = complete()
+        state["protection"]["required_status_checks"]["checks"][0]["app_id"] = 15368
+        state["checks"][0].update({
+            "id": 101, "app": {"id": 15368}, "conclusion": "success",
+        })
+        state["checks"].append({
+            "id": 202, "name": "Go + PG + Race", "head_sha": HEAD,
+            "status": "completed", "conclusion": "failure",
+            "app": {"id": 99999},
+        })
+        self.assertEqual(evaluate(state, expected_head=HEAD), [])
+
+    def test_malformed_required_app_id_never_becomes_unbound_context(self):
+        state = complete()
+        state["protection"]["required_status_checks"]["checks"][0]["app_id"] = "15368"
+        self.assertDenied(state, "check")
+
+
 if __name__ == "__main__":
     unittest.main()

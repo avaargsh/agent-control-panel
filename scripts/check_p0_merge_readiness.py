@@ -96,10 +96,23 @@ def evaluate(state, *, expected_head, expected_main=None):
     if statuses.get("strict") is not True:
         errors.append("main protected checks are not strict on current base")
 
-    contexts = [c.get("context") for c in statuses.get("checks", [])
-                if isinstance(c, dict) and c.get("context")]
-    if not contexts:
-        contexts = [c for c in statuses.get("contexts", []) if isinstance(c, str) and c]
+    # GitHub's required_status_checks.checks may pin the required check to
+    # a specific GitHub App. A same-named check from ANOTHER app must never
+    # satisfy that rule, nor mask the pinned app's failed/successful result.
+    # app_id=-1 or a legacy contexts-only requirement is intentionally
+    # source-unbound because that is how the repository rule is configured.
+    required_checks = statuses.get("checks")
+    required = []
+    if isinstance(required_checks, list) and required_checks:
+        for item in required_checks:
+            if not isinstance(item, dict) or not isinstance(item.get("context"), str) or not item["context"]:
+                errors.append("invalid required check source binding")
+                continue
+            required.append((item["context"], item.get("app_id")))
+    else:
+        required = [(c, None) for c in statuses.get("contexts", [])
+                    if isinstance(c, str) and c]
+    contexts = [name for name, _ in required]
     if not contexts or len(set(contexts)) != len(contexts):
         errors.append("no unambiguous required job check contexts are configured")
 
@@ -123,21 +136,31 @@ def evaluate(state, *, expected_head, expected_main=None):
         if record.get("state") == "CHANGES_REQUESTED":
             errors.append("unresolved review requests changes from " + login)
 
-    by_name = {}
     if not isinstance(checks, list):
         errors.append("missing complete exact-HEAD check runs")
         checks = []
-    for c in checks:
-        if not isinstance(c, dict) or not isinstance(c.get("name"), str):
+    for context, app_id in required:
+        if app_id is not None and (type(app_id) is not int or
+                                   (app_id != -1 and app_id <= 0)):
+            errors.append("invalid required check app binding: " + context)
             continue
-        name = c["name"]
-        old = by_name.get(name)
-        if old is None or int(c.get("id") or 0) >= int(old.get("id") or 0):
-            by_name[name] = c
-    for context in contexts:
-        check = by_name.get(context)
-        if (check is None or check.get("head_sha") != source_head or
-                check.get("status") != "completed" or check.get("conclusion") != "success"):
+        candidate = None
+        for c in checks:
+            if not isinstance(c, dict) or c.get("name") != context:
+                continue
+            if app_id not in (None, -1):
+                app = c.get("app")
+                if not isinstance(app, dict) or app.get("id") != app_id:
+                    continue
+            check_id = c.get("id") or 0
+            if type(check_id) is not int or check_id < 0:
+                errors.append("malformed exact-HEAD check run: " + context)
+                continue
+            if candidate is None or check_id >= (candidate.get("id") or 0):
+                candidate = c
+        if (candidate is None or candidate.get("head_sha") != source_head or
+                candidate.get("status") != "completed" or
+                candidate.get("conclusion") != "success"):
             errors.append("missing, stale, skipped or failing required check: " + context)
     return errors
 
