@@ -96,6 +96,7 @@ func VerifyInspectChain(events []JournaledInspection, expected Ref, key ed25519.
 	}
 	previous := ""
 	var priorTime time.Time
+	var terminalState, terminalDigest string
 	for i, row := range events {
 		var event InspectEvent
 		if !decodeInspect(row.Payload, &event) || event != row.Event ||
@@ -113,9 +114,13 @@ func VerifyInspectChain(events []JournaledInspection, expected Ref, key ed25519.
 		if err != nil || t.After(now.Add(10*time.Second)) || (!priorTime.IsZero() && t.Before(priorTime)) {
 			return ErrUnverified
 		}
+		// A source-signed terminal is immutable for the original command
+		// attempt. Later valid signatures cannot roll it back to UNKNOWN,
+		// change EXITED into FAILED_CONFIRMED, or substitute a different
+		// original OS Wait digest. Reinspection of the same receipt is safe.
 		switch event.State {
 		case Unknown:
-			if event.ExitReceiptDigest != "" {
+			if event.ExitReceiptDigest != "" || terminalState != "" {
 				return ErrUnverified
 			}
 		case Exited, FailedConfirmed:
@@ -128,6 +133,11 @@ func VerifyInspectChain(events []JournaledInspection, expected Ref, key ed25519.
 					return ErrUnverified
 				}
 			}
+			if terminalState != "" &&
+				(terminalState != event.State || terminalDigest != event.ExitReceiptDigest) {
+				return ErrUnverified
+			}
+			terminalState, terminalDigest = event.State, event.ExitReceiptDigest
 		default:
 			return ErrUnverified
 		}
