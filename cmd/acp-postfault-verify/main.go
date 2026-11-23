@@ -65,7 +65,8 @@ func run(args []string) error {
 	flags := flag.NewFlagSet("acp-postfault-verify", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	bundlePath := flags.String("bundle", "", "externally signed recovery bundle")
-	expectedPath := flags.String("expected", "", "independent ACP/Runtime/AgentD same-Run binding and trusted Inspect Head")
+	expectedPath := flags.String("expected", "", "original ACP/Runtime/AgentD same-Run binding and pinned Inspect Head")
+	headAcceptancePath := flags.String("head-acceptance", "", "independently signed Run/Guard/AgentD Head acceptance envelope")
 	trustDir := flags.String("trust-dir", "", "out-of-band trusted authority public keys")
 	agentDEndpoint := flags.String("agentd-evidence-endpoint", "", "trusted HTTPS AgentD evidence endpoint")
 	agentDClientCert := flags.String("agentd-client-cert", "", "per-tenant mTLS client certificate PEM")
@@ -73,10 +74,10 @@ func run(args []string) error {
 	agentDServerCA := flags.String("agentd-server-ca", "", "trusted AgentD HTTPS server CA PEM")
 	agentDServerName := flags.String("agentd-server-name", "", "expected AgentD HTTPS server certificate name")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 ||
-		*bundlePath == "" || *expectedPath == "" || *trustDir == "" ||
+		*bundlePath == "" || *expectedPath == "" || *headAcceptancePath == "" || *trustDir == "" ||
 		*agentDEndpoint == "" || *agentDClientCert == "" || *agentDClientKey == "" ||
 		*agentDServerCA == "" || *agentDServerName == "" {
-		return errors.New("requires bundle, expected binding, trust keys and AgentD mTLS endpoint/certificate/CA/server-name; absence is not a PASS")
+		return errors.New("requires bundle, expected binding, independently signed Head acceptance, trust keys and AgentD mTLS endpoint/certificate/CA/server-name; absence is not a PASS")
 	}
 	data, err := privateBoundedInput(*bundlePath)
 	if err != nil || len(data) > maxBundleBytes {
@@ -119,6 +120,24 @@ func run(args []string) error {
 		keys[authority] = ed25519.PublicKey(raw)
 	}
 	now := time.Now().UTC()
+	// The expected Head is a claim until an INDEPENDENT acceptor signs the
+	// exact original Run/Guard/Permit/Attempt/Head. A copied AgentD response
+	// or locally edited expected JSON must never become its own trust anchor.
+	acceptanceBytes, err := privateBoundedInput(*headAcceptancePath)
+	if err != nil || len(acceptanceBytes) > maxHeadAcceptanceBytes {
+		return errHeadAcceptance
+	}
+	headKeyBytes, err := privateBoundedInput(filepath.Join(*trustDir, "head-acceptor.pub"))
+	if err != nil || len(headKeyBytes) > 128 {
+		return errHeadAcceptance
+	}
+	headKey, err := hex.DecodeString(strings.TrimSpace(string(headKeyBytes)))
+	if err != nil || len(headKey) != ed25519.PublicKeySize {
+		return errHeadAcceptance
+	}
+	if err := verifyHeadAcceptance(acceptanceBytes, expected, ed25519.PublicKey(headKey), keys, now); err != nil {
+		return err
+	}
 	if err := postfault.Verify(bundle, keys, now); err != nil {
 		return err
 	}
