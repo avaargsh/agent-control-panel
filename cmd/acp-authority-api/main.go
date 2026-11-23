@@ -78,7 +78,17 @@ func serve(ctx context.Context, c config) error {
 	if err != nil {
 		return errors.New("authority database unavailable")
 	}
+	if err := verifyAuthorityDatabaseRole(ctx, pool); err != nil {
+		return err
+	}
 	repo := runpg.New(pool)
+	// Database privileges are independently mutable after startup.
+	// Recheck on each authenticated authority/publication request, not only
+	// on initial pool.Ping. A failed check denies the request before reading
+	// RunIntent data or publishing a Decision receipt.
+	readGuard := func(requestCtx context.Context) error {
+		return verifyAuthorityDatabaseRole(requestCtx, pool)
+	}
 	var handler http.Handler
 	if c.publicationKey != "" {
 		file, err := os.Open(c.publicationKey)
@@ -98,12 +108,12 @@ func serve(ctx context.Context, c config) error {
 			return err
 		}
 		defer publisher.Close()
-		handler, err = authorityhttp.NewPublicationHandler(repo, publisher, c.peer, c.tenant)
+		handler, err = authorityhttp.NewGuardedPublicationHandler(repo, publisher, c.peer, c.tenant, readGuard)
 		if err != nil {
 			return err
 		}
 	} else {
-		handler, err = authorityhttp.NewHandler(repo, c.peer, c.tenant)
+		handler, err = authorityhttp.NewGuardedHandler(repo, c.peer, c.tenant, readGuard)
 		if err != nil {
 			return err
 		}
