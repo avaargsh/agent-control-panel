@@ -109,6 +109,9 @@ func TestSubmitCLIHoldRecordFailsClosedBeforeNetwork(t *testing.T) {
 			if err := os.Mkdir(dir, 0755); err != nil {
 				t.Fatal(err)
 			}
+			if err := os.Chmod(dir, 0755); err != nil {
+				t.Fatal(err)
+			}
 			return filepath.Join(dir, "hold.json")
 		}},
 		{"relative-path", func(t *testing.T) string { return "relative-hold.json" }},
