@@ -137,6 +137,11 @@ func (c AgentDEvidenceClient) Read(ctx context.Context, ref AgentDWaitRef,
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
+	// An automatically negotiated gzip response is transparently decoded
+	// by Go's Transport, which removes Content-Encoding before validation.
+	// Explicit identity prevents that negotiation and preserves the wire
+	// encoding so a compressed source export fails closed.
+	req.Header.Set("Accept-Encoding", "identity")
 	response, err := c.httpClient().Do(req)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -145,7 +150,9 @@ func (c AgentDEvidenceClient) Read(ctx context.Context, ref AgentDWaitRef,
 		return empty, ErrAgentDEvidenceUnavailable
 	}
 	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
+	if response.StatusCode != http.StatusOK || response.Uncompressed {
+		// Response.Uncompressed exposes transports that already decoded
+		// gzip and stripped the evidence Content-Encoding header.
 		return empty, ErrAgentDEvidenceUnavailable
 	}
 	mediaType, _, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
