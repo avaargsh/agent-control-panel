@@ -102,13 +102,17 @@ func TestCatalogGoalHTTPRealTLSIntrospectionAndPostgres(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		token := r.FormValue("token")
-		if token != "valid-test-bearer" {
+		if token != "valid-test-bearer" && token != "other-client-bearer" {
 			_, _ = io.WriteString(w, `{"active":false}`)
 			return
 		}
+		clientID := "ci-runner"
+		if token == "other-client-bearer" {
+			clientID = "other-client"
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"active": true, "iss": issuerURL, "sub": "operator-subject",
-			"aud": "acp-control-plane", "client_id": "ci-runner",
+			"aud": "acp-control-plane", "client_id": clientID,
 			"scope": admission.RunIntentCreateScope, "token_type": "Bearer",
 			"exp": time.Now().Add(5 * time.Minute).Unix(),
 		})
@@ -238,6 +242,17 @@ func TestCatalogGoalHTTPRealTLSIntrospectionAndPostgres(t *testing.T) {
 	}
 	if code, _ := lookupStatus("invalid-test-bearer"); code != http.StatusUnauthorized {
 		t.Fatalf("invalid OAuth bearer could inspect status: HTTP %d", code)
+	}
+// A newly authorized OAuth client with the SAME subject/principal and
+	// live Catalog membership must not inspect another client's original
+	// admission receipt. The persisted admission origin is immutable.
+	if _, err := pool.Exec(ctx,
+		"INSERT INTO admission_memberships VALUES ('tenant-a','project-a','principal-a','other-client','RUNNER',true)"); err != nil {
+		t.Fatal(err)
+	}
+	if code, status := lookupStatus("other-client-bearer"); code != http.StatusNotFound ||
+		status["error"] != "not_found_or_denied" {
+		t.Fatalf("other authorized client crossed original admission origin: HTTP %d %#v", code, status)
 	}
 	if deniedCode, _ := send("invalid-test-bearer"); deniedCode != http.StatusUnauthorized {
 		t.Fatalf("invalid bearer bypassed identity: %d", deniedCode)
