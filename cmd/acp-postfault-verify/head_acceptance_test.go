@@ -106,11 +106,16 @@ func TestHeadAcceptanceRequiresIndependentSignerAndExactOriginalRunPermitHead(t 
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			statement := base
-			// Marshal/unmarshal deep copies nested Ref/Head pointers.
+			// Decode into a zero-value destination. Decoding into a
+			// shallow copy of base reuses non-nil AgentDRef/Head pointers
+			// and corrupts expected when the negative case mutates them.
 			raw, err := json.Marshal(base)
-			if err != nil || json.Unmarshal(raw, &statement) != nil {
-				t.Fatal("invalid fixture")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var statement headAcceptanceStatement
+			if err := json.Unmarshal(raw, &statement); err != nil {
+				t.Fatal(err)
 			}
 			tc.change(&statement)
 			if err := verifyHeadAcceptance(signAcceptedHead(t, statement, acceptorPrivate),
