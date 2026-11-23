@@ -232,8 +232,8 @@ func TestVerifyInspectChainRejectsSignedTerminalRegressionAndMutation(t *testing
 		TenantID: "tenant-a", RunID: "run-a", RuntimeAttemptID: "runtime-attempt-a",
 		SandboxUID: "sandbox-a", CommandID: "command-a", AttemptID: "attempt-a",
 		ProviderCommandUID: "provider-command-a",
-		RequestDigest: "sha256:" + strings.Repeat("a", 64),
-		GuardPermitID: "permit-a", PermitEpoch: 1,
+		RequestDigest:      "sha256:" + strings.Repeat("a", 64),
+		GuardPermitID:      "permit-a", PermitEpoch: 1,
 		ProcessPID: 123, ProcessStartTicks: 10,
 		HostBootID: "00000000-0000-4000-8000-000000000000",
 	}
@@ -251,7 +251,7 @@ func TestVerifyInspectChainRejectsSignedTerminalRegressionAndMutation(t *testing
 		for i, step := range path {
 			event := InspectEvent{
 				Schema: InspectSchema, Source: "agentd.inspect", Ref: ref,
-				ObservedAt: now.Add(time.Duration(i) * time.Millisecond).Format(time.RFC3339Nano),
+				ObservedAt:   now.Add(time.Duration(i) * time.Millisecond).Format(time.RFC3339Nano),
 				InspectCount: uint64(i + 1), JournalVersion: uint64(i + 1),
 				PreviousDigest: previous, State: step.state,
 				ExitReceiptDigest: step.receipt, NextAction: Hold, DispatchCount: 1,
@@ -269,9 +269,9 @@ func TestVerifyInspectChainRejectsSignedTerminalRegressionAndMutation(t *testing
 		}
 		return events
 	}
-	cases := []struct{
-		name string
-		path []observation
+	cases := []struct {
+		name   string
+		path   []observation
 		reject bool
 	}{
 		{"unknown_to_terminal", []observation{{Unknown, ""}, {FailedConfirmed, terminalDigest}}, false},
