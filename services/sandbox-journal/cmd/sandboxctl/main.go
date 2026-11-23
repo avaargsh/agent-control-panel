@@ -223,9 +223,23 @@ func verifySandboxReadRole(ctx context.Context, pool *pgxpool.Pool) error {
 		    WHERE (r.rolname = session_user OR pg_has_role(session_user, r.oid, 'MEMBER'))
 		      AND (
 		        r.rolsuper OR r.rolcreatedb OR r.rolcreaterole OR r.rolreplication OR r.rolbypassrls
-		        OR r.rolname IN ('pg_read_all_data', 'pg_write_all_data', 'pg_monitor')
+		        -- PostgreSQL built-in roles can execute server programs, read
+		        -- or write server files, and signal backend sessions even
+		        -- without ordinary table ACLs. Ban all pg_* capability groups.
+		        OR left(r.rolname, 3) = 'pg_'
 		        OR has_database_privilege(r.oid, current_database(), 'CREATE')
-		        OR has_schema_privilege(r.oid, 'public', 'CREATE')
+		        -- CREATE on any non-system schema permits durable DDL even
+		        -- without database CREATE or table DML. A NOINHERIT member
+		        -- may also SET ROLE to a helper with foreign-schema CREATE.
+		        -- Exclude ephemeral/internal namespaces, not business ones.
+		        OR EXISTS (
+		          SELECT 1
+		          FROM pg_catalog.pg_namespace AS ns
+		          WHERE ns.nspname NOT IN ('pg_catalog', 'information_schema')
+		            AND ns.nspname NOT LIKE 'pg_toast%'
+		            AND ns.nspname NOT LIKE 'pg_temp_%'
+		            AND pg_catalog.has_schema_privilege(r.oid, ns.oid, 'CREATE')
+		        )
 		        OR has_table_privilege(r.oid, 'public.sandbox_lease_intents'::regclass, 'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
 		        OR has_table_privilege(r.oid, 'public.sandbox_journal_commands'::regclass, 'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
 		        OR has_table_privilege(r.oid, 'public.sandbox_lease_intent_events'::regclass, 'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
