@@ -75,7 +75,9 @@ func TestGoalStatusCLIRejectsUnboundOrUnsafeHoldWithoutNetwork(t *testing.T) {
 		name   string
 		mutate func(*testing.T, string)
 	}{
-		{"wrong-request-digest", func(t *testing.T, path string) { changeHoldJSON(t, path, "request_digest", "sha256:"+strings.Repeat("f", 64)) }},
+		{"wrong-request-digest", func(t *testing.T, path string) {
+			changeHoldJSON(t, path, "request_digest", "sha256:"+strings.Repeat("f", 64))
+		}},
 		{"wrong-idempotency-key", func(t *testing.T, path string) { changeHoldJSON(t, path, "idempotency_key", "other-attempt") }},
 		{"wrong-tenant", func(t *testing.T, path string) { changeHoldTarget(t, path, "tenant_id", "other-tenant") }},
 		{"wrong-project", func(t *testing.T, path string) { changeHoldTarget(t, path, "project_id", "other-project") }},
