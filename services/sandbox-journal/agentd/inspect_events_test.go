@@ -5,8 +5,10 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -218,5 +220,75 @@ func TestConcurrentInspectSourceJournalsOneOriginalAttemptInOrder(t *testing.T) 
 	}
 	if events[len(events)-1].Event.JournalVersion != parallel {
 		t.Fatal("parallel inspection did not advance exact journal version")
+	}
+}
+
+func TestVerifyInspectChainRejectsSignedTerminalRegressionAndMutation(t *testing.T) {
+	// All bytes and Ed25519 signatures in these cases are valid. The
+	// invariant under test is an immutable terminal for ONE original attempt,
+	// not signature authenticity or event ordering.
+	pub, priv := testSourceInspectKey(t)
+	ref := Ref{
+		TenantID: "tenant-a", RunID: "run-a", RuntimeAttemptID: "runtime-attempt-a",
+		SandboxUID: "sandbox-a", CommandID: "command-a", AttemptID: "attempt-a",
+		ProviderCommandUID: "provider-command-a",
+		RequestDigest: "sha256:" + strings.Repeat("a", 64),
+		GuardPermitID: "permit-a", PermitEpoch: 1,
+		ProcessPID: 123, ProcessStartTicks: 10,
+		HostBootID: "00000000-0000-4000-8000-000000000000",
+	}
+	if !ref.valid() {
+		t.Fatal("invalid original fixture")
+	}
+	terminalDigest := "sha256:" + strings.Repeat("b", 64)
+	otherDigest := "sha256:" + strings.Repeat("c", 64)
+	type observation struct{ state, receipt string }
+	now := time.Now().UTC()
+	build := func(path []observation) []JournaledInspection {
+		t.Helper()
+		events := make([]JournaledInspection, 0, len(path))
+		previous := ""
+		for i, step := range path {
+			event := InspectEvent{
+				Schema: InspectSchema, Source: "agentd.inspect", Ref: ref,
+				ObservedAt: now.Add(time.Duration(i) * time.Millisecond).Format(time.RFC3339Nano),
+				InspectCount: uint64(i + 1), JournalVersion: uint64(i + 1),
+				PreviousDigest: previous, State: step.state,
+				ExitReceiptDigest: step.receipt, NextAction: Hold, DispatchCount: 1,
+			}
+			raw, err := json.Marshal(event)
+			if err != nil {
+				t.Fatal(err)
+			}
+			record := JournaledInspection{
+				Event: event, Payload: raw, Signature: ed25519.Sign(priv, append([]byte(InspectDomain), raw...)),
+				Digest: digest(raw),
+			}
+			events = append(events, record)
+			previous = record.Digest
+		}
+		return events
+	}
+	cases := []struct{
+		name string
+		path []observation
+		reject bool
+	}{
+		{"unknown_to_terminal", []observation{{Unknown, ""}, {FailedConfirmed, terminalDigest}}, false},
+		{"same_terminal_reinspection", []observation{{Unknown, ""}, {FailedConfirmed, terminalDigest}, {FailedConfirmed, terminalDigest}}, false},
+		{"terminal_to_unknown", []observation{{Unknown, ""}, {FailedConfirmed, terminalDigest}, {Unknown, ""}}, true},
+		{"terminal_status_changed", []observation{{Unknown, ""}, {FailedConfirmed, terminalDigest}, {Exited, terminalDigest}}, true},
+		{"terminal_receipt_substituted", []observation{{Unknown, ""}, {FailedConfirmed, terminalDigest}, {FailedConfirmed, otherDigest}}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := VerifyInspectChain(build(tc.path), ref, pub, now.Add(time.Second))
+			if tc.reject && !errors.Is(got, ErrUnverified) {
+				t.Fatalf("signed terminal rollback or substitution accepted: %v", got)
+			}
+			if !tc.reject && got != nil {
+				t.Fatalf("valid immutable terminal history rejected: %v", got)
+			}
+		})
 	}
 }
