@@ -161,7 +161,7 @@ func NewGuardCapabilityHandler(
 			fail(http.StatusNotFound, "NOT_FOUND")
 			return
 		}
-		if r.Header.Get("Content-Type") != "application/json" || r.Body == nil {
+		if values := r.Header.Values("Content-Type"); len(values) != 1 || values[0] != "application/json" || r.Body == nil {
 			fail(http.StatusBadRequest, "INVALID_REQUEST")
 			return
 		}
