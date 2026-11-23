@@ -83,6 +83,13 @@ func (ca evidenceTestCA) certificate(t *testing.T, server bool, scope string) tl
 	if server {
 		leaf.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}
 		leaf.IPAddresses = []net.IP{net.ParseIP("127.0.0.1")}
+		if scope != "" {
+			uri, err := url.Parse(scope)
+			if err != nil {
+				t.Fatal(err)
+			}
+			leaf.URIs = []*url.URL{uri}
+		}
 	} else {
 		uri, err := url.Parse(scope)
 		if err != nil {
@@ -293,5 +300,41 @@ func TestG05MTLSConsumerDoesNotFollowRedirectToUntrustedEndpoint(t *testing.T) {
 		server.URL+AgentDEvidenceReadPath, agentDTestTLS(t, ca, expected),
 		b, keys, expected, head, now); err == nil || visited {
 		t.Fatalf("G05 followed untrusted redirect or accepted response: error=%v visited=%v", err, visited)
+	}
+}
+
+func TestG05MTLSConsumerRejectsSameCARogueServerIdentityBeforeSendingRunEvidence(t *testing.T) {
+	b, keys, expected, waitRaw, waitSig, events, head, now, _ := g05SourceFixture(t)
+	ca := newEvidenceTestCA(t)
+	wire := canonicalWireFixture(t, expected, waitRaw, waitSig, events, head)
+	for _, tc := range []struct {
+		name   string
+		server string
+	}{
+		{"missing_agentd_uri", ""},
+		{"wrong_same_ca_service", "spiffe://sandbox.test/role/unrelated-api"},
+		{"foreign_trust_domain", "spiffe://foreign.test/role/agentd-evidence-server"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requests := 0
+			server := httptest.NewUnstartedServer(sourceTestHandler(t, wire, http.StatusOK))
+			server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests++
+				sourceTestHandler(t, wire, http.StatusOK)(w, r)
+			})
+			server.TLS = &tls.Config{
+				Certificates: []tls.Certificate{ca.certificate(t, true, tc.server)},
+				ClientCAs: ca.pool, ClientAuth: tls.RequireAndVerifyClientCert,
+				MinVersion: tls.VersionTLS13,
+			}
+			server.StartTLS()
+			defer server.Close()
+			err := FetchAndVerifyAgentDEvidence(context.Background(),
+				server.URL+AgentDEvidenceReadPath, agentDTestTLS(t, ca, expected),
+				b, keys, expected, head, now)
+			if err == nil || requests != 0 {
+				t.Fatalf("same-CA wrong-server identity received original Run/Permit source request: err=%v requests=%d", err, requests)
+			}
+		})
 	}
 }
