@@ -13,7 +13,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -122,14 +122,10 @@ func run(args []string) error {
 	if err := postfault.Verify(bundle, keys, now); err != nil {
 		return err
 	}
-	httpClient, err := newAgentDEvidenceHTTPClient(*agentDClientCert, *agentDClientKey,
+	credentials, err := newAgentDEvidenceTLSConfig(*agentDClientCert, *agentDClientKey,
 		*agentDServerCA, *agentDServerName)
 	if err != nil {
 		return errors.New("per-tenant AgentD mTLS client configuration unavailable")
-	}
-	defer httpClient.CloseIdleConnections()
-	sourceClient := postfault.AgentDEvidenceClient{
-		Endpoint: *agentDEndpoint, HTTPClient: httpClient,
 	}
 	expectedWait := postfault.ExpectedAgentDWait{
 		Ref: *expected.AgentDRef, GuardOperationID: expected.AgentDGuardOperationID,
@@ -139,13 +135,30 @@ func run(args []string) error {
 		JournalVersion: expected.AgentDHead.JournalVersion,
 		Digest:         expected.AgentDHead.Digest,
 	}
-	if err := sourceClient.Verify(context.Background(), bundle, keys, expectedWait, trustedHead, now); err != nil {
-		return err
-	}
-	return nil
+	return verifyBoundAgentDEvidence(context.Background(), *agentDEndpoint,
+		credentials, bundle, keys, expectedWait, trustedHead, now)
 }
 
-func newAgentDEvidenceHTTPClient(certPath, keyPath, caPath, serverName string) (*http.Client, error) {
+// verifyBoundAgentDEvidence preserves the original CLI base-URL contract,
+// while enforcing the SAME mandatory mTLS identity boundary as the G05
+// verifier library. Never fall back to the raw AgentDEvidenceClient transport.
+func verifyBoundAgentDEvidence(ctx context.Context, endpoint string, credentials *tls.Config,
+	bundle postfault.Bundle, keys map[string]ed25519.PublicKey,
+	expected postfault.ExpectedAgentDWait, head postfault.TrustedAgentDInspectHead,
+	now time.Time) error {
+	uri, err := url.Parse(endpoint)
+	if err != nil || uri.Scheme != "https" || uri.Host == "" || uri.Hostname() == "" ||
+		uri.User != nil || uri.RawQuery != "" || uri.ForceQuery ||
+		uri.Fragment != "" || uri.Opaque != "" || uri.RawPath != "" ||
+		(uri.Path != "" && uri.Path != "/" && uri.Path != postfault.AgentDEvidenceReadPath) {
+		return errors.New("untrusted AgentD evidence endpoint")
+	}
+	uri.Path = postfault.AgentDEvidenceReadPath
+	return postfault.FetchAndVerifyAgentDEvidence(ctx, uri.String(), credentials,
+		bundle, keys, expected, head, now)
+}
+
+func newAgentDEvidenceTLSConfig(certPath, keyPath, caPath, serverName string) (*tls.Config, error) {
 	if strings.TrimSpace(serverName) == "" || strings.TrimSpace(serverName) != serverName {
 		return nil, errors.New("invalid AgentD TLS server name")
 	}
@@ -169,18 +182,12 @@ func newAgentDEvidenceHTTPClient(certPath, keyPath, caPath, serverName string) (
 	if !roots.AppendCertsFromPEM(caPEM) {
 		return nil, errors.New("AgentD server CA invalid")
 	}
-	transport := &http.Transport{
-		Proxy: nil,
-		TLSClientConfig: &tls.Config{
-			MinVersion:   tls.VersionTLS13,
-			RootCAs:      roots,
-			Certificates: []tls.Certificate{certificate},
-			ServerName:   serverName,
-		},
-		MaxIdleConns:        4,
-		MaxIdleConnsPerHost: 2,
-	}
-	return &http.Client{Transport: transport, Timeout: 10 * time.Second}, nil
+	return &tls.Config{
+		MinVersion:   tls.VersionTLS13,
+		RootCAs:      roots,
+		Certificates: []tls.Certificate{certificate},
+		ServerName:   serverName,
+	}, nil
 }
 
 func privateSecretInput(path string) ([]byte, error) {
