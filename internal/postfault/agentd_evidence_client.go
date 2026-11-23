@@ -45,7 +45,7 @@ type AgentDEvidenceReadResponse struct {
 	Ref         AgentDWaitRef `json:"ref"`
 	State       string        `json:"state"`
 	NextAction  string        `json:"next_action"`
-	Head        TrustedAgentDInspectHead
+	Head        TrustedAgentDInspectHead `json:"head"`
 	Inspections []AgentDEvidenceRecord `json:"inspections"`
 	Terminal    *AgentDEvidenceRecord  `json:"terminal,omitempty"`
 	CanRetry    bool                   `json:"can_retry"`
