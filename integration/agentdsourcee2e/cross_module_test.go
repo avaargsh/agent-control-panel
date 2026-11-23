@@ -352,45 +352,45 @@ func TestAgentDRealCrossModuleOriginalWaitInspectAndMTLS(t *testing.T) {
 	// Positive existence control: there really is an unrelated tenant's
 	// Attempt in the same database, even with colliding Sandbox/Command IDs.
 	// RLS may hide it; an absent target alone is not a security negative.
-	foreign := original
-	foreign.TenantID = "tenant-b"
-	foreign.RunID = "22222222-2222-4222-8222-222222222222"
-	foreign.RuntimeAttemptID = "runtime-attempt-b"
-	foreign.ProviderCommandUID = "process-uid-b"
+	foreignAttempt := original
+	foreignAttempt.TenantID = "tenant-b"
+	foreignAttempt.RunID = "22222222-2222-4222-8222-222222222222"
+	foreignAttempt.RuntimeAttemptID = "runtime-attempt-b"
+	foreignAttempt.ProviderCommandUID = "process-uid-b"
 	if _, err := db.Exec(ctx, `INSERT INTO public.sandbox_agentd_attempts
 		(tenant_id,run_id,runtime_attempt_id,sandbox_uid,command_id,attempt_id,
 		provider_command_uid,request_digest,guard_permit_id,permit_epoch,
 		process_pid,process_start_ticks,host_boot_id)
 		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
-		foreign.TenantID, foreign.RunID, foreign.RuntimeAttemptID, foreign.SandboxUID,
-		foreign.CommandID, foreign.AttemptID, foreign.ProviderCommandUID,
-		foreign.RequestDigest, foreign.GuardPermitID, foreign.PermitEpoch,
-		foreign.ProcessPID, foreign.ProcessStartTicks, foreign.HostBootID); err != nil {
+		foreignAttempt.TenantID, foreignAttempt.RunID, foreignAttempt.RuntimeAttemptID, foreignAttempt.SandboxUID,
+		foreignAttempt.CommandID, foreignAttempt.AttemptID, foreignAttempt.ProviderCommandUID,
+		foreignAttempt.RequestDigest, foreignAttempt.GuardPermitID, foreignAttempt.PermitEpoch,
+		foreignAttempt.ProcessPID, foreignAttempt.ProcessStartTicks, foreignAttempt.HostBootID); err != nil {
 		t.Fatalf("seed actual foreign-tenant original Attempt: %v", err)
 	}
 	var ownerForeign, readerForeign int
 	if err := db.QueryRow(ctx,
 		"SELECT count(*) FROM public.sandbox_agentd_attempts WHERE tenant_id=$1",
-		foreign.TenantID).Scan(&ownerForeign); err != nil || ownerForeign != 1 {
+		foreignAttempt.TenantID).Scan(&ownerForeign); err != nil || ownerForeign != 1 {
 		t.Fatalf("missing positive control for foreign tenant: count=%d err=%v", ownerForeign, err)
 	}
 	if err := reader.QueryRow(ctx,
 		"SELECT count(*) FROM public.sandbox_agentd_attempts WHERE tenant_id=$1",
-		foreign.TenantID).Scan(&readerForeign); err != nil || readerForeign != 0 {
+		foreignAttempt.TenantID).Scan(&readerForeign); err != nil || readerForeign != 0 {
 		t.Fatalf("authenticated reader leaked foreign tenant Attempt: count=%d err=%v", readerForeign, err)
 	}
 	tx, err := reader.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tx.Exec(ctx, "SELECT set_config('app.tenant_id',$1,true)", foreign.TenantID); err != nil {
+	if _, err := tx.Exec(ctx, "SELECT set_config('app.tenant_id',$1,true)", foreignAttempt.TenantID); err != nil {
 		_ = tx.Rollback(ctx)
 		t.Fatal(err)
 	}
 	var forgedForeign, retainedOwn int
 	if err := tx.QueryRow(ctx,
 		"SELECT count(*) FROM public.sandbox_agentd_attempts WHERE tenant_id=$1",
-		foreign.TenantID).Scan(&forgedForeign); err != nil {
+		foreignAttempt.TenantID).Scan(&forgedForeign); err != nil {
 		_ = tx.Rollback(ctx)
 		t.Fatal(err)
 	}
@@ -504,7 +504,7 @@ func TestAgentDRealCrossModuleOriginalWaitInspectAndMTLS(t *testing.T) {
 	}
 	// Cross-tenant HTTP scope denial must hold even when a real original
 	// attempt with colliding command identifiers exists in the source DB.
-	forgedRequest, err := json.Marshal(agentd.EvidenceReadRequest{Ref: foreign})
+	forgedRequest, err := json.Marshal(agentd.EvidenceReadRequest{Ref: foreignAttempt})
 	if err != nil {
 		t.Fatal(err)
 	}
