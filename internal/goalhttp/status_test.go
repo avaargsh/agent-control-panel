@@ -47,7 +47,7 @@ func TestGoalStatusRequiresSecurePreparedInputBeforeLookup(t *testing.T) {
 	}
 	tests := []struct {
 		name string
-		req *http.Request
+		req  *http.Request
 		code int
 	}{
 		{"cleartext", statusHTTPReq(raw, "secret", false), http.StatusUpgradeRequired},
