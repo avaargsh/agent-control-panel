@@ -155,6 +155,29 @@ matching original admission; **PENDING does not mean a Runtime Run started**,
 and `UNKNOWN` or `RECONCILING` does not mean the Runtime command has a
 trusted terminal receipt.
 
+For a submission originally made with `--hold-record`, pass the **same**
+operator-owned marker path to `status`:
+
+```sh
+go run ./cmd/acp-goal status \
+  --file /tmp/acp-proposal.json \
+  --hold-record /run/acp/hold/attempt-001.json \
+  --url https://127.0.0.1:9443/api/v1/goals:status \
+  --token-file /run/acp/secrets/goal-bearer \
+  --ca-file /run/acp/ca/goal-server-ca.pem
+```
+
+The opt-in `--hold-record` check reads an existing private regular file
+within an existing private directory. It rejects symlinks, overly permissive
+modes, oversized/duplicate-key/unknown-field JSON, and any difference in the
+original Target, IdempotencyKey, RequestDigest, schema or `UNKNOWN/HOLD`
+disposition **before any ACP network request**. The marker is neither
+overwritten nor deleted on a successful status lookup. This protects against
+accidentally reconciling one submitted attempt with another Prepared file;
+it is **local untrusted operator evidence, not a signed or source-authoritative
+Runtime/AgentD receipt**. The default `status` command without this optional
+flag remains unchanged for existing consumers.
+
 A `404` deliberately does **not** distinguish a missing record, a revoked
 membership, a different admission origin or a different request. No
 `NOT_FOUND_FINAL` or permission to retry is derived from this response. TLS,

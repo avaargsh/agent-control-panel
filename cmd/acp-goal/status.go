@@ -29,6 +29,7 @@ func status(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	endpoint := flags.String("url", "", "direct loopback TLS /api/v1/goals:status endpoint")
 	tokenFile := flags.String("token-file", "", "private OAuth bearer token file")
 	caFile := flags.String("ca-file", "", "explicit TLS CA trust bundle")
+	holdRecord := flags.String("hold-record", "", "optional existing private UNKNOWN/HOLD attempt file to correlate before lookup")
 	if err := flags.Parse(args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
@@ -48,6 +49,11 @@ func status(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	proposal, _, _, err := issuegoal.DecodePrepared(proposalBytes)
 	if err != nil {
 		return errors.New("invalid original prepared Issue Goal")
+	}
+	if *holdRecord != "" {
+		if err := verifyGoalHoldRecord(*holdRecord, proposal); err != nil {
+			return err
+		}
 	}
 	bearer, err := privateGoalBearer(*tokenFile)
 	if err != nil {
