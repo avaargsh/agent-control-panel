@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math/big"
 	"net"
 	"net/http"
@@ -355,6 +356,18 @@ func TestAgentDRealCrossModuleOriginalWaitInspectAndMTLS(t *testing.T) {
 		before.Result.ExitReceiptDigest != "" || before.Result.CanRetry {
 		t.Fatalf("initial source Inspect must remain UNKNOWN/HOLD: %+v %v", before, err)
 	}
+	// Demonstrate that this independent LOGIN really reads its own original
+	// source row and validates the owner's complete signed Inspect chain.
+	// Do not diagnose a 409 by weakening the HTTP authority checks.
+	var ownRows int
+	if err := reader.QueryRow(ctx, "SELECT count(*) FROM public.sandbox_agentd_attempts WHERE tenant_id=$1",
+		original.TenantID).Scan(&ownRows); err != nil || ownRows != 1 {
+		t.Fatalf("authenticated AgentD reader cannot see its own RLS row: count=%d err=%v", ownRows, err)
+	}
+	history, err := agentd.LoadInspectChain(ctx, reader, original, sourcePub, time.Now().UTC())
+	if err != nil || len(history) != 1 {
+		t.Fatalf("authenticated AgentD reader cannot verify original signed Inspect: events=%d err=%v", len(history), err)
+	}
 	beforeObservation := time.Now().UTC()
 	faultAt := time.Now().UTC()
 
@@ -406,7 +419,11 @@ func TestAgentDRealCrossModuleOriginalWaitInspectAndMTLS(t *testing.T) {
 		}
 		defer response.Body.Close()
 		if response.StatusCode != http.StatusOK {
-			t.Fatalf("original source evidence read: %d", response.StatusCode)
+			// Only controlled, sanitized handler errors from this disposable
+			// local test server are logged. Never expose source record bytes.
+			reason, _ := io.ReadAll(io.LimitReader(response.Body, 256))
+			t.Fatalf("original source evidence read: HTTP %d (%q)",
+				response.StatusCode, strings.TrimSpace(string(reason)))
 		}
 		var result agentd.EvidenceReadResponse
 		if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
