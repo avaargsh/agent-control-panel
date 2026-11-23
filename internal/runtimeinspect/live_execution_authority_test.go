@@ -364,6 +364,20 @@ func newLiveExecutionAuthorityReader(t *testing.T, pool *pgxpool.Pool, dsn, runt
 			"DECISION_LIVE_DATABASE_URL=" + os.Getenv("ACP_DECISION_DATABASE_URL"),
 		}
 	}
+	// Passed only to the same-Run test subprocess. Guard must present
+	// its own mTLS client certificate against ACP's dedicated read-only
+	// capability listener. Nothing here issues a Permit.
+	if os.Getenv("ACP_LIVE_GUARD_COMPOSED") == "1" {
+		if !liveGuard || guardOrigin == "" || guardRootsFile == "" {
+			t.Fatal("three-authority mode requires dedicated ACP Guard listener")
+		}
+		liveEnv = append(liveEnv,
+			"DECISION_LIVE_GUARD_COMPOSED_ACP_ORIGIN="+guardOrigin,
+			"DECISION_LIVE_GUARD_COMPOSED_ACP_PEER=spiffe://example.org/acp",
+			"DECISION_LIVE_GUARD_COMPOSED_ACP_ROOTS="+guardRootsFile,
+			"DECISION_LIVE_GUARD_COMPOSED_ACP_CERT="+guardClientFile,
+			"DECISION_LIVE_GUARD_COMPOSED_ACP_KEY="+guardKeyFile)
+	}
 	// Compile the actual EngageGuard CapabilityAuthority client in its own
 	// repository and call the real isolated ACP read-only server. This
 	// runs on the SAME actual OAuth-admitted/reconciled Run, and specifically

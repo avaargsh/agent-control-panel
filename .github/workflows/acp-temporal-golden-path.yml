@@ -40,6 +40,7 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           path: acp
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
@@ -50,27 +51,30 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           repository: avaargsh/agent-runtime
-          ref: 8e0c25a77f9e17e944e34f836bf83bdbac85ed56
+          ref: 83d7c73628ac97d870240b5a825e40bccb4dd206
           path: runtime-api
           persist-credentials: false
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           repository: avaargsh/agent-decision
-          ref: 975a052995e1f779413dfe2a7fadba7abafafabc
+          ref: deac9e68965515cf22a3ad1272eeabd9963c33c0
           path: decision
           persist-credentials: false
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           repository: avaargsh/EngageGuard
-          ref: 5daece13c366d2d83e98f51e1716b18900d969b6
+          ref: df33a31235869cc1ccabe8b75c4ff0adc85324f4
           path: guard
           persist-credentials: false
       - name: Verify immutable external source pins
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
+          test "$(git -C acp rev-parse HEAD)" = "$EXPECTED_HEAD"
           test "$(git -C issuer-fixture rev-parse HEAD)" = '5b0109cbafcf659f2230f7a38fc560b8644332a9'
-          test "$(git -C runtime-api rev-parse HEAD)" = '8e0c25a77f9e17e944e34f836bf83bdbac85ed56'
-          test "$(git -C decision rev-parse HEAD)" = '975a052995e1f779413dfe2a7fadba7abafafabc'
-          test "$(git -C guard rev-parse HEAD)" = '5daece13c366d2d83e98f51e1716b18900d969b6'
+          test "$(git -C runtime-api rev-parse HEAD)" = '83d7c73628ac97d870240b5a825e40bccb4dd206'
+          test "$(git -C decision rev-parse HEAD)" = 'deac9e68965515cf22a3ad1272eeabd9963c33c0'
+          test "$(git -C guard rev-parse HEAD)" = 'df33a31235869cc1ccabe8b75c4ff0adc85324f4'
           git -C acp rev-parse HEAD
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
         with:
@@ -114,7 +118,7 @@ jobs:
           ACP_LIVE_GUARD_STEP: '1'
           ACP_LIVE_GUARD_CLIENT: '1'
           ACP_LIVE_GUARD_CAPABILITY: '1'
-          ACP_LIVE_GUARD_PROTECTED: '1'
+          ACP_LIVE_GUARD_COMPOSED: '1'
           ACP_GUARD_TEST_BIN: ${{ runner.temp }}/live-guard-client
           ACP_LIVE_CONTINUATION: '1'
           ACP_RUNTIME_DECISION_AUTHORITY_BIN: ${{ runner.temp }}/runtime-decision-authority
