@@ -151,7 +151,6 @@ func TestEvidenceReaderLoginIsTenantScopedAndReadOnly(t *testing.T) {
 	_ = writeTx.Rollback(ctx)
 }
 
- 
 // A mutable PostgreSQL custom GUC cannot switch the tenant associated with
 // the authenticated LOGIN. A revoked binding or mismatched role OID must also
 // hide every source row, even when the connection remains open.
@@ -177,7 +176,9 @@ func TestEvidenceReaderGUCForgeryOIDMismatchAndRevocationFailClosed(t *testing.T
 		t.Fatalf("reader identity unavailable: %q %v", login, err)
 	}
 	tx, err := reader.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := tx.Exec(ctx, "SELECT set_config('app.tenant_id',$1,true)", foreign.TenantID); err != nil {
 		_ = tx.Rollback(ctx)
 		t.Fatal(err)
@@ -195,7 +196,9 @@ func TestEvidenceReaderGUCForgeryOIDMismatchAndRevocationFailClosed(t *testing.T
 		_ = tx.Rollback(ctx)
 		t.Fatalf("GUC changed source tenant scope: own=%d foreign=%d", own, leaked)
 	}
-	if err := tx.Commit(ctx); err != nil { t.Fatal(err) }
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
 
 	// Simulate a stale role mapping after a LOGIN was recreated: the saved
 	// name remains but its owner-maintained role OID no longer matches.
@@ -212,7 +215,9 @@ func TestEvidenceReaderGUCForgeryOIDMismatchAndRevocationFailClosed(t *testing.T
 			t.Fatalf("%s: original rows visible after binding lost: count=%d err=%v", stage, count, err)
 		}
 		txn, err := reader.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
-		if err != nil { t.Fatal(err) }
+		if err != nil {
+			t.Fatal(err)
+		}
 		if err := verifyEvidenceReaderLogin(ctx, txn, original.TenantID); err == nil {
 			_ = txn.Rollback(ctx)
 			t.Fatalf("%s: untrusted binding accepted", stage)
