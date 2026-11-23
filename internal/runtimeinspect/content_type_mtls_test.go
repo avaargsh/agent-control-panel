@@ -36,9 +36,9 @@ func TestInspectRejectsDuplicateResponseContentTypeOverMTLS(t *testing.T) {
 				_, _ = w.Write([]byte(`{"status":"ABSENT_UNCERTAIN"}`))
 			}))
 			srv.TLS = &tls.Config{
-				MinVersion: tls.VersionTLS13,
-				ClientAuth: tls.RequireAndVerifyClientCert,
-				ClientCAs: roots,
+				MinVersion:   tls.VersionTLS13,
+				ClientAuth:   tls.RequireAndVerifyClientCert,
+				ClientCAs:    roots,
 				Certificates: []tls.Certificate{serverCert},
 			}
 			srv.StartTLS()
