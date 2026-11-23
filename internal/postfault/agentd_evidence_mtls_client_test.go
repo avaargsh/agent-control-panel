@@ -324,7 +324,7 @@ func TestG05MTLSConsumerRejectsSameCARogueServerIdentityBeforeSendingRunEvidence
 			})
 			server.TLS = &tls.Config{
 				Certificates: []tls.Certificate{ca.certificate(t, true, tc.server)},
-				ClientCAs: ca.pool, ClientAuth: tls.RequireAndVerifyClientCert,
+				ClientCAs:    ca.pool, ClientAuth: tls.RequireAndVerifyClientCert,
 				MinVersion: tls.VersionTLS13,
 			}
 			server.StartTLS()
