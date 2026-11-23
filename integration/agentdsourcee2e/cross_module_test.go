@@ -456,12 +456,23 @@ func TestAgentDRealCrossModuleOriginalWaitInspectAndMTLS(t *testing.T) {
 	if _, err := agentd.RecordWaitOutcome(ctx, db, original, command.ProcessState, sourcePrivate); err != nil {
 		t.Fatalf("actual OS Wait was not committed: %v", err)
 	}
-	// Even with a terminal OS Wait already committed, the source is still
-	// UNKNOWN until a FRESH durable inspection is journaled.
-	stillUnknown := readUnknown()
-	if stillUnknown.State != agentd.Unknown || stillUnknown.Terminal != nil ||
-		stillUnknown.CanRetry || len(stillUnknown.Inspections) != 1 {
-		t.Fatalf("Wait alone fabricated postfault source Inspect: %+v", stillUnknown)
+	// The OS Wait now confirms a terminal process state, but the latest
+	// signed Inspect is still UNKNOWN. The newer source handler MUST refuse
+	// to export a misleading mixed-state proof (409), not synthesize a
+	// terminal from the Wait or return a supposedly complete UNKNOWN.
+	staleResponse, err := httpClient.Post(srv.URL+agentd.EvidenceReadPath,
+		"application/json", bytes.NewReader(sourceRequest))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer staleResponse.Body.Close()
+	staleBody, err := io.ReadAll(io.LimitReader(staleResponse.Body, 512))
+	if err != nil || staleResponse.StatusCode != http.StatusConflict ||
+		staleResponse.Header.Get("Cache-Control") != "no-store" ||
+		bytes.Contains(staleBody, []byte("payload_b64")) ||
+		bytes.Contains(staleBody, []byte("signature_b64")) {
+		t.Fatalf("Wait with stale signed Inspect must fail closed without exporting source bytes: HTTP %d err=%v",
+			staleResponse.StatusCode, err)
 	}
 	after, err := agentd.InspectAndJournal(ctx, db, original, sourcePub, sourcePrivate)
 	if err != nil || after.Result.State != agentd.FailedConfirmed ||
