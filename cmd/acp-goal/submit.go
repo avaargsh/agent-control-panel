@@ -39,6 +39,9 @@ func submit(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	endpoint := flags.String("url", "", "direct https://127.0.0.1:PORT/api/v1/goals:submit endpoint")
 	tokenFile := flags.String("token-file", "", "private file containing an opaque OAuth bearer token")
 	caFile := flags.String("ca-file", "", "PEM trust anchor for the direct TLS Goal API")
+	// Optional crash-safe attempt marker; no network call is made unless its
+	// immutable request identity is committed to a private local file.
+	holdRecord := flags.String("hold-record", "", "absolute new path in a private directory for a durable UNKNOWN/HOLD request marker")
 	if err := flags.Parse(args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
@@ -65,6 +68,9 @@ func submit(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	}
 	roots, err := explicitGoalTrustRoots(*caFile)
 	if err != nil {
+		return err
+	}
+	if err := persistGoalHoldRecord(*holdRecord, proposal); err != nil {
 		return err
 	}
 
