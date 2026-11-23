@@ -123,3 +123,42 @@ Expected: HTTP `201` for the first authorized request and `200` for an exact sam
 - Operator must independently verify the exact HEAD SHA, authenticated GitHub logs, failure/negative matrix, database role least privilege, branch protections and a separate reviewer before promoting this candidate.
 
 Related: [HTTP handler contract](ISSUE-GOAL-HTTP.md), [input preparation](ISSUE-GOAL-PREPARE.md), [PR #86](https://github.com/avaargsh/agent-control-panel/pull/86).
+
+### Authenticated read-only Goal status after an ambiguous ACK
+
+The opt-in loopback TLS Goal API now also mounts `POST /api/v1/goals:status`.
+Despite using POST to carry the original strictly validated Prepared JSON in the
+request body, this endpoint **does not create, update or dispatch anything**.
+It re-introspects the OAuth bearer on each call (current
+`acp:run-intent:create` scope), and PostgreSQL checks the current enabled
+tenant/project/RUNNER membership, release and session ownership in the *same
+statement* as selecting the original RunIntent. The original OAuth
+issuer/subject/client, principal, request digest, idempotency key and all
+target selectors must match. The public GitHub `inspect` CLI is not a
+substitute for this ACP authority.
+
+Use the **original** Prepared JSON from `acp-goal prepare`, not a re-created
+file, after a missing/truncated GoalSubmit receipt:
+
+```sh
+go run ./cmd/acp-goal status \
+  --file /tmp/acp-proposal.json \
+  --url https://127.0.0.1:9443/api/v1/goals:status \
+  --token-file /run/acp/secrets/goal-bearer \
+  --ca-file /run/acp/ca/goal-server-ca.pem
+```
+
+A validated `200` response is a bounded `acp.issue-goal-status/v1`
+read-only snapshot with `run_intent_id`, `request_digest`, and the ACP
+RunIntent `status`. It proves only the ACP authority currently sees the
+matching original admission; **PENDING does not mean a Runtime Run started**,
+and `UNKNOWN` or `RECONCILING` does not mean the Runtime command has a
+trusted terminal receipt.
+
+A `404` deliberately does **not** distinguish a missing record, a revoked
+membership, a different admission origin or a different request. No
+`NOT_FOUND_FINAL` or permission to retry is derived from this response. TLS,
+introspection, database and invalid-receipt errors also preserve
+`UNKNOWN/HOLD`; inspect authoritative ACP and Runtime evidence through the
+appropriate privileged recovery procedure before any new dispatch or submit.
+
