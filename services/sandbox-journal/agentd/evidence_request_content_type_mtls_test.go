@@ -41,9 +41,9 @@ func TestEvidenceMTLSRejectsDuplicateContentTypeBeforePinnedHeadLookup(t *testin
 		t.Fatal(err)
 	}
 	cases := []struct {
-		name string
+		name   string
 		values []string
-		want int
+		want   int
 		lookup bool
 	}{
 		{name: "canonical_single_json", values: []string{"application/json"}, want: http.StatusOK, lookup: true},
