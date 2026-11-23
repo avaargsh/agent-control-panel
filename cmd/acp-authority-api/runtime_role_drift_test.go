@@ -503,6 +503,40 @@ func TestAuthorityHTTPRejectsRuntimeRoleDrift(t *testing.T) {
 						t.Fatal("baseline Decision Publication signature is not authentic")
 					}
 				}
+				// Issue #98: even a missing/denied Run must not turn a committed
+				// privilege escalation between preflight and catalog lookup
+				// into a misleading clean HTTP 403. Use the same independently
+				// authenticated PostgreSQL LOGIN and real mTLS transport.
+				missingURL := strings.Replace(url, id, "33333333-3333-4333-8333-333333333333", 1)
+				armed.Store(true)
+				missingResponse, err := client.Get(missingURL)
+				if err != nil {
+					t.Fatal(err)
+				}
+				missingBody, err := io.ReadAll(io.LimitReader(missingResponse.Body, 1<<20))
+				_ = missingResponse.Body.Close()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !triggered.Load() {
+					t.Fatal("denied-Run DCL race was never injected")
+				}
+				if missingResponse.StatusCode != http.StatusServiceUnavailable {
+					t.Fatalf("P0 denied-Run TOCTOU %s: expected 503, got HTTP %d with %d bytes after privilege grant", name, missingResponse.StatusCode, len(missingBody))
+				}
+				if strings.Contains(string(missingBody), "\"signature\"") || strings.Contains(string(missingBody), "\"payload\"") {
+					t.Fatal("denied-Run DCL race leaked signed publication fields")
+				}
+				if _, err := admin.Exec(ctx, "REVOKE SELECT ON "+schema+".outbox_events FROM "+role); err != nil {
+					t.Fatal(err)
+				}
+				triggered.Store(false)
+				armed.Store(false)
+				recoveredStatus, _ := request()
+				if recoveredStatus != http.StatusOK {
+					t.Fatalf("authority reader did not recover after denied-Run DCL revocation: HTTP %d", recoveredStatus)
+				}
+
 				armed.Store(true)
 				status, body := request()
 				if !triggered.Load() {

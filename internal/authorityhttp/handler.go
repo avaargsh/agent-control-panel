@@ -216,21 +216,11 @@ func newHandler(reader Reader, publisher *Publisher, peer, tenant string, readGu
 		} else {
 			current, err = reader.GetExecutionAuthority(ctx, ref)
 		}
-		if errors.Is(err, runpg.ErrCatalogDenied) {
-			fail(http.StatusForbidden, "RUN_AUTHORITY_DENIED")
-			return
-		}
-		if err != nil || current.Ref != ref || current.PrincipalID == "" ||
-			current.AgentID == "" || current.ReleaseID == "" || current.SessionID == "" ||
-			current.Snapshot.ValidateForProject(current.Snapshot.ProjectID) != nil {
-			fail(http.StatusServiceUnavailable, "RUN_AUTHORITY_UNAVAILABLE")
-			return
-		}
 		// A privileged DCL actor may commit GRANT/REVOKE between the first
 		// role attestation and the repository's SQL query. Re-attest after
-		// the catalog read, before emitting an authority response or
-		// constructing/signing a Decision Publication. Never return the
-		// fetched catalog result if this second observation fails.
+		// EVERY catalog read, including denied/missing runs, before choosing
+		// an HTTP 403, emitting an authority response or constructing/signing
+		// a Decision Publication. Never trust a result if this check fails.
 		//
 		// This reduces a proven between-check-and-read window. It is NOT
 		// atomic with response emission, a defense against privileged DCL
@@ -244,6 +234,16 @@ func newHandler(reader Reader, publisher *Publisher, peer, tenant string, readGu
 				}
 				return
 			}
+		}
+		if errors.Is(err, runpg.ErrCatalogDenied) {
+			fail(http.StatusForbidden, "RUN_AUTHORITY_DENIED")
+			return
+		}
+		if err != nil || current.Ref != ref || current.PrincipalID == "" ||
+			current.AgentID == "" || current.ReleaseID == "" || current.SessionID == "" ||
+			current.Snapshot.ValidateForProject(current.Snapshot.ProjectID) != nil {
+			fail(http.StatusServiceUnavailable, "RUN_AUTHORITY_UNAVAILABLE")
+			return
 		}
 		snapshot := Snapshot{
 			SchemaVersion: "acp.run-authority.v1", TenantID: tenant, RunIntentID: ref.RunIntentID,
