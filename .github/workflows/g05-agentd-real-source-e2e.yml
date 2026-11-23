@@ -43,14 +43,14 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           persist-credentials: false
-          ref: 5d85d8ad68936431f687ee6532fa7abea3cca9af
+          ref: 1b918d3a3ac7876a34dba4bf478c17fc290a2301
           path: source-pinned
       - name: Pin both immutable source SHAs
         env:
           EXPECTED_CONSUMER_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           test "$(git rev-parse HEAD)" = "$EXPECTED_CONSUMER_HEAD"
-          test "$(git -C source-pinned rev-parse HEAD)" = "5d85d8ad68936431f687ee6532fa7abea3cca9af"
+          test "$(git -C source-pinned rev-parse HEAD)" = "1b918d3a3ac7876a34dba4bf478c17fc290a2301"
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
         with:
           go-version: '1.27.4'
