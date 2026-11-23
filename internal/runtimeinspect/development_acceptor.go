@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"mime"
 	"net/http"
 	"time"
 	"unicode/utf8"
@@ -153,8 +152,7 @@ func (a *DevelopmentAcceptor) Accept(ctx context.Context, claimed runintent.Inte
 	default:
 		return runintent.DispatchOutcome{}, ErrUnavailable
 	}
-	media, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
-	if err != nil || media != "application/json" {
+	if !singleRuntimeJSONContentType(resp.Header) {
 		return runintent.DispatchOutcome{}, ErrInvalidResponse
 	}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
