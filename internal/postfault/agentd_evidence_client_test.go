@@ -15,6 +15,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -47,7 +48,7 @@ func agentDEvidenceResponseFixture(t *testing.T, expected ExpectedAgentDWait,
 	return response
 }
 
-func newAgentDEvidenceMTLSServer(t *testing.T, handler http.Handler) (*httptest.Server, *http.Client) {
+func newAgentDEvidenceMTLSServer(t *testing.T, ref AgentDWaitRef, handler http.Handler) (*httptest.Server, *http.Client) {
 	t.Helper()
 	_, caKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -84,11 +85,18 @@ func newAgentDEvidenceMTLSServer(t *testing.T, handler http.Handler) (*httptest.
 	if err != nil {
 		t.Fatal(err)
 	}
+	peerScope := "spiffe://agentd.test/tenant/" + url.PathEscape(ref.TenantID) +
+		"/run/" + url.PathEscape(ref.RunID) + "/role/evidence-reader"
+	peerURI, err := url.Parse(peerScope)
+	if err != nil {
+		t.Fatal(err)
+	}
 	clientTemplate := &x509.Certificate{
 		SerialNumber: big.NewInt(102), Subject: pkix.Name{CommonName: "agentd-evidence-reader"},
 		NotBefore: now.Add(-time.Minute), NotAfter: now.Add(time.Hour),
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 		KeyUsage:    x509.KeyUsageDigitalSignature,
+		URIs:        []*url.URL{peerURI},
 	}
 	clientDER, err := x509.CreateCertificate(rand.Reader, clientTemplate, caCert, clientKey.Public(), caKey)
 	if err != nil {
@@ -105,10 +113,14 @@ func newAgentDEvidenceMTLSServer(t *testing.T, handler http.Handler) (*httptest.
 func TestAgentDEvidenceClientFetchesAndVerifiesSameRunOverMutualTLS(t *testing.T) {
 	b, keys, expected, waitRaw, waitSig, events, head, now, _ := g05SourceFixture(t)
 	response := agentDEvidenceResponseFixture(t, expected, waitRaw, waitSig, events, head, "EXITED")
-	server, client := newAgentDEvidenceMTLSServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server, client := newAgentDEvidenceMTLSServer(t, expected.Ref, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != AgentDEvidenceReadPath ||
 			r.Header.Get("Content-Type") != "application/json" || r.TLS == nil ||
-			len(r.TLS.PeerCertificates) != 1 {
+			len(r.TLS.PeerCertificates) == 0 || len(r.TLS.VerifiedChains) == 0 ||
+			len(r.TLS.PeerCertificates[0].URIs) != 1 ||
+			r.TLS.PeerCertificates[0].URIs[0].String() !=
+				"spiffe://agentd.test/tenant/"+url.PathEscape(expected.Ref.TenantID)+
+					"/run/"+url.PathEscape(expected.Ref.RunID)+"/role/evidence-reader" {
 			t.Errorf("client did not use the exact mTLS read contract: method=%s path=%s peer=%v", r.Method, r.URL.Path, r.TLS != nil)
 			http.Error(w, "invalid request", http.StatusBadRequest)
 			return
@@ -160,7 +172,7 @@ func TestAgentDEvidenceClientRejectsResponseIdentityAndHeadDrift(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			response := agentDEvidenceResponseFixture(t, expected, waitRaw, waitSig, events, head, "EXITED")
 			tc.edit(&response)
-			server, client := newAgentDEvidenceMTLSServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			server, client := newAgentDEvidenceMTLSServer(t, expected.Ref, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("Cache-Control", "no-store")
 				w.Header().Set("Content-Type", "application/json")
 				_ = json.NewEncoder(w).Encode(response)
@@ -186,7 +198,7 @@ func TestAgentDEvidenceClientKeepsUnknownHoldUnresolved(t *testing.T) {
 	head.Digest = inspectSourceDigest(events[1].Payload)
 	response := agentDEvidenceResponseFixture(t, expected, waitRaw, waitSig, events, head, "UNKNOWN")
 	response.Terminal = nil
-	server, client := newAgentDEvidenceMTLSServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server, client := newAgentDEvidenceMTLSServer(t, expected.Ref, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(response)
