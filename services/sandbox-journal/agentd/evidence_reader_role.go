@@ -65,14 +65,23 @@ SELECT COALESCE((
      AND (
        SELECT count(*) FROM pg_policies p
        WHERE p.schemaname='public'
-         AND p.policyname IN (
-           'agentd_attempt_evidence_reader_tenant',
-           'agentd_terminal_evidence_reader_tenant',
-           'agentd_inspect_evidence_reader_tenant'
+         AND (
+           (p.tablename='sandbox_agentd_attempts'
+             AND p.policyname='agentd_attempt_evidence_reader_tenant')
+           OR (p.tablename='sandbox_agentd_terminal_receipts'
+             AND p.policyname='agentd_terminal_evidence_reader_tenant')
+           OR (p.tablename='sandbox_agentd_inspect_events'
+             AND p.policyname='agentd_inspect_evidence_reader_tenant')
          )
          AND p.cmd='SELECT'
-         AND p.roles @> ARRAY['sandbox_agentd_evidence_reader'::name]
-         AND p.qual LIKE '%sandbox_agentd_evidence_tenant%'
+         AND p.permissive='PERMISSIVE'
+         AND p.roles = ARRAY['sandbox_agentd_evidence_reader'::name]
+         -- In PG16 pg_policies.qual reconstructs the original tenant
+         -- equality as exactly this expression. LIKE permitted a malicious
+         -- in-place ALTER POLICY ... USING (tenant_id=func() OR true).
+         -- Reject unexpected expression rewrites and fail closed on
+         -- version-dependent deparse drift until separately reviewed.
+         AND p.qual='(tenant_id = sandbox_agentd_evidence_tenant())'
      ) = 3
      -- PostgreSQL OR-combines permissive policies. A newly granted
      -- SELECT TO PUBLIC policy would expose foreign-tenant source rows
