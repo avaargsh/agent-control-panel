@@ -81,6 +81,11 @@ func TestAuthorityCutoverPostgresBarrierCoordinatesIndependentReplicas(t *testin
 	exec("SET ROLE " + owner)
 	exec(string(acl))
 	exec("RESET ROLE")
+	fenceSQL, err := os.ReadFile("../../migrations/authority-cutover/0003_acl_change_barrier.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	exec(string(fenceSQL))
 
 	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
 	login := func(prefix, group string) (*pgxpool.Pool, string) {
@@ -165,10 +170,10 @@ func TestAuthorityCutoverPostgresBarrierCoordinatesIndependentReplicas(t *testin
 		t.Fatal(err)
 	}
 
-	// An arbitrary DCL actor does not participate in the advisory-lock
-	// protocol. A request lease must therefore pin the ACL catalogs itself:
-	// a separately authenticated owner GRANT cannot commit between the final
-	// role attestation and the HTTP response flush.
+	// An arbitrary object owner does not participate in the replica advisory
+	// protocol. The database-owned ddl_command_start event trigger must acquire
+	// the matching transaction-scoped exclusive lock for local DDL/GRANT/REVOKE,
+	// so it cannot commit between role attestation and response flush.
 	var dclPID int
 	if err := dcl.QueryRow(ctx, "SELECT pg_backend_pid()").Scan(&dclPID); err != nil {
 		t.Fatal(err)
@@ -195,22 +200,22 @@ func TestAuthorityCutoverPostgresBarrierCoordinatesIndependentReplicas(t *testin
 		if err := admin.QueryRow(ctx, "SELECT COALESCE(wait_event_type,'') FROM pg_catalog.pg_stat_activity WHERE pid=$1", dclPID).Scan(&waitType); err != nil {
 			t.Fatal(err)
 		}
-		var waitingOnClass bool
+		var waitingOnFence bool
 		if err := admin.QueryRow(ctx, `SELECT EXISTS (
 			SELECT 1 FROM pg_catalog.pg_locks
-			WHERE pid=$1 AND locktype='relation'
-			  AND relation='pg_catalog.pg_class'::regclass AND NOT granted
-		)`, dclPID).Scan(&waitingOnClass); err != nil {
+			WHERE pid=$1 AND locktype='advisory'
+			  AND mode='ExclusiveLock' AND NOT granted
+		)`, dclPID).Scan(&waitingOnFence); err != nil {
 			t.Fatal(err)
 		}
-		if waitType == "Lock" && waitingOnClass {
+		if waitType == "Lock" && waitingOnFence {
 			waitingForCatalog = true
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
 	if !waitingForCatalog {
-		t.Fatal("out-of-band DCL GRANT did not wait on pg_catalog.pg_class while the request lease was held")
+		t.Fatal("out-of-band DCL GRANT did not wait on the transaction-scoped advisory fence while the request lease was held")
 	}
 	if err := leaseA.Release(); err != nil {
 		grantCancel()
@@ -241,7 +246,7 @@ func TestAuthorityCutoverPostgresBarrierCoordinatesIndependentReplicas(t *testin
 	if err != nil {
 		t.Fatalf("replica A could not reacquire after DCL restore: %v", err)
 	}
-	t.Logf("out-of-band DCL fencing: separate DCL pid=%d waited on pg_class until request lease release", dclPID)
+	t.Logf("out-of-band DCL fencing: separate DCL pid=%d waited on the transaction-scoped advisory fence until request lease release", dclPID)
 
 	// Persist DRAINING before waiting for the exclusive lock. Requests that
 	// race after this commit must fail closed rather than join the drain.
