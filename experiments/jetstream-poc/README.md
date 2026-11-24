@@ -13,13 +13,19 @@ checksum-recorded PostgreSQL v1/v2 migrations.
 ## Reproduce
 
 1. Run PostgreSQL 16 with an account permitted to create disposable schemas.
-2. Run an **actual** NATS Server 2.15.2 with JetStream enabled
-   (`nats:2.15.2 -js -sd /data`).
+2. Run an **actual** NATS Server 2.15.2 with JetStream enabled. The POC pins
+   the official multi-platform image manifest:
+   `nats:2.15.2@sha256:b6c40dcfe5ae9174dcafa9c43f800afb93b8b0ffcde02ac00efc6b66031d9a50`.
 3. Set `PGTEST_DSN` and `NATS_POC_URL`; from this directory run
    `go mod verify && go test -race -count=1 -v ./...`.
-4. On GitHub Actions, `.github/workflows/jetstream-poc.yml` starts the
-   real server and PostgreSQL 16, verifies the pinned nested module and runs
-   this package's race-enabled integration suite.
+4. The mTLS test creates a separate disposable JetStream server, a temporary
+   CA and server/client certificates. It requires a mapped client certificate
+   and verifies two isolated NATS accounts with separate JetStream streams
+   and subject ACLs.
+5. On GitHub Actions, `.github/workflows/jetstream-poc.yml` starts the real
+   server and PostgreSQL 16, verifies the pinned nested module, runs the
+   race-enabled integration suite, and repeats the mTLS test on the literal
+   PR source SHA.
 
 ## Implemented and exercised contract
 
@@ -40,6 +46,13 @@ checksum-recorded PostgreSQL v1/v2 migrations.
   PostgreSQL state, then receives `SIGKILL` immediately before ACK. A newly
   connected process observes actual JetStream redelivery, keeps one Inbox
   record and applies exactly one ordered cursor version.
+- The separate mTLS integration uses NATS `verify_and_map` to map a client
+  certificate subject to an allowlisted workload identity. It rejects
+  plaintext, TLS clients without certificates and CA-trusted but unmapped
+  client certificates. Two NATS accounts each create and publish to their
+  own JetStream stream; cross-account stream lookup and cross-tenant subject
+  publication/subscription are denied. Certificates and keys are generated
+  ephemerally for the test and are not checked into the repository.
 
 ## PostgreSQL journal integrity and restricted-role test
 
@@ -92,25 +105,19 @@ reverification are implemented.
   POC schemas. No production ACP migration, independently provisioned DB
   identity, grant-revocation/restore drill or hardened least-privilege contract
   exists yet.
-- A second real receiver-process SIGKILL test kills the worker **after
-  DLQ PubAck and PostgreSQL publication confirmation but before source ACK**.
-  A newly connected process receives real JetStream redelivery more than one
-  configured broker dedup window later and confirms exactly one DLQ record.
-  Separately, deleting a previously confirmed DLQ record causes fail-closed
-  `ErrDLQEvidenceMissing`, not a source ACK or silent republish.
-- The tests use a **single unauthenticated NATS container** and a privileged
-  disposable PostgreSQL user. They do not demonstrate TLS/mTLS, SPIFFE,
-  real tenant-scoped broker ACLs, role grants, external WORM evidence, JetStream
-  quorum/HA, persistent volumes across server restart, or approved DLQ
-  confidentiality/replay controls.
-- Receiver decoding rejects malformed/unknown envelope fields and untrusted
-  stream/consumer/subject metadata, but there is no production poison-message
-  policy, bounded redelivery budget, metrics, rate limits, process supervisor,
-  cross-tenant load test or external service authentication.
+- The existing ACK/DLQ process-fault tests still use an unauthenticated
+  single-node NATS container. The separate mTLS test proves certificate
+  mapping and account/subject isolation only; it does not yet run the
+  production-shaped receiver, ACK/DLQ journal or cross-process crash path
+  over mTLS.
+- No SPIFFE integration, certificate rotation/revocation, JetStream quorum/HA,
+  persistent-volume restart proof, approved DLQ confidentiality/replay
+  controls, bounded poison-message policy, redelivery budget, metrics,
+  rate limits, process supervisor, or cross-tenant load test is accepted.
 - No authenticated ACP→Runtime `StartRun` path, initiating
   subject/actor/policy snapshot or G01/G05 staging golden-path acceptance.
-- The NATS image is version-tag pinned for repeatability but still requires a
-  reviewed **immutable image digest** for release-grade supply-chain evidence.
+- The POC image is pinned to an immutable multi-platform manifest digest, but
+  that alone is not full supply-chain attestation or production image approval.
 
 **Merge verdict:** keep #17, #15 and #7 Draft. The real single-node broker
 CI upgrades a narrow subset of P0 #16 evidence; it cannot close the full issue
