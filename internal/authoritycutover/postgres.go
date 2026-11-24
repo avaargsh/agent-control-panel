@@ -52,7 +52,9 @@ const observeSQL = `SELECT s.generation,s.revision,s.phase,s.change_id,s.manifes
 	) AND NOT EXISTS (
 		SELECT 1 FROM public.acp_authority_cutover_transitions newer
 		WHERE newer.revision>s.revision
-	) END
+	) AND (
+		SELECT count(*) FROM public.acp_authority_cutover_transitions
+	)=s.revision-1 END
 	FROM public.acp_authority_cutover_state s WHERE s.id=1`
 
 func readRecord(ctx context.Context, q stateQueryer, lock bool) (Record, error) {
