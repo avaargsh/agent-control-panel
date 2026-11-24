@@ -14,7 +14,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -143,17 +142,15 @@ func TestGuardOnlyHandlersHoldAdmissionBarrierThroughFlush(t *testing.T) {
 						authority: executionAuthorityFromSnapshot(a), input: input, events: events,
 					}
 					gate := &barrierGateProbe{events: events, fail: scenario.gateFails}
-					var guardCalls atomic.Int32
+					guardCalls := 0
 					readGuard := func(context.Context) error {
 						events.add("guard")
-						if scenario.secondGuardFails && guardCalls.Add(1) == 2 {
+						guardCalls++
+						if scenario.secondGuardFails && guardCalls == 2 {
 							return errors.New("authority role revoked after catalog read")
 						}
-					if !scenario.secondGuardFails {
-						guardCalls.Add(1)
+						return nil
 					}
-					return nil
-				}
 					handler, err := endpoint.build(reader, publisher, readGuard, gate)
 					if err != nil {
 						t.Fatal(err)
