@@ -85,6 +85,12 @@ SELECT session_user::text=$1 AND current_user::text=$1
   SELECT 1 FROM pg_catalog.pg_roles r
   WHERE r.rolname NOT IN ($1,$2) AND pg_catalog.pg_has_role(r.oid,'MEMBER')
  )
+ AND NOT EXISTS (
+  SELECT 1 FROM pg_catalog.pg_auth_members m
+  JOIN principals member_role ON member_role.oid=m.member
+  JOIN principals granted_role ON granted_role.oid=m.roleid
+  WHERE member_role.rolname=$1 AND granted_role.rolname=$2 AND m.admin_option
+ )
  AND NOT pg_catalog.has_database_privilege(pg_catalog.current_database(),'TEMP')
  AND NOT pg_catalog.has_database_privilege(pg_catalog.current_database(),'CREATE')
  AND pg_catalog.has_schema_privilege('public','USAGE')
