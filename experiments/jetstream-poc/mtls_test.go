@@ -286,7 +286,7 @@ func writeTestLeaf(dir, name, caPath string, caKey *ecdsa.PrivateKey, subject pk
 	}
 	now := time.Now().UTC()
 	template := &x509.Certificate{
-		SerialNumber: big.NewInt(int64(len(name) + now.UnixNano()%1000000 + 1)),
+		SerialNumber: big.NewInt(int64(len(name)) + now.UnixNano()%1000000 + 1),
 		Subject:      subject,
 		NotBefore:    now.Add(-time.Minute), NotAfter: now.Add(time.Hour),
 		BasicConstraintsValid: true,
