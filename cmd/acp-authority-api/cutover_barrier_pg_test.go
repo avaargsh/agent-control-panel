@@ -206,14 +206,38 @@ func TestAuthorityCutoverPostgresBarrierCoordinatesIndependentReplicas(t *testin
 	if err != nil || closed.Phase != authoritycutover.Closed {
 		t.Fatalf("mark drained: %+v %v", closed, err)
 	}
-	// The exclusive lock blocks a fresh replica even after durable DRAINING.
+	// The exclusive lock blocks a fresh replica even after durable CLOSED.
 	if _, err := replicaB.Acquire(ctx); !errors.Is(err, authoritycutover.ErrAdmissionClosed) {
 		t.Fatalf("replica B entered while exclusive cutover lock held: %v", err)
 	}
-	// A committed DCL grant is visible to fresh independent observer sessions
-	// while the exclusive barrier is still held.
+	// Simulate coordinator loss after MarkDrained. Releasing the session lock
+	// must not reopen CLOSED; recovery must reacquire against the exact record.
+	if err := cutover.Release(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := replicaA.Acquire(ctx); !errors.Is(err, authoritycutover.ErrAdmissionClosed) {
+		t.Fatalf("coordinator loss reopened CLOSED state: %v", err)
+	}
+	cutover, err = coordinator.AcquireCutover(ctx, closed)
+	if err != nil {
+		t.Fatalf("coordinator could not recover CLOSED state: %v", err)
+	}
+
+	// Commit a DCL grant, then simulate a lost ACK by dropping the coordinator
+	// lock without advancing the durable state. Recovery must read actual ACLs
+	// and must not reopen merely because the lock/session was lost.
 	if _, err := dcl.Exec(ctx, "GRANT SELECT ON public.cutover_barrier_secret TO PUBLIC"); err != nil {
 		t.Fatal(err)
+	}
+	if err := cutover.Release(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := replicaB.Acquire(ctx); !errors.Is(err, authoritycutover.ErrAdmissionClosed) {
+		t.Fatalf("lost DCL ACK reopened CLOSED state: %v", err)
+	}
+	cutover, err = coordinator.AcquireCutover(ctx, closed)
+	if err != nil {
+		t.Fatalf("coordinator could not reacquire after uncertain DCL ACK: %v", err)
 	}
 	checkRole := func(wantAllowed bool) {
 		t.Helper()
