@@ -395,7 +395,13 @@ func TestAuthorityCutoverPostgresBarrierCoordinatesIndependentReplicas(t *testin
 		t.Fatal(err)
 	}
 
-	cutover, err := coordinator.AcquireCutover(ctx, draining)
+	var cutover *authoritycutover.CutoverLease
+	defer func() {
+		if cutover != nil {
+			_ = cutover.Release()
+		}
+	}()
+	cutover, err = coordinator.AcquireCutover(ctx, draining)
 	if err != nil {
 		t.Fatalf("acquire exclusive drain after restoring coordinator role: %v", err)
 	}
