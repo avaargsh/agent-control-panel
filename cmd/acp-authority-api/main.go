@@ -118,14 +118,12 @@ func serve(ctx context.Context, c config) error {
 		if err != nil {
 			return errors.New("authority cutover observer database unavailable")
 		}
-		observerConn, err := cutoverPool.Acquire(ctx)
-		if err != nil {
-			return errors.New("authority cutover observer LOGIN unavailable")
-		}
-		err = authoritycutover.VerifyPostgresRole(ctx, observerConn.Conn(), c.cutoverLogin, authoritycutover.ObserverRole)
-		observerConn.Release()
-		if err != nil {
-			return errors.New("authority cutover observer LOGIN is not least privilege")
+		// Full append-only history verification is a startup/coordinator
+		// operation. Per-request admission uses the bounded indexed head.
+		if _, err := authoritycutover.NewPostgresStore(cutoverPool).ObserveVerified(
+			ctx, c.cutoverLogin, authoritycutover.ObserverRole,
+		); err != nil {
+			return errors.New("authority cutover observer LOGIN or durable ledger failed startup verification")
 		}
 		if !samePostgresPrimary(ctx, pool, cutoverPool) {
 			return errors.New("authority and cutover observer pools must reach the same PostgreSQL primary")
