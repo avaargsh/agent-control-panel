@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -278,4 +279,37 @@ func TestAuthorityCutoverPostgresBarrierCoordinatesIndependentReplicas(t *testin
 	if err := leaseB.Release(); err != nil {
 		t.Fatal(err)
 	}
+
+	// Record a bounded PG16 microbenchmark for the real admission path. This
+	// is not an HTTP SLO or production latency claim; it exposes the incremental
+	// catalog-probe cost and connection-pool footprint to the CI log.
+	const samplesN = 100
+	baseline := make([]time.Duration, samplesN)
+	admission := make([]time.Duration, samplesN)
+	for i := 0; i < samplesN; i++ {
+		start := time.Now()
+		var one int
+		if err := replicaAPool.QueryRow(ctx, "SELECT 1").Scan(&one); err != nil || one != 1 {
+			t.Fatalf("baseline query: value=%d err=%v", one, err)
+		}
+		baseline[i] = time.Since(start)
+
+		start = time.Now()
+		lease, err := replicaA.Acquire(ctx)
+		if err != nil {
+			t.Fatalf("post-reopen admission sample %d: %v", i, err)
+		}
+		if err := lease.Release(); err != nil {
+			t.Fatalf("post-reopen lease release %d: %v", i, err)
+		}
+		admission[i] = time.Since(start)
+	}
+	sort.Slice(baseline, func(i, j int) bool { return baseline[i] < baseline[j] })
+	sort.Slice(admission, func(i, j int) bool { return admission[i] < admission[j] })
+	stat := replicaAPool.Stat()
+	t.Logf("PG16 admission microbenchmark n=%d baseline_ms p50=%.3f p95=%.3f p99=%.3f; gated_ms p50=%.3f p95=%.3f p99=%.3f; pool_total=%d pool_idle=%d",
+		samplesN,
+		float64(baseline[49])/float64(time.Millisecond), float64(baseline[94])/float64(time.Millisecond), float64(baseline[98])/float64(time.Millisecond),
+		float64(admission[49])/float64(time.Millisecond), float64(admission[94])/float64(time.Millisecond), float64(admission[98])/float64(time.Millisecond),
+		stat.TotalConns(), stat.IdleConns())
 }
