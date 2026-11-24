@@ -11,6 +11,7 @@ The read-only handler in internal/authorityhttp/handler.go attests its reader ro
 The #151 implementation adds an explicit `VerifyPostgresRole` catalog probe and verified Store entry points. `ObserveVerified` and `ApplyVerified` acquire one pool backend, attest the expected independently authenticated Coordinator/Observer LOGIN on that backend, then perform the ledger operation through that same backend. This avoids accidentally checking one pool identity and executing the ledger operation on another.
 
 This is a bounded defense-in-depth check, **not** a same-snapshot or atomic DCL fence: the role probe and ledger SQL are separate statements, and a privileged actor may commit DCL after the probe. It does not integrate the cutover ledger with the Run Authority or Decision Publication HTTP readers. Issue #98 remains open; no strict revocation-at-response guarantee is claimed. The verified methods must not be used as a substitute for the coordinated stop/drain/change/re-attest/open protocol below.
+The catalog probe also rejects reachable privileges outside the three ledger tables: application-table/column reads and writes, sequence access, executable SECURITY DEFINER routines, and CREATE on any non-system schema. The PostgreSQL ACL regression introduces decoy objects and grants each privilege to PUBLIC, then proves fail-closed detection and recovery after revocation. This remains scoped to the Cutover database contract, not a complete arbitrary schema/trigger attestation.
 
 ## Scope and ownership
 
