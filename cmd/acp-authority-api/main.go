@@ -128,6 +128,15 @@ func serve(ctx context.Context, c config) error {
 		if !samePostgresPrimary(ctx, pool, cutoverPool) {
 			return errors.New("authority and cutover observer pools must reach the same PostgreSQL primary")
 		}
+		fenceConn, err := cutoverPool.Acquire(ctx)
+		if err != nil {
+			return errors.New("authority cutover DDL fence unavailable")
+		}
+		fenceErr := authoritycutover.VerifyDDLBarrier(ctx, fenceConn.Conn())
+		fenceConn.Release()
+		if fenceErr != nil {
+			return errors.New("authority cutover DDL fence unavailable")
+		}
 		requestGate = authoritycutover.NewPostgresBarrier(cutoverPool, c.cutoverLogin, authoritycutover.ObserverRole)
 	}
 	readGuard := func(requestCtx context.Context) error {
