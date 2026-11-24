@@ -49,16 +49,16 @@ func newGuardBarrierFixture(t *testing.T, path string) (Snapshot, []byte, *Publi
 		input = []byte("{\"objective\":\"sre_incident_triage\",\"service\":\"payments\",\"signal\":\"latency\"}")
 		config := ReleaseConfig{
 			SchemaVersion: "acp.release-publication.v1",
-			TenantID: "tenant-1", ProjectID: "project-1",
+			TenantID:      "tenant-1", ProjectID: "project-1",
 			AgentID: "agent-1", AgentReleaseID: "release-1",
 			PolicyRevision: "policy-1", CatalogVersion: "1.0.0",
 			IssuedAt: now.Add(-time.Minute), ExpiresAt: now.Add(5 * time.Minute),
 			Services: []string{"payments"},
 			Capabilities: []CapabilityContract{{
 				ID: "sre.metrics.read", Version: "1.0.0",
-				InputSchema: json.RawMessage("{\"type\":\"object\",\"required\":[\"service\"]}"),
+				InputSchema:  json.RawMessage("{\"type\":\"object\",\"required\":[\"service\"]}"),
 				OutputSchema: json.RawMessage("{\"type\":\"object\",\"required\":[\"series\"]}"),
-				EffectClass: "read_only", Idempotency: "safe", TenantScoped: true,
+				EffectClass:  "read_only", Idempotency: "safe", TenantScoped: true,
 			}},
 		}
 		var err error
@@ -68,10 +68,10 @@ func newGuardBarrierFixture(t *testing.T, path string) (Snapshot, []byte, *Publi
 		}
 		a = Snapshot{
 			SchemaVersion: "acp.run-authority.v1", TenantID: "tenant-1",
-			RunIntentID: "11111111-1111-4111-8111-111111111111",
-			RunID: "22222222-2222-4222-8222-222222222222",
+			RunIntentID:   "11111111-1111-4111-8111-111111111111",
+			RunID:         "22222222-2222-4222-8222-222222222222",
 			RequestDigest: "sha256:" + sha256Hex(input),
-			ProjectID: "project-1", AgentID: "agent-1", AgentReleaseID: "release-1",
+			ProjectID:     "project-1", AgentID: "agent-1", AgentReleaseID: "release-1",
 			SessionID: "session-1", PrincipalID: "principal-1",
 			SubjectID: "subject-1", ActorID: "subject-1", PolicyRevision: "policy-1",
 			ConfigDigest: "sha256:" + sha256Hex(raw),
@@ -104,8 +104,8 @@ func newGuardBarrierFixture(t *testing.T, path string) (Snapshot, []byte, *Publi
 
 func TestGuardOnlyHandlersHoldAdmissionBarrierThroughFlush(t *testing.T) {
 	for _, endpoint := range []struct {
-		name string
-		path string
+		name  string
+		path  string
 		build func(GuardCapabilityReader, *Publisher, func(context.Context) error, authoritycutover.RequestGate) (http.Handler, error)
 	}{
 		{
@@ -125,11 +125,11 @@ func TestGuardOnlyHandlersHoldAdmissionBarrierThroughFlush(t *testing.T) {
 	} {
 		t.Run(endpoint.name, func(t *testing.T) {
 			for _, scenario := range []struct {
-				name            string
-				gateFails       bool
+				name             string
+				gateFails        bool
 				secondGuardFails bool
-				wantStatus      int
-				wantEvents      string
+				wantStatus       int
+				wantEvents       string
 			}{
 				{name: "valid", wantStatus: http.StatusOK, wantEvents: "acquire,guard,read,guard,flush,release"},
 				{name: "closed_admission", gateFails: true, wantStatus: http.StatusServiceUnavailable, wantEvents: "acquire"},
@@ -146,23 +146,14 @@ func TestGuardOnlyHandlersHoldAdmissionBarrierThroughFlush(t *testing.T) {
 					var guardCalls atomic.Int32
 					readGuard := func(context.Context) error {
 						events.add("guard")
-						if scenario.secondGuardFails && guardCalls.Add(1) == 1 {
-							return nil
-						}
-						if scenario.secondGuardFails && guardCalls.Load() == 1 {
-							return nil
-						}
-						if scenario.secondGuardFails && guardCalls.Load() == 0 {
-							return errors.New("unreachable guard state")
-						}
-						if scenario.secondGuardFails && guardCalls.Load() == 2 {
+						if scenario.secondGuardFails && guardCalls.Add(1) == 2 {
 							return errors.New("authority role revoked after catalog read")
 						}
-						if !scenario.secondGuardFails {
-							guardCalls.Add(1)
-						}
-						return nil
+					if !scenario.secondGuardFails {
+						guardCalls.Add(1)
 					}
+					return nil
+				}
 					handler, err := endpoint.build(reader, publisher, readGuard, gate)
 					if err != nil {
 						t.Fatal(err)
