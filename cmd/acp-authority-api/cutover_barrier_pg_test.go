@@ -60,9 +60,11 @@ func TestAuthorityCutoverPostgresBarrierCoordinatesIndependentReplicas(t *testin
 	const owner = "acp_cutover_schema_owner"
 	const coordinatorGroup = "acp_cutover_coordinator"
 	const observerGroup = "acp_cutover_observer"
+	const delegatedGroup = "acp_cutover_delegated"
 	createRole(owner, "NOLOGIN NOSUPERUSER NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS")
 	createRole(coordinatorGroup, "NOLOGIN NOSUPERUSER NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS")
 	createRole(observerGroup, "NOLOGIN NOSUPERUSER NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS")
+	createRole(delegatedGroup, "NOLOGIN NOSUPERUSER NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS")
 	exec("REVOKE CREATE ON SCHEMA public FROM PUBLIC")
 	exec("GRANT USAGE ON SCHEMA public TO " + owner + ", " + coordinatorGroup + ", " + observerGroup)
 
@@ -134,6 +136,9 @@ func TestAuthorityCutoverPostgresBarrierCoordinatesIndependentReplicas(t *testin
 	}
 	dclPassword := fmt.Sprintf("%x", dclSecret[:])
 	createRole(dclLogin, "LOGIN NOSUPERUSER NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS PASSWORD '"+dclPassword+"'")
+	// This narrowly delegated DCL identity may grant/revoke only the test role.
+	// It is not a superuser and has no general CREATEROLE privilege.
+	exec("GRANT "+pgx.Identifier{delegatedGroup}.Sanitize()+" TO "+pgx.Identifier{dclLogin}.Sanitize()+" WITH ADMIN OPTION")
 	exec("CREATE TABLE public.cutover_barrier_secret (id integer PRIMARY KEY)")
 	exec("ALTER TABLE public.cutover_barrier_secret OWNER TO " + pgx.Identifier{dclLogin}.Sanitize())
 	exec("CREATE FUNCTION public.cutover_barrier_definer() RETURNS integer LANGUAGE sql SECURITY DEFINER AS 'SELECT 1'")
@@ -149,6 +154,19 @@ func TestAuthorityCutoverPostgresBarrierCoordinatesIndependentReplicas(t *testin
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = dcl.Close(context.Background()) })
+
+	checkReplicaRole := func(wantAllowed bool) {
+		t.Helper()
+		conn, err := replicaAPool.Acquire(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer conn.Release()
+		err = authoritycutover.VerifyPostgresRole(ctx, conn.Conn(), replicaALogin, authoritycutover.ObserverRole)
+		if (err == nil) != wantAllowed {
+			t.Fatalf("observer role verification allowed=%v want=%v err=%v", err == nil, wantAllowed, err)
+		}
+	}
 
 	store := authoritycutover.NewPostgresStore(coordinatorPool)
 	replicaA := authoritycutover.NewPostgresBarrier(replicaAPool, replicaALogin, authoritycutover.ObserverRole)
@@ -188,6 +206,23 @@ func TestAuthorityCutoverPostgresBarrierCoordinatesIndependentReplicas(t *testin
 	if err := leaseB.Release(); err != nil {
 		t.Fatal(err)
 	}
+
+	// Shared-object role membership DCL is not covered by PostgreSQL's
+	// ddl_command_start event trigger. Prove the boundary: a narrowly
+	// delegated GRANT ROLE commits while an in-flight request still holds
+	// the local-DDL shared lock, and the next role attestation rejects it.
+	sharedDCLProbeCtx, sharedDCLProbeCancel := context.WithTimeout(ctx, 2*time.Second)
+	if _, err := dcl.Exec(sharedDCLProbeCtx, "GRANT "+pgx.Identifier{delegatedGroup}.Sanitize()+" TO "+pgx.Identifier{replicaALogin}.Sanitize()); err != nil {
+		sharedDCLProbeCancel()
+		t.Fatalf("shared-object GRANT ROLE unexpectedly entered the local DDL event-trigger fence: %v", err)
+	}
+	checkReplicaRole(false)
+	if _, err := dcl.Exec(sharedDCLProbeCtx, "REVOKE "+pgx.Identifier{delegatedGroup}.Sanitize()+" FROM "+pgx.Identifier{replicaALogin}.Sanitize()); err != nil {
+		sharedDCLProbeCancel()
+		t.Fatalf("restore the test LOGIN after unfenced shared-object DCL: %v", err)
+	}
+	sharedDCLProbeCancel()
+	checkReplicaRole(true)
 
 	// An arbitrary object owner does not participate in the replica advisory
 	// protocol. The database-owned ddl_command_start event trigger must acquire
@@ -447,6 +482,37 @@ func TestAuthorityCutoverPostgresBarrierCoordinatesIndependentReplicas(t *testin
 	if err != nil {
 		t.Fatalf("coordinator could not recover CLOSED state: %v", err)
 	}
+
+	// Unlike local DDL, role membership changes require an explicit trusted
+	// operator fence. The coordinator has already drained requests and holds
+	// the exclusive admission lock; the DCL transaction additionally takes
+	// the request-path DDL key before GRANT/REVOKE ROLE.
+	runSharedRoleDCL := func(statement string) error {
+		t.Helper()
+		tx, err := dcl.Begin(ctx)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = tx.Rollback(context.Background()) }()
+		if _, err := tx.Exec(ctx, "SELECT pg_catalog.pg_advisory_xact_lock($1)", int64(0x41435044444c464e)); err != nil {
+			return fmt.Errorf("acquire shared-object DCL fence: %w", err)
+		}
+		if _, err := tx.Exec(ctx, statement); err != nil {
+			return fmt.Errorf("execute fenced shared-object DCL: %w", err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return fmt.Errorf("commit fenced shared-object DCL: %w", err)
+		}
+		return nil
+	}
+	if err := runSharedRoleDCL("GRANT "+pgx.Identifier{delegatedGroup}.Sanitize()+" TO "+pgx.Identifier{replicaALogin}.Sanitize()); err != nil {
+		t.Fatalf("fenced role membership grant: %v", err)
+	}
+	checkReplicaRole(false)
+	if err := runSharedRoleDCL("REVOKE "+pgx.Identifier{delegatedGroup}.Sanitize()+" FROM "+pgx.Identifier{replicaALogin}.Sanitize()); err != nil {
+		t.Fatalf("fenced role membership revoke: %v", err)
+	}
+	checkReplicaRole(true)
 
 	// The coordinator retains the exclusive admission lock while the
 	// independent DCL LOGIN performs GRANT. The event trigger uses a distinct
