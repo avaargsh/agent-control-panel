@@ -71,7 +71,6 @@ func TestGuardReadRoutesRequireFreshAuthorityRole(t *testing.T) {
 	}
 }
 
-
 func TestCutoverObserverRequiresIndependentURLAndLogin(t *testing.T) {
 	env := map[string]string{
 		"ACP_AUTHORITY_DATABASE_URL":   "postgres://authority@db.example/authority",
