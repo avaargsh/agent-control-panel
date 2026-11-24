@@ -439,19 +439,19 @@ func TestAuthorityCutoverPostgresBarrierCoordinatesIndependentReplicas(t *testin
 		t.Fatalf("coordinator could not recover CLOSED state: %v", err)
 	}
 
-	// The durable CLOSED phase rejects new requests, so release the coordinator
-	// session lock before DCL. The database event trigger then acquires its
-	// transaction-scoped exclusive fence; after DCL, recovery must re-attest
-	// the real ACLs and must not reopen merely because the ACK was lost.
-	if err := cutover.Release(); err != nil {
-		t.Fatal(err)
-	}
+	// The coordinator retains the exclusive admission lock while the
+	// independent DCL LOGIN performs GRANT. The event trigger uses a distinct
+	// advisory key, so it can fence DDL without deadlocking the CLOSED
+	// coordinator; recovery must still re-attest the real ACLs.
 	dclCutoverCtx, dclCutoverCancel := context.WithTimeout(ctx, 5*time.Second)
 	if _, err := dcl.Exec(dclCutoverCtx, "GRANT SELECT ON public.cutover_barrier_secret TO PUBLIC"); err != nil {
 		dclCutoverCancel()
-		t.Fatalf("separate DCL LOGIN must run while coordinator holds the distinct admission lock: %v", err)
+		t.Fatalf("separate DCL LOGIN could not run while coordinator held the admission lock: %v", err)
 	}
 	dclCutoverCancel()
+	if err := cutover.Release(); err != nil {
+		t.Fatal(err)
+	}
 	// PUBLIC drift affects both the coordinator and serving identities. Do
 	// not weaken their attestation or use the unverified Store as a fallback.
 	if got, err := store.ObserveVerified(ctx, coordinatorLogin, authoritycutover.CoordinatorRole); !errors.Is(err, authoritycutover.ErrRoleDrift) || got != (authoritycutover.Record{}) {
