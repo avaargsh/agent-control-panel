@@ -90,7 +90,7 @@ func (b *PostgresBarrier) Acquire(ctx context.Context) (RequestLease, error) {
 		return nil, ErrAdmissionClosed
 	}
 	return &sessionLease{conn: conn, shared: true}, nil
-
+}
 
 // CutoverLease holds the exclusive session lock. The caller must first commit
 // OPEN -> DRAINING through PostgresStore.ApplyVerified. Once acquired, every
