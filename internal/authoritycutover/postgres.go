@@ -31,7 +31,9 @@ type stateQueryer interface {
 }
 
 const observeSQL = `SELECT s.generation,s.revision,s.phase,s.change_id,s.manifest_digest,s.operator_id,
-	CASE WHEN s.change_id='' THEN true ELSE EXISTS (
+	CASE WHEN s.change_id='' THEN NOT EXISTS (
+		SELECT 1 FROM public.acp_authority_cutover_changes
+	) ELSE EXISTS (
 		SELECT 1 FROM public.acp_authority_cutover_changes c
 		WHERE c.change_id=s.change_id AND c.manifest_digest=s.manifest_digest
 		AND c.operator_id=s.operator_id
