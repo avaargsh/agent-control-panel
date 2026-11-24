@@ -53,12 +53,12 @@ func TestGuardReadEndpointsRejectCancelledSuccessfulAuthorityReadOverMTLS(t *tes
 					ProjectID: a.ProjectID, AgentID: a.AgentID, AgentReleaseID: a.AgentReleaseID,
 					PolicyRevision: a.PolicyRevision, CatalogVersion: "1.0.0",
 					IssuedAt: now.Add(-time.Minute), ExpiresAt: now.Add(5 * time.Minute),
-					Services:     []string{"payments"},
+					Services: []string{"payments"},
 					Capabilities: []CapabilityContract{{
 						ID: "sre.metrics.read", Version: "1.0.0",
 						InputSchema:  json.RawMessage(`{"type":"object","required":["service"]}`),
 						OutputSchema: json.RawMessage(`{"type":"object","required":["series"]}`),
-						EffectClass: "read_only", Idempotency: "safe", TenantScoped: true,
+						EffectClass:  "read_only", Idempotency: "safe", TenantScoped: true,
 					}},
 				}
 				var err error
