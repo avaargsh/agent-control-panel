@@ -125,7 +125,7 @@ func (r *PublicIssueReader) Read(ctx context.Context, issueURL string) (GitHubIs
 	defer resp.Body.Close()
 	media, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
 	if resp.StatusCode != http.StatusOK {
-		return GitHubIssueSnapshot{}, newPublicSourceFailure(ErrIssueSourceUnavailable, "issue", "http_status", resp.StatusCode)
+		return GitHubIssueSnapshot{}, newPublicHTTPStatusFailure(ErrIssueSourceUnavailable, "issue", resp)
 	}
 	if err != nil || (media != "application/json" && media != "application/vnd.github+json") {
 		return GitHubIssueSnapshot{}, newPublicSourceFailure(ErrIssueSourceUnavailable, "issue", "invalid_media", resp.StatusCode)
