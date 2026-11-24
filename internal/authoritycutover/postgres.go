@@ -40,6 +40,8 @@ const observeSQL = `SELECT s.generation,s.revision,s.phase,s.change_id,s.manifes
 		WHERE c.change_id=s.change_id AND c.manifest_digest=s.manifest_digest
 		AND c.operator_id=s.operator_id
 		AND c.start_generation=s.generation-CASE WHEN s.phase IN ('OPEN','VERIFYING') THEN 1 ELSE 0 END
+		AND (SELECT count(*) FROM public.acp_authority_cutover_changes)=c.start_generation
+		AND (SELECT count(DISTINCT start_generation) FROM public.acp_authority_cutover_changes)=c.start_generation
 		AND NOT EXISTS (
 			SELECT 1 FROM public.acp_authority_cutover_changes newer
 			WHERE newer.start_generation>c.start_generation
