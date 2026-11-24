@@ -114,6 +114,10 @@ func TestAuthorityCutoverPostgresBarrierCoordinatesIndependentReplicas(t *testin
 	coordinatorPool, coordinatorLogin := login("acp_cutover_coordinator_", coordinatorGroup)
 	replicaAPool, replicaALogin := login("acp_cutover_replica_a_", observerGroup)
 	replicaBPool, replicaBLogin := login("acp_cutover_replica_b_", observerGroup)
+	if !samePostgresPrimary(ctx, coordinatorPool, replicaAPool) ||
+		!samePostgresPrimary(ctx, replicaAPool, replicaBPool) {
+		t.Fatal("serving replicas and coordinator did not resolve to the same PostgreSQL primary")
+	}
 
 	// A separate DCL owner performs the test GRANT/REVOKE. The coordinator
 	// identity never receives arbitrary schema ownership or DDL privileges.
@@ -202,8 +206,12 @@ func TestAuthorityCutoverPostgresBarrierCoordinatesIndependentReplicas(t *testin
 	if err != nil || closed.Phase != authoritycutover.Closed {
 		t.Fatalf("mark drained: %+v %v", closed, err)
 	}
-	// A committed out-of-band DCL change is visible to fresh independent
-	// observer sessions while the exclusive barrier is still held.
+	// The exclusive lock blocks a fresh replica even after durable DRAINING.
+	if _, err := replicaB.Acquire(ctx); !errors.Is(err, authoritycutover.ErrAdmissionClosed) {
+		t.Fatalf("replica B entered while exclusive cutover lock held: %v", err)
+	}
+	// A committed DCL grant is visible to fresh independent observer sessions
+	// while the exclusive barrier is still held.
 	if _, err := dcl.Exec(ctx, "GRANT SELECT ON public.cutover_barrier_secret TO PUBLIC"); err != nil {
 		t.Fatal(err)
 	}
@@ -220,9 +228,6 @@ func TestAuthorityCutoverPostgresBarrierCoordinatesIndependentReplicas(t *testin
 		}
 	}
 	checkRole(false)
-	if _, err := replicaB.Acquire(ctx); !errors.Is(err, authoritycutover.ErrAdmissionClosed) {
-		t.Fatalf("replica B entered while exclusive cutover lock held: %v", err)
-	}
 	if _, err := dcl.Exec(ctx, "REVOKE SELECT ON public.cutover_barrier_secret FROM PUBLIC"); err != nil {
 		t.Fatal(err)
 	}
