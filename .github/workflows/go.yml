@@ -119,6 +119,19 @@ jobs:
               exit 1
             fi
           done
+      - name: Require Guard cancellation mTLS regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -race -count=1 -v -run '^TestGuardReadEndpointsRejectCancelledSuccessfulAuthorityReadOverMTLS$' ./internal/authorityhttp | tee guard-cancel.log
+          for probe in capability protected_workspace; do
+            grep -F -- "--- PASS: TestGuardReadEndpointsRejectCancelledSuccessfulAuthorityReadOverMTLS/$probe (" guard-cancel.log
+          done
+          grep -F -- '--- PASS: TestGuardReadEndpointsRejectCancelledSuccessfulAuthorityReadOverMTLS (' guard-cancel.log
+          if grep -F -- '--- SKIP: TestGuardReadEndpointsRejectCancelledSuccessfulAuthorityReadOverMTLS' guard-cancel.log; then
+            echo 'Guard cancellation regression skipped' >&2
+            exit 1
+          fi
       - name: Race-enabled tests
         run: go test -race -count=1 ./...
       # The regular PR checkout above tests GitHub's synthetic merge commit.
@@ -155,3 +168,12 @@ jobs:
               exit 1
             fi
           done
+          go test -race -count=1 -v -run '^TestGuardReadEndpointsRejectCancelledSuccessfulAuthorityReadOverMTLS$' ./internal/authorityhttp | tee guard-cancel.log
+          for probe in capability protected_workspace; do
+            grep -F -- "--- PASS: TestGuardReadEndpointsRejectCancelledSuccessfulAuthorityReadOverMTLS/$probe (" guard-cancel.log
+          done
+          grep -F -- '--- PASS: TestGuardReadEndpointsRejectCancelledSuccessfulAuthorityReadOverMTLS (' guard-cancel.log
+          if grep -F -- '--- SKIP: TestGuardReadEndpointsRejectCancelledSuccessfulAuthorityReadOverMTLS' guard-cancel.log; then
+            echo 'Guard cancellation regression skipped' >&2
+            exit 1
+          fi
