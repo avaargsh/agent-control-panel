@@ -147,6 +147,8 @@ func TestAuthorityCutoverPostgresLedgerACL(t *testing.T) {
 		{"GRANT INSERT (change_id) ON public.acp_authority_cutover_changes TO " + readerGroup, "REVOKE INSERT (change_id) ON public.acp_authority_cutover_changes FROM " + readerGroup, readerConn.Conn(), readerName, authoritycutover.ObserverRole},
 		{"GRANT SELECT ON public.acp_authority_cutover_state TO PUBLIC", "REVOKE SELECT ON public.acp_authority_cutover_state FROM PUBLIC", readerConn.Conn(), readerName, authoritycutover.ObserverRole},
 		{"GRANT TEMP ON DATABASE " + pgx.Identifier{database}.Sanitize() + " TO " + readerName, "REVOKE TEMP ON DATABASE " + pgx.Identifier{database}.Sanitize() + " FROM " + readerName, readerConn.Conn(), readerName, authoritycutover.ObserverRole},
+		{"GRANT " + readerGroup + " TO " + readerName + " WITH ADMIN OPTION", "REVOKE ADMIN OPTION FOR " + readerGroup + " FROM " + readerName, readerConn.Conn(), readerName, authoritycutover.ObserverRole},
+		{"GRANT " + writerGroup + " TO " + writerName + " WITH ADMIN OPTION", "REVOKE ADMIN OPTION FOR " + writerGroup + " FROM " + writerName, writerConn.Conn(), writerName, authoritycutover.CoordinatorRole},
 		{"GRANT " + writerGroup + " TO " + readerName, "REVOKE " + writerGroup + " FROM " + readerName, readerConn.Conn(), readerName, authoritycutover.ObserverRole},
 		{"REVOKE SELECT ON public.acp_authority_cutover_transitions FROM " + readerGroup, "GRANT SELECT ON public.acp_authority_cutover_transitions TO " + readerGroup, readerConn.Conn(), readerName, authoritycutover.ObserverRole},
 	} {
