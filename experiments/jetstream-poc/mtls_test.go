@@ -263,8 +263,8 @@ func writeTestCA(dir string) (string, *ecdsa.PrivateKey, error) {
 	now := time.Now().UTC()
 	template := &x509.Certificate{
 		SerialNumber: big.NewInt(1),
-		Subject: pkix.Name{CommonName: "ACP JetStream POC CA"},
-		NotBefore: now.Add(-time.Minute), NotAfter: now.Add(2*time.Hour),
+		Subject:      pkix.Name{CommonName: "ACP JetStream POC CA"},
+		NotBefore:    now.Add(-time.Minute), NotAfter: now.Add(2 * time.Hour),
 		IsCA: true, BasicConstraintsValid: true,
 		KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageCRLSign | x509.KeyUsageDigitalSignature,
 	}
@@ -287,10 +287,10 @@ func writeTestLeaf(dir, name, caPath string, caKey *ecdsa.PrivateKey, subject pk
 	now := time.Now().UTC()
 	template := &x509.Certificate{
 		SerialNumber: big.NewInt(int64(len(name) + now.UnixNano()%1000000 + 1)),
-		Subject: subject,
-		NotBefore: now.Add(-time.Minute), NotAfter: now.Add(time.Hour),
+		Subject:      subject,
+		NotBefore:    now.Add(-time.Minute), NotAfter: now.Add(time.Hour),
 		BasicConstraintsValid: true,
-		KeyUsage: x509.KeyUsageDigitalSignature,
+		KeyUsage:              x509.KeyUsageDigitalSignature,
 	}
 	if server {
 		template.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}
