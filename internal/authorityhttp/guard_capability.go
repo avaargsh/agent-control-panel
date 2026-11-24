@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/avaargsh/agent-control-panel/internal/authoritycutover"
 	runpg "github.com/avaargsh/agent-control-panel/internal/runintent/postgres"
 )
 
@@ -140,6 +141,31 @@ type GuardCapabilityReader interface {
 func NewGuardCapabilityHandler(
 	reader GuardCapabilityReader, publisher *Publisher, guardPeer, tenant string,
 ) (http.Handler, error) {
+	return newGuardCapabilityHandler(reader, publisher, guardPeer, tenant, nil, nil)
+}
+
+// NewBarrierGuardCapabilityHandler adds a fresh authority-role check and the
+// shared PostgreSQL admission/DDL lease around the Guard-only catalog read.
+func NewBarrierGuardCapabilityHandler(
+	reader GuardCapabilityReader,
+	publisher *Publisher,
+	guardPeer, tenant string,
+	readGuard func(context.Context) error,
+	gate authoritycutover.RequestGate,
+) (http.Handler, error) {
+	if readGuard == nil || gate == nil {
+		return nil, ErrPublicationUnavailable
+	}
+	return newGuardCapabilityHandler(reader, publisher, guardPeer, tenant, readGuard, gate)
+}
+
+func newGuardCapabilityHandler(
+	reader GuardCapabilityReader,
+	publisher *Publisher,
+	guardPeer, tenant string,
+	readGuard func(context.Context) error,
+	gate authoritycutover.RequestGate,
+) (http.Handler, error) {
 	if nilReaderInterface(reader) || publisher == nil || publisher.root == nil ||
 		!validIdentity(guardPeer) || !validTenant(tenant) {
 		return nil, ErrPublicationUnavailable
@@ -179,9 +205,18 @@ func NewGuardCapabilityHandler(
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
 		defer cancel()
+		finish, admitted := acquireGuardAdmission(w, ctx, gate, fail, "AUTHORITY_UNAVAILABLE")
+		if !admitted {
+			return
+		}
+		if finish != nil {
+			defer finish()
+		}
+		if !checkGuardAuthorityRole(ctx, readGuard, fail, "AUTHORITY_UNAVAILABLE") {
+			return
+		}
 		current, input, err := reader.GetGuardRunAuthority(ctx, tenant, q.RunID)
-		if ctx.Err() != nil {
-			fail(http.StatusServiceUnavailable, "AUTHORITY_UNAVAILABLE")
+		if !checkGuardAuthorityRole(ctx, readGuard, fail, "AUTHORITY_UNAVAILABLE") {
 			return
 		}
 		if errors.Is(err, runpg.ErrCatalogDenied) {
