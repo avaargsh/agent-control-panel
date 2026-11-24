@@ -69,9 +69,9 @@ func (r *barrierHTTPReader) GetExecutionAuthorityInput(ctx context.Context, ref 
 }
 
 type barrierHTTPLease struct {
-	flushed   *atomic.Bool
-	releases  atomic.Int32
-	sawFlush  atomic.Bool
+	flushed  *atomic.Bool
+	releases atomic.Int32
+	sawFlush atomic.Bool
 }
 
 func (l *barrierHTTPLease) Release() error {
@@ -117,9 +117,9 @@ func newBarrierHTTPFixture(t *testing.T, now time.Time) (Snapshot, []byte, *Publ
 		Services: []string{"payments"},
 		Capabilities: []CapabilityContract{{
 			ID: "sre.metrics.read", Version: "1.0.0",
-			InputSchema: json.RawMessage(`{"type":"object","required":["service"]}`),
+			InputSchema:  json.RawMessage(`{"type":"object","required":["service"]}`),
 			OutputSchema: json.RawMessage(`{"type":"object","required":["series"]}`),
-			EffectClass: "read_only", Idempotency: "safe", TenantScoped: true,
+			EffectClass:  "read_only", Idempotency: "safe", TenantScoped: true,
 		}},
 	}
 	raw, err := json.Marshal(config)
