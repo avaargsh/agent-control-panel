@@ -277,16 +277,34 @@ func TestAuthorityCutoverPostgresBarrierCoordinatesIndependentReplicas(t *testin
 	if err := cutover.Release(); err != nil {
 		t.Fatal(err)
 	}
-	durableAfterLostACK, err := store.ObserveVerified(ctx, coordinatorLogin, authoritycutover.CoordinatorRole)
-	if err != nil || durableAfterLostACK != closed {
-		t.Fatalf("lost DCL ACK changed durable CLOSED record: got=%+v want=%+v err=%v", durableAfterLostACK, closed, err)
+	// PUBLIC drift affects both the coordinator and serving identities. Do
+	// not weaken their attestation or use the unverified Store as a fallback.
+	if got, err := store.ObserveVerified(ctx, coordinatorLogin, authoritycutover.CoordinatorRole); !errors.Is(err, authoritycutover.ErrRoleDrift) || got != (authoritycutover.Record{}) {
+		t.Fatalf("coordinator returned a record despite live PUBLIC drift: got=%+v err=%v", got, err)
 	}
 	if _, err := replicaB.Acquire(ctx); !errors.Is(err, authoritycutover.ErrBarrierUnavailable) {
 		t.Fatalf("observer with live DCL drift was not denied after lost ACK: %v", err)
 	}
-	cutover, err = coordinator.AcquireCutover(ctx, closed)
-	if err != nil {
-		t.Fatalf("coordinator could not reacquire after uncertain DCL ACK: %v", err)
+	if unexpected, err := coordinator.AcquireCutover(ctx, closed); !errors.Is(err, authoritycutover.ErrBarrierUnavailable) || unexpected != nil {
+		if unexpected != nil {
+			_ = unexpected.Release()
+		}
+		t.Fatalf("coordinator reacquired cutover despite live PUBLIC drift: %v", err)
+	}
+	// Independently inspect the durable state with the test-only database
+	// administrator, not the drifted production-facing credentials.
+	var durableAfterLostACK authoritycutover.Record
+	var phase string
+	if err := admin.QueryRow(ctx, `SELECT generation,revision,phase,change_id,manifest_digest,operator_id
+		FROM public.acp_authority_cutover_state WHERE id=1`).Scan(
+		&durableAfterLostACK.Generation, &durableAfterLostACK.Revision, &phase,
+		&durableAfterLostACK.Change.ID, &durableAfterLostACK.Change.ManifestDigest, &durableAfterLostACK.Change.Operator,
+	); err != nil {
+		t.Fatal(err)
+	}
+	durableAfterLostACK.Phase = authoritycutover.Phase(phase)
+	if durableAfterLostACK != closed {
+		t.Fatalf("lost DCL ACK changed durable CLOSED record: got=%+v want=%+v", durableAfterLostACK, closed)
 	}
 	checkRole := func(wantAllowed bool) {
 		t.Helper()
@@ -305,6 +323,16 @@ func TestAuthorityCutoverPostgresBarrierCoordinatesIndependentReplicas(t *testin
 		t.Fatal(err)
 	}
 	checkRole(true)
+	if got, err := store.ObserveVerified(ctx, coordinatorLogin, authoritycutover.CoordinatorRole); err != nil || got != closed {
+		t.Fatalf("restored coordinator did not observe original CLOSED record: got=%+v err=%v", got, err)
+	}
+	if _, err := replicaB.Acquire(ctx); !errors.Is(err, authoritycutover.ErrAdmissionClosed) {
+		t.Fatalf("restored role implicitly reopened CLOSED state: %v", err)
+	}
+	cutover, err = coordinator.AcquireCutover(ctx, closed)
+	if err != nil {
+		t.Fatalf("restored coordinator could not reacquire original CLOSED state: %v", err)
+	}
 
 	verifying, err := store.ApplyVerified(ctx, coordinatorLogin, closed, authoritycutover.ObserveApplied, change)
 	if err != nil || verifying.Phase != authoritycutover.Verifying {
