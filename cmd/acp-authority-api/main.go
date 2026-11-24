@@ -172,11 +172,27 @@ func serve(ctx context.Context, c config) error {
 			return err
 		}
 		if c.guardPeer != "" {
-			readOnlyGuard, err := authorityhttp.NewGuardCapabilityHandler(repo, publisher, c.guardPeer, c.tenant)
-			if err != nil {
-				return err
+			var readOnlyGuard, protectedGuard http.Handler
+			if requestGate != nil {
+				// Both Guard-only endpoints use the same admission/DDL fence
+				// as Run Authority and Decision Publication. The role checks
+				// run after admission and bracket each catalog read.
+				readOnlyGuard, err = authorityhttp.NewBarrierGuardCapabilityHandler(
+					repo, publisher, c.guardPeer, c.tenant, readGuard, requestGate,
+				)
+				if err != nil {
+					return err
+				}
+				protectedGuard, err = authorityhttp.NewBarrierGuardProtectedWorkspaceHandler(
+					repo, publisher, c.guardPeer, c.tenant, readGuard, requestGate,
+				)
+			} else {
+				readOnlyGuard, err = authorityhttp.NewGuardCapabilityHandler(repo, publisher, c.guardPeer, c.tenant)
+				if err != nil {
+					return err
+				}
+				protectedGuard, err = authorityhttp.NewGuardProtectedWorkspaceHandler(repo, publisher, c.guardPeer, c.tenant)
 			}
-			protectedGuard, err := authorityhttp.NewGuardProtectedWorkspaceHandler(repo, publisher, c.guardPeer, c.tenant)
 			if err != nil {
 				return err
 			}
@@ -186,7 +202,11 @@ func serve(ctx context.Context, c config) error {
 			mux := http.NewServeMux()
 			mux.Handle(authorityhttp.GuardCapabilityPath, readOnlyGuard)
 			mux.Handle(authorityhttp.GuardProtectedWorkspacePath, protectedGuard)
-			guardHandler = requireAuthorityReadRole(mux, readGuard)
+			if requestGate != nil {
+				guardHandler = mux
+			} else {
+				guardHandler = requireAuthorityReadRole(mux, readGuard)
+			}
 		}
 	} else {
 		if requestGate != nil {
