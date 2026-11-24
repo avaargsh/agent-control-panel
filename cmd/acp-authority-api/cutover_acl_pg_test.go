@@ -110,7 +110,7 @@ func TestAuthorityCutoverPostgresLedgerACL(t *testing.T) {
 	// the exact three-table Cutover ledger, not merely drift on target tables.
 	exec("CREATE TABLE public.cutover_unrelated_secret (id integer PRIMARY KEY)")
 	exec("CREATE SEQUENCE public.cutover_unrelated_sequence")
-	exec("CREATE FUNCTION public.cutover_definer_probe() RETURNS integer LANGUAGE sql SECURITY DEFINER AS $ SELECT 1 $")
+	exec("CREATE FUNCTION public.cutover_definer_probe() RETURNS integer LANGUAGE sql SECURITY DEFINER AS 'SELECT 1'")
 	exec("REVOKE ALL ON FUNCTION public.cutover_definer_probe() FROM PUBLIC")
 	exec("CREATE SCHEMA cutover_unrelated_schema")
 	writer, writerName := login("acp_cutover_writer_", writerGroup)
