@@ -70,3 +70,32 @@ func TestGuardReadRoutesRequireFreshAuthorityRole(t *testing.T) {
 		t.Fatalf("Guard route rejected eligible reader: status=%d calls=%d", ok.Code, called)
 	}
 }
+
+
+func TestCutoverObserverRequiresIndependentURLAndLogin(t *testing.T) {
+	env := map[string]string{
+		"ACP_AUTHORITY_DATABASE_URL":   "postgres://authority@db.example/authority",
+		"ACP_AUTHORITY_TLS_CERT":       "server.pem",
+		"ACP_AUTHORITY_TLS_KEY":        "server.key",
+		"ACP_AUTHORITY_CLIENT_CA":      "ca.pem",
+		"ACP_AUTHORITY_PEER_SPIFFE_ID": "spiffe://example.org/decision",
+		"ACP_AUTHORITY_TENANT":         "tenant-1",
+		"ACP_AUTHORITY_LISTEN_ADDR":    "127.0.0.1:8444",
+	}
+	get := func(key string) string { return env[key] }
+	env["ACP_AUTHORITY_CUTOVER_OBSERVER_DATABASE_URL"] = "postgres://observer@db.example/authority"
+	if _, err := readConfig(get); err == nil {
+		t.Fatal("cutover observer URL without explicit LOGIN was accepted")
+	}
+	delete(env, "ACP_AUTHORITY_CUTOVER_OBSERVER_DATABASE_URL")
+	env["ACP_AUTHORITY_CUTOVER_OBSERVER_LOGIN"] = "acp_cutover_reader"
+	if _, err := readConfig(get); err == nil {
+		t.Fatal("cutover observer LOGIN without independent URL was accepted")
+	}
+	env["ACP_AUTHORITY_CUTOVER_OBSERVER_DATABASE_URL"] = "postgres://observer@db.example/authority"
+	c, err := readConfig(get)
+	if err != nil || c.cutoverDSN != env["ACP_AUTHORITY_CUTOVER_OBSERVER_DATABASE_URL"] ||
+		c.cutoverLogin != "acp_cutover_reader" {
+		t.Fatalf("valid opt-in cutover observer configuration rejected: %+v %v", c, err)
+	}
+}
