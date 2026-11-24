@@ -94,11 +94,13 @@ func (b *PostgresBarrier) Acquire(ctx context.Context) (RequestLease, error) {
 
 // CutoverLease holds the exclusive session lock. The caller must first commit
 // OPEN -> DRAINING through PostgresStore.ApplyVerified. Once acquired, every
-// previously admitted request has released its shared lease. The coordinator
-// may then persist CLOSED, execute scoped DCL with its separate operator
-// identity, independently re-attest reader LOGINS, persist VERIFYING/OPEN,
-// and only then release this lease. Any uncertain outcome must leave the
-// durable state non-OPEN; releasing the lock never changes ledger state.
+// previously admitted request has released its shared lease. After persisting
+// CLOSED, the coordinator must release this lease before scoped DCL: the
+// durable non-OPEN phase rejects new requests while the database event trigger
+// acquires its transaction-scoped exclusive DDL fence. Reacquire this lease
+// after DCL to re-attest reader LOGINS and persist VERIFYING/OPEN. Any
+// uncertain outcome must leave the durable state non-OPEN; releasing the lock
+// never changes ledger state.
 type CutoverLease struct {
 	lease *sessionLease
 }
