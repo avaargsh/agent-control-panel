@@ -106,6 +106,19 @@ jobs:
             echo 'two-tenant PostgreSQL isolation test was skipped' >&2
             exit 1
           fi
+      - name: Require real PostgreSQL cutover probes
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$PGTEST_DSN"
+          go test -race -count=1 -v -run '^TestAuthorityCutoverPostgres(DrainPrimitive|GenerationCAS)$' ./cmd/acp-authority-api | tee cutover-probes.log
+          for probe in TestAuthorityCutoverPostgresDrainPrimitive TestAuthorityCutoverPostgresGenerationCAS; do
+            grep -F -- "--- PASS: $probe (" cutover-probes.log
+            if grep -F -- "--- SKIP: $probe" cutover-probes.log; then
+              echo "Required cutover probe skipped: $probe" >&2
+              exit 1
+            fi
+          done
       - name: Race-enabled tests
         run: go test -race -count=1 ./...
       # The regular PR checkout above tests GitHub's synthetic merge commit.
@@ -133,3 +146,12 @@ jobs:
             exit 1
           fi
           go test -race -count=1 ./cmd/acp-authority-api
+          test -n "$PGTEST_DSN"
+          go test -race -count=1 -v -run '^TestAuthorityCutoverPostgres(DrainPrimitive|GenerationCAS)$' ./cmd/acp-authority-api | tee cutover-probes.log
+          for probe in TestAuthorityCutoverPostgresDrainPrimitive TestAuthorityCutoverPostgresGenerationCAS; do
+            grep -F -- "--- PASS: $probe (" cutover-probes.log
+            if grep -F -- "--- SKIP: $probe" cutover-probes.log; then
+              echo "Required cutover probe skipped: $probe" >&2
+              exit 1
+            fi
+          done

@@ -88,6 +88,10 @@ func NewGuardProtectedWorkspaceHandler(
 		ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
 		defer cancel()
 		current, input, err := reader.GetGuardRunAuthority(ctx, tenant, q.RunID)
+		if ctx.Err() != nil {
+			fail(http.StatusServiceUnavailable, "AUTHORITY_UNAVAILABLE")
+			return
+		}
 		if errors.Is(err, runpg.ErrCatalogDenied) {
 			fail(http.StatusForbidden, "CAPABILITY_DENIED")
 			return
@@ -110,6 +114,10 @@ func NewGuardProtectedWorkspaceHandler(
 			ConfigDigest:   current.Snapshot.ConfigDigest,
 		}
 		receipt, err := publisher.ObserveProtectedWorkspace(a, input, q, time.Now().UTC())
+		if ctx.Err() != nil {
+			fail(http.StatusServiceUnavailable, "AUTHORITY_UNAVAILABLE")
+			return
+		}
 		if errors.Is(err, ErrProtectedWorkspaceDenied) {
 			fail(http.StatusForbidden, "CAPABILITY_DENIED")
 			return
