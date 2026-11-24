@@ -70,3 +70,6 @@ The real PostgreSQL 16 regression uses two independently authenticated replica L
 
 
 The service performs a full ObserveVerified historical ledger audit on the independent Observer backend at startup. The per-request gate uses a bounded indexed admission-head query (singleton state, current claim, current transition and no newer revision), not the full transition-history scan. Trusted coordinator transitions and exclusive-lock recovery continue to use full history verification. This reduces request-path work but does not make historical tampering by an uncoordinated privileged DBA detectable on every request; that actor remains outside the cooperative protocol guarantee.
+
+
+The exclusive coordinator path re-attests its LOGIN after the lock is granted, not only before waiting; this catches role-membership or ACL changes that occur while the coordinator is queued behind active requests. The PG16 test revokes the coordinator group while it is visibly waiting in pg_locks and requires post-lock attestation to fail closed. CI also logs a 100-sample database admission microbenchmark (baseline and gated p50/p95/p99 plus pool connection counts) and the observed drain wait. These are regression diagnostics, not production SLO evidence.
