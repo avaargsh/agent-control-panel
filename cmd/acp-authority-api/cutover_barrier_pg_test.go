@@ -433,13 +433,14 @@ func TestAuthorityCutoverPostgresBarrierCoordinatesIndependentReplicas(t *testin
 		t.Fatalf("coordinator could not recover CLOSED state: %v", err)
 	}
 
-	// Commit a DCL grant, then simulate a lost ACK by dropping the coordinator
-	// lock without advancing the durable state. Recovery must read actual ACLs
-	// and must not reopen merely because the lock/session was lost.
-	if _, err := dcl.Exec(ctx, "GRANT SELECT ON public.cutover_barrier_secret TO PUBLIC"); err != nil {
+	// The durable CLOSED phase rejects new requests, so release the coordinator
+	// session lock before DCL. The database event trigger then acquires its
+	// transaction-scoped exclusive fence; after DCL, recovery must re-attest
+	// the real ACLs and must not reopen merely because the ACK was lost.
+	if err := cutover.Release(); err != nil {
 		t.Fatal(err)
 	}
-	if err := cutover.Release(); err != nil {
+	if _, err := dcl.Exec(ctx, "GRANT SELECT ON public.cutover_barrier_secret TO PUBLIC"); err != nil {
 		t.Fatal(err)
 	}
 	// PUBLIC drift affects both the coordinator and serving identities. Do
