@@ -54,7 +54,7 @@ func TestPrimaryFenceAcceptsOnlyThePinnedWritablePrimary(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		queryer  *fakePrimaryQueryer
+		queryer  primaryIdentityQueryer
 		wantPass bool
 	}{
 		{
