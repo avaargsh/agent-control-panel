@@ -111,15 +111,16 @@ func (l *CutoverLease) Release() error {
 }
 
 // AcquireCutover verifies the independently authenticated Coordinator LOGIN,
-// obtains the exclusive lock, and confirms the exact durable DRAINING record.
-// It intentionally does not change state or execute DCL. The operator must
-// explicitly read back uncertain outcomes; no DCL retry or automatic reopen
-// is performed here.
+// obtains the exclusive lock, and confirms the exact durable non-OPEN record.
+// DRAINING is the initial path; CLOSED and VERIFYING are accepted for explicit
+// recovery after a lost coordinator/ACK. It never changes state or executes
+// DCL. The operator must read back uncertain outcomes; no DCL retry or
+// automatic reopen is performed here.
 func (b *PostgresBarrier) AcquireCutover(ctx context.Context, expected Record) (*CutoverLease, error) {
 	if b == nil || b.pool == nil || b.login == "" || b.mode != CoordinatorRole {
 		return nil, ErrBarrierUnavailable
 	}
-	if !expected.valid() || expected.Phase != Draining {
+	if !expected.valid() || expected.Phase == Open {
 		return nil, ErrInvalid
 	}
 	conn, err := b.pool.Acquire(ctx)
