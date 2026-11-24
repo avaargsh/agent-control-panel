@@ -102,6 +102,25 @@ func (s *PostgresStore) Observe(ctx context.Context) (Record, error) {
 	return readRecord(ctx, s.pool, false)
 }
 
+// ObserveVerified acquires one backend, attests its independent LOGIN and
+// reads the ledger through that same backend. This closes accidental pool
+// identity/backend mismatch between the two operations. It is not an atomic
+// fence against privileged DCL committed after the attestation.
+func (s *PostgresStore) ObserveVerified(ctx context.Context, login string, mode RoleMode) (Record, error) {
+	if s == nil || s.pool == nil {
+		return Record{}, ErrStoreUnavailable
+	}
+	conn, err := s.pool.Acquire(ctx)
+	if err != nil {
+		return Record{}, fmt.Errorf("%w: acquire verified observer: %w", ErrStoreUnavailable, err)
+	}
+	defer conn.Release()
+	if err := VerifyPostgresRole(ctx, conn.Conn(), login, mode); err != nil {
+		return Record{}, err
+	}
+	return readRecord(ctx, conn, false)
+}
+
 // Apply atomically claims a new change ID and updates the full expected
 // record. External drain, DCL outcome and re-attestation evidence must be
 // independently validated by the trusted caller before invoking Apply.
@@ -115,12 +134,37 @@ func (s *PostgresStore) Apply(ctx context.Context, expected Record, action Actio
 	if err != nil {
 		return Record{}, fmt.Errorf("%w: begin: %w", ErrStoreUnavailable, err)
 	}
+	return applyTransaction(ctx, tx, expected, action, change)
+}
+
+// ApplyVerified requires the expected independently authenticated Coordinator
+// LOGIN and performs the state transition on the same acquired backend. The
+// role probe is a point-in-time admission check, not an atomic DCL fence.
+func (s *PostgresStore) ApplyVerified(ctx context.Context, login string, expected Record, action Action, change Change) (Record, error) {
+	if s == nil || s.pool == nil {
+		return Record{}, ErrStoreUnavailable
+	}
+	conn, err := s.pool.Acquire(ctx)
+	if err != nil {
+		return Record{}, fmt.Errorf("%w: acquire verified coordinator: %w", ErrStoreUnavailable, err)
+	}
+	defer conn.Release()
+	if err := VerifyPostgresRole(ctx, conn.Conn(), login, CoordinatorRole); err != nil {
+		return Record{}, err
+	}
+	tx, err := conn.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	if err != nil {
+		return Record{}, fmt.Errorf("%w: begin verified transaction: %w", ErrStoreUnavailable, err)
+	}
+	return applyTransaction(ctx, tx, expected, action, change)
+}
+
+func applyTransaction(ctx context.Context, tx pgx.Tx, expected Record, action Action, change Change) (Record, error) {
 	defer func() {
 		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = tx.Rollback(cleanup)
 	}()
-
 	// Serialize coordinators on the singleton row. Use a second statement
 	// after acquiring the lock so the claim lookup sees a fresh snapshot
 	// even when another coordinator committed while this one was waiting.
