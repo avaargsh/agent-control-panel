@@ -265,6 +265,35 @@ func TestAuthorityCutoverPostgresStoreContract(t *testing.T) {
 		t.Errorf("expected eight durable transitions after two cutovers: %d %v", transitionCount, err)
 	}
 
+	// A continuous revision sequence is insufficient if an older row no
+	// longer agrees with the durable claim. Keep the latest row intact.
+	for _, revision := range []int64{3, 5, 8} {
+		var originalOperator string
+		if err := admin.QueryRow(ctx, "SELECT operator_id FROM public.acp_authority_cutover_transitions WHERE revision=$1", revision).Scan(&originalOperator); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := admin.Exec(ctx, "UPDATE public.acp_authority_cutover_transitions SET operator_id='corrupt' WHERE revision=$1", revision); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := fresh.Observe(ctx); !errors.Is(err, authoritycutover.ErrInvalid) {
+			t.Fatalf("inconsistent historical revision %d accepted: %v", revision, err)
+		}
+		blocked := authoritycutover.Change{ID: "blocked-history-corruption", ManifestDigest: other.ManifestDigest, Operator: other.Operator}
+		if _, err := fresh.Apply(ctx, latest, authoritycutover.Begin, blocked); !errors.Is(err, authoritycutover.ErrInvalid) {
+			t.Fatalf("inconsistent historical revision %d permitted new change: %v", revision, err)
+		}
+		if err := admin.QueryRow(ctx, "SELECT count(*) FROM public.acp_authority_cutover_changes").Scan(&count); err != nil || count != 2 {
+			t.Fatalf("history corruption rejection mutated claims: %d %v", count, err)
+		}
+		if err := admin.QueryRow(ctx, "SELECT count(*) FROM public.acp_authority_cutover_transitions").Scan(&transitionCount); err != nil || transitionCount != 8 {
+			t.Fatalf("history corruption rejection mutated transitions: %d %v", transitionCount, err)
+		}
+		if _, err := admin.Exec(ctx, "UPDATE public.acp_authority_cutover_transitions SET operator_id=$1 WHERE revision=$2", originalOperator, revision); err != nil {
+			t.Fatal(err)
+		}
+		observe(fresh, latest)
+	}
+
 	// Keep the latest revision and claim intact, but remove a historical
 	// transition. A partial restore must not silently erase audit history.
 	exec("DELETE FROM public.acp_authority_cutover_transitions WHERE revision=3")
