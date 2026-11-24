@@ -1,7 +1,7 @@
 -- Serialize local DDL against in-flight authority reads.
 -- Run as a PostgreSQL cluster administrator: CREATE EVENT TRIGGER is
 -- superuser-only. The request path holds a session-level shared advisory lock
--- with the same key until the HTTP response has been flushed. This event
+-- with the dedicated DDL key until the HTTP response has been flushed. This event
 -- trigger takes the transaction-level exclusive lock for local DDL, including
 -- GRANT and REVOKE, so those changes cannot commit inside an admitted read.
 --
@@ -18,7 +18,7 @@ SECURITY INVOKER
 SET search_path = pg_catalog
 AS $function$
 BEGIN
-    PERFORM pg_catalog.pg_advisory_xact_lock(4702690686029549398);
+    PERFORM pg_catalog.pg_advisory_xact_lock(4702690690038777422);
 END;
 $function$;
 

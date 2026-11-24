@@ -73,3 +73,6 @@ The service performs a full ObserveVerified historical ledger audit on the indep
 
 
 The exclusive coordinator path re-attests its LOGIN after the lock is granted, not only before waiting; this catches role-membership or ACL changes that occur while the coordinator is queued behind active requests. The PG16 test revokes the coordinator group while it is visibly waiting in pg_locks and requires post-lock attestation to fail closed. CI also logs a 100-sample database admission microbenchmark (baseline and gated p50/p95/p99 plus pool connection counts) and the observed drain wait. These are regression diagnostics, not production SLO evidence.
+
+
+The request path uses two distinct advisory keys: shared admission leases conflict with the coordinator's exclusive drain lock; shared DDL leases conflict with the event trigger's transaction-exclusive DDL lock. Keeping these keys separate allows the independent DCL operator to execute local DDL while the coordinator holds admission CLOSED.
