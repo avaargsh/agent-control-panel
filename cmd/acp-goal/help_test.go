@@ -40,7 +40,6 @@ func TestGoalTopLevelInvalidCommandShowsCompleteUsage(t *testing.T) {
 	}
 }
 
-
 func TestGoalTopLevelHelpIncludesRequiredArguments(t *testing.T) {
 	var out, diagnostics bytes.Buffer
 	if err := run([]string{"--help"}, strings.NewReader(""), &out, &diagnostics); err != nil {
