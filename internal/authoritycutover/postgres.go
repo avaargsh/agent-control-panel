@@ -65,6 +65,13 @@ const observeSQL = `SELECT s.generation,s.revision,s.phase,s.change_id,s.manifes
 			AND claim.operator_id=historical.operator_id
 			AND claim.start_generation=historical.generation-CASE WHEN historical.phase IN ('OPEN','VERIFYING') THEN 1 ELSE 0 END
 		)
+	) AND NOT EXISTS (
+		SELECT 1 FROM public.acp_authority_cutover_transitions h
+		JOIN public.acp_authority_cutover_changes c ON c.change_id=h.change_id
+		WHERE (h.revision-2)/4+1<>c.start_generation
+		OR h.phase<>CASE (h.revision-2)%4
+			WHEN 0 THEN 'DRAINING' WHEN 1 THEN 'CLOSED'
+			WHEN 2 THEN 'VERIFYING' WHEN 3 THEN 'OPEN' END
 	) END
 	FROM public.acp_authority_cutover_state s WHERE s.id=1`
 
