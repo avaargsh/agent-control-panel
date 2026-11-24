@@ -23,7 +23,17 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	return runWithIssueReader(args, stdin, stdout, stderr, issuegoal.NewPublicIssueReader())
 }
 
-const goalUsage = "usage: acp-goal prepare | snapshot | inspect | submit | status"
+const goalUsage = `usage: acp-goal <command> [options]
+
+Commands:
+  prepare --file PATH
+  snapshot --issue-url URL
+  inspect --file PATH
+  submit --file PATH --url URL --token-file PATH --ca-file PATH [--hold-record PATH]
+  status --file PATH --url URL --token-file PATH --ca-file PATH [--hold-record PATH]
+
+Use - as the file path to read JSON from stdin.
+Run acp-goal <command> --help for command-specific options.`
 
 func runWithIssueReader(args []string, stdin io.Reader, stdout, stderr io.Writer, reader issueReader) error {
 	if len(args) == 0 {
