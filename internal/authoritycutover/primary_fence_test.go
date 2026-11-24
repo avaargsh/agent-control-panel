@@ -58,12 +58,12 @@ func TestPrimaryFenceAcceptsOnlyThePinnedWritablePrimary(t *testing.T) {
 		wantPass bool
 	}{
 		{
-			name: "same writable primary",
-			queryer: &fakePrimaryQueryer{identity: expected},
+			name:     "same writable primary",
+			queryer:  &fakePrimaryQueryer{identity: expected},
 			wantPass: true,
 		},
 		{
-			name: "standby with same cluster endpoint",
+			name:    "standby with same cluster endpoint",
 			queryer: &fakePrimaryQueryer{identity: expected, recovery: true},
 		},
 		{
@@ -85,7 +85,7 @@ func TestPrimaryFenceAcceptsOnlyThePinnedWritablePrimary(t *testing.T) {
 			}},
 		},
 		{
-			name: "identity probe error",
+			name:    "identity probe error",
 			queryer: &fakePrimaryQueryer{err: errors.New("connection lost")},
 		},
 		{
