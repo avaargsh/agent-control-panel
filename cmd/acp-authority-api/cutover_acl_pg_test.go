@@ -106,6 +106,12 @@ func TestAuthorityCutoverPostgresLedgerACL(t *testing.T) {
 	exec("SET ROLE " + owner)
 	exec(string(acl))
 	exec("RESET ROLE")
+	// Decoy application objects prove the probe rejects privileges outside
+	// the exact three-table Cutover ledger, not merely drift on target tables.
+	exec("CREATE TABLE public.cutover_unrelated_secret (id integer PRIMARY KEY)")
+	exec("CREATE SEQUENCE public.cutover_unrelated_sequence")
+	exec("CREATE FUNCTION public.cutover_definer_probe() RETURNS integer LANGUAGE sql SECURITY DEFINER AS $ SELECT 1 $")
+	exec("CREATE SCHEMA cutover_unrelated_schema")
 	writer, writerName := login("acp_cutover_writer_", writerGroup)
 	reader, readerName := login("acp_cutover_reader_", readerGroup)
 	if writerName == readerName {
@@ -163,6 +169,10 @@ func TestAuthorityCutoverPostgresLedgerACL(t *testing.T) {
 		{"GRANT " + writerGroup + " TO " + writerName + " WITH ADMIN OPTION", "REVOKE ADMIN OPTION FOR " + writerGroup + " FROM " + writerName, writerConn.Conn(), writer, writerName, authoritycutover.CoordinatorRole},
 		{"GRANT " + writerGroup + " TO " + readerName, "REVOKE " + writerGroup + " FROM " + readerName, readerConn.Conn(), reader, readerName, authoritycutover.ObserverRole},
 		{"REVOKE SELECT ON public.acp_authority_cutover_transitions FROM " + readerGroup, "GRANT SELECT ON public.acp_authority_cutover_transitions TO " + readerGroup, readerConn.Conn(), reader, readerName, authoritycutover.ObserverRole},
+		{"GRANT SELECT ON public.cutover_unrelated_secret TO PUBLIC", "REVOKE SELECT ON public.cutover_unrelated_secret FROM PUBLIC", readerConn.Conn(), reader, readerName, authoritycutover.ObserverRole},
+		{"GRANT USAGE ON SEQUENCE public.cutover_unrelated_sequence TO PUBLIC", "REVOKE USAGE ON SEQUENCE public.cutover_unrelated_sequence FROM PUBLIC", readerConn.Conn(), reader, readerName, authoritycutover.ObserverRole},
+		{"GRANT EXECUTE ON FUNCTION public.cutover_definer_probe() TO PUBLIC", "REVOKE EXECUTE ON FUNCTION public.cutover_definer_probe() FROM PUBLIC", readerConn.Conn(), reader, readerName, authoritycutover.ObserverRole},
+		{"GRANT CREATE ON SCHEMA cutover_unrelated_schema TO PUBLIC", "REVOKE CREATE ON SCHEMA cutover_unrelated_schema FROM PUBLIC", readerConn.Conn(), reader, readerName, authoritycutover.ObserverRole},
 	} {
 		exec(drift.grant)
 		verify(drift.conn, drift.name, drift.mode, false)
