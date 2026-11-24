@@ -165,6 +165,84 @@ func TestAuthorityCutoverPostgresBarrierCoordinatesIndependentReplicas(t *testin
 		t.Fatal(err)
 	}
 
+	// An arbitrary DCL actor does not participate in the advisory-lock
+	// protocol. A request lease must therefore pin the ACL catalogs itself:
+	// a separately authenticated owner GRANT cannot commit between the final
+	// role attestation and the HTTP response flush.
+	var dclPID int
+	if err := dcl.QueryRow(ctx, "SELECT pg_backend_pid()").Scan(&dclPID); err != nil {
+		t.Fatal(err)
+	}
+	grantCtx, grantCancel := context.WithTimeout(ctx, 10*time.Second)
+	defer grantCancel()
+	grantDone := make(chan error, 1)
+	go func() {
+		_, err := dcl.Exec(grantCtx, "GRANT SELECT ON public.cutover_barrier_secret TO "+pgx.Identifier{observerGroup}.Sanitize())
+		grantDone <- err
+	}()
+	waitingForCatalog := false
+	waitDeadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(waitDeadline) {
+		select {
+		case err := <-grantDone:
+			if err == nil {
+				t.Fatal("out-of-band DCL GRANT committed while an observer request lease was held")
+			}
+			t.Fatalf("out-of-band DCL GRANT failed instead of waiting for the request catalog fence: %v", err)
+		default:
+		}
+		var waitType string
+		if err := admin.QueryRow(ctx, "SELECT COALESCE(wait_event_type,'') FROM pg_catalog.pg_stat_activity WHERE pid=$1", dclPID).Scan(&waitType); err != nil {
+			t.Fatal(err)
+		}
+		var waitingOnClass bool
+		if err := admin.QueryRow(ctx, `SELECT EXISTS (
+			SELECT 1 FROM pg_catalog.pg_locks
+			WHERE pid=$1 AND locktype='relation'
+			  AND relation='pg_catalog.pg_class'::regclass AND NOT granted
+		)`, dclPID).Scan(&waitingOnClass); err != nil {
+			t.Fatal(err)
+		}
+		if waitType == "Lock" && waitingOnClass {
+			waitingForCatalog = true
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !waitingForCatalog {
+		t.Fatal("out-of-band DCL GRANT did not wait on pg_catalog.pg_class while the request lease was held")
+	}
+	if err := leaseA.Release(); err != nil {
+		grantCancel()
+		t.Fatal(err)
+	}
+	select {
+	case err := <-grantDone:
+		if err != nil {
+			t.Fatalf("out-of-band DCL GRANT did not commit after request lease release: %v", err)
+		}
+	case <-grantCtx.Done():
+		t.Fatalf("out-of-band DCL GRANT remained blocked after request lease release: %v", grantCtx.Err())
+	}
+	if _, err := replicaB.Acquire(ctx); !errors.Is(err, authoritycutover.ErrBarrierUnavailable) {
+		t.Fatalf("observer did not fail closed after committed out-of-band ACL drift: %v", err)
+	}
+	if _, err := dcl.Exec(ctx, "REVOKE SELECT ON public.cutover_barrier_secret FROM "+pgx.Identifier{observerGroup}.Sanitize()); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := replicaB.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("observer did not recover after DCL revoke: %v", err)
+	}
+	if err := restored.Release(); err != nil {
+		t.Fatal(err)
+	}
+	leaseA, err = replicaA.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("replica A could not reacquire after DCL restore: %v", err)
+	}
+	t.Logf("out-of-band DCL fencing: separate DCL pid=%d waited on pg_class until request lease release", dclPID)
+
 	// Persist DRAINING before waiting for the exclusive lock. Requests that
 	// race after this commit must fail closed rather than join the drain.
 	draining, err := store.ApplyVerified(ctx, coordinatorLogin, initial, authoritycutover.Begin, change)
