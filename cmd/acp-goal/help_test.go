@@ -39,3 +39,26 @@ func TestGoalTopLevelInvalidCommandShowsCompleteUsage(t *testing.T) {
 		}
 	}
 }
+
+
+func TestGoalTopLevelHelpIncludesRequiredArguments(t *testing.T) {
+	var out, diagnostics bytes.Buffer
+	if err := run([]string{"--help"}, strings.NewReader(""), &out, &diagnostics); err != nil {
+		t.Fatal(err)
+	}
+	for _, synopsis := range []string{
+		"prepare --file PATH",
+		"snapshot --issue-url URL",
+		"inspect --file PATH",
+		"submit --file PATH --url URL --token-file PATH --ca-file PATH",
+		"status --file PATH --url URL --token-file PATH --ca-file PATH",
+		"[--hold-record PATH]",
+	} {
+		if !strings.Contains(diagnostics.String(), synopsis) {
+			t.Errorf("help missing synopsis %q", synopsis)
+		}
+	}
+	if out.Len() != 0 {
+		t.Fatal("help must not emit a JSON result")
+	}
+}
