@@ -136,26 +136,44 @@ func TestAuthorityCutoverPostgresLedgerACL(t *testing.T) {
 	verify(readerConn.Conn(), readerName, authoritycutover.ObserverRole, true)
 	verify(readerConn.Conn(), writerName, authoritycutover.ObserverRole, false)
 	verify(readerConn.Conn(), readerName, authoritycutover.CoordinatorRole, false)
+
+	coordinator := authoritycutover.NewPostgresStore(writer)
+	observer := authoritycutover.NewPostgresStore(reader)
+	initial := authoritycutover.Record{Generation: 1, Revision: 1, Phase: authoritycutover.Open}
+	change := authoritycutover.Change{ID: "acl-a", ManifestDigest: "sha256:" + strings.Repeat("a", 64), Operator: "operator-a"}
+	if got, err := observer.ObserveVerified(ctx, readerName, authoritycutover.ObserverRole); err != nil || got != initial {
+		t.Fatalf("verified observer read: %+v %v", got, err)
+	}
+	if _, err := observer.ApplyVerified(ctx, readerName, initial, authoritycutover.Begin, change); !errors.Is(err, authoritycutover.ErrRoleDrift) {
+		t.Fatalf("observer login executed coordinator mutation: %v", err)
+	}
 	for _, drift := range []struct {
 		grant, revoke string
 		conn          *pgx.Conn
+		pool          *pgxpool.Pool
 		name          string
 		mode          authoritycutover.RoleMode
 	}{
-		{"GRANT UPDATE (operator_id) ON public.acp_authority_cutover_transitions TO " + writerGroup, "REVOKE UPDATE (operator_id) ON public.acp_authority_cutover_transitions FROM " + writerGroup, writerConn.Conn(), writerName, authoritycutover.CoordinatorRole},
-		{"GRANT UPDATE (id) ON public.acp_authority_cutover_state TO " + writerGroup, "REVOKE UPDATE (id) ON public.acp_authority_cutover_state FROM " + writerGroup, writerConn.Conn(), writerName, authoritycutover.CoordinatorRole},
-		{"GRANT INSERT (change_id) ON public.acp_authority_cutover_changes TO " + readerGroup, "REVOKE INSERT (change_id) ON public.acp_authority_cutover_changes FROM " + readerGroup, readerConn.Conn(), readerName, authoritycutover.ObserverRole},
-		{"GRANT SELECT ON public.acp_authority_cutover_state TO PUBLIC", "REVOKE SELECT ON public.acp_authority_cutover_state FROM PUBLIC", readerConn.Conn(), readerName, authoritycutover.ObserverRole},
-		{"GRANT TEMP ON DATABASE " + pgx.Identifier{database}.Sanitize() + " TO " + readerName, "REVOKE TEMP ON DATABASE " + pgx.Identifier{database}.Sanitize() + " FROM " + readerName, readerConn.Conn(), readerName, authoritycutover.ObserverRole},
-		{"GRANT " + readerGroup + " TO " + readerName + " WITH ADMIN OPTION", "REVOKE ADMIN OPTION FOR " + readerGroup + " FROM " + readerName, readerConn.Conn(), readerName, authoritycutover.ObserverRole},
-		{"GRANT " + writerGroup + " TO " + writerName + " WITH ADMIN OPTION", "REVOKE ADMIN OPTION FOR " + writerGroup + " FROM " + writerName, writerConn.Conn(), writerName, authoritycutover.CoordinatorRole},
-		{"GRANT " + writerGroup + " TO " + readerName, "REVOKE " + writerGroup + " FROM " + readerName, readerConn.Conn(), readerName, authoritycutover.ObserverRole},
-		{"REVOKE SELECT ON public.acp_authority_cutover_transitions FROM " + readerGroup, "GRANT SELECT ON public.acp_authority_cutover_transitions TO " + readerGroup, readerConn.Conn(), readerName, authoritycutover.ObserverRole},
+		{"GRANT UPDATE (operator_id) ON public.acp_authority_cutover_transitions TO " + writerGroup, "REVOKE UPDATE (operator_id) ON public.acp_authority_cutover_transitions FROM " + writerGroup, writerConn.Conn(), writer, writerName, authoritycutover.CoordinatorRole},
+		{"GRANT UPDATE (id) ON public.acp_authority_cutover_state TO " + writerGroup, "REVOKE UPDATE (id) ON public.acp_authority_cutover_state FROM " + writerGroup, writerConn.Conn(), writer, writerName, authoritycutover.CoordinatorRole},
+		{"GRANT INSERT (change_id) ON public.acp_authority_cutover_changes TO " + readerGroup, "REVOKE INSERT (change_id) ON public.acp_authority_cutover_changes FROM " + readerGroup, readerConn.Conn(), reader, readerName, authoritycutover.ObserverRole},
+		{"GRANT SELECT ON public.acp_authority_cutover_state TO PUBLIC", "REVOKE SELECT ON public.acp_authority_cutover_state FROM PUBLIC", readerConn.Conn(), reader, readerName, authoritycutover.ObserverRole},
+		{"GRANT TEMP ON DATABASE " + pgx.Identifier{database}.Sanitize() + " TO " + readerName, "REVOKE TEMP ON DATABASE " + pgx.Identifier{database}.Sanitize() + " FROM " + readerName, readerConn.Conn(), reader, readerName, authoritycutover.ObserverRole},
+		{"GRANT " + readerGroup + " TO " + readerName + " WITH ADMIN OPTION", "REVOKE ADMIN OPTION FOR " + readerGroup + " FROM " + readerName, readerConn.Conn(), reader, readerName, authoritycutover.ObserverRole},
+		{"GRANT " + writerGroup + " TO " + writerName + " WITH ADMIN OPTION", "REVOKE ADMIN OPTION FOR " + writerGroup + " FROM " + writerName, writerConn.Conn(), writer, writerName, authoritycutover.CoordinatorRole},
+		{"GRANT " + writerGroup + " TO " + readerName, "REVOKE " + writerGroup + " FROM " + readerName, readerConn.Conn(), reader, readerName, authoritycutover.ObserverRole},
+		{"REVOKE SELECT ON public.acp_authority_cutover_transitions FROM " + readerGroup, "GRANT SELECT ON public.acp_authority_cutover_transitions TO " + readerGroup, readerConn.Conn(), reader, readerName, authoritycutover.ObserverRole},
 	} {
 		exec(drift.grant)
 		verify(drift.conn, drift.name, drift.mode, false)
+		if _, err := authoritycutover.NewPostgresStore(drift.pool).ObserveVerified(ctx, drift.name, drift.mode); !errors.Is(err, authoritycutover.ErrRoleDrift) {
+			t.Fatalf("verified Store accepted live privilege drift for %s: %v", drift.name, err)
+		}
 		exec(drift.revoke)
 		verify(drift.conn, drift.name, drift.mode, true)
+		if _, err := authoritycutover.NewPostgresStore(drift.pool).ObserveVerified(ctx, drift.name, drift.mode); err != nil {
+			t.Fatalf("verified Store did not recover after restoring %s: %v", drift.name, err)
+		}
 	}
 	if _, err := readerConn.Exec(ctx, "SET ROLE "+readerGroup); err != nil {
 		t.Fatal(err)
@@ -165,17 +183,13 @@ func TestAuthorityCutoverPostgresLedgerACL(t *testing.T) {
 		t.Fatal(err)
 	}
 	verify(readerConn.Conn(), readerName, authoritycutover.ObserverRole, true)
-	coordinator := authoritycutover.NewPostgresStore(writer)
-	observer := authoritycutover.NewPostgresStore(reader)
-	initial := authoritycutover.Record{Generation: 1, Revision: 1, Phase: authoritycutover.Open}
-	change := authoritycutover.Change{ID: "acl-a", ManifestDigest: "sha256:" + strings.Repeat("a", 64), Operator: "operator-a"}
 	current := initial
 	for _, action := range []authoritycutover.Action{authoritycutover.Begin, authoritycutover.MarkDrained, authoritycutover.ObserveApplied, authoritycutover.Reopen} {
-		current, err = coordinator.Apply(ctx, current, action, change)
+		current, err = coordinator.ApplyVerified(ctx, writerName, current, action, change)
 		if err != nil {
 			t.Fatalf("coordinator apply %s: %v", action, err)
 		}
-		if got, err := observer.Observe(ctx); err != nil || got != current {
+		if got, err := observer.ObserveVerified(ctx, readerName, authoritycutover.ObserverRole); err != nil || got != current {
 			t.Fatalf("observer read: %+v %v", got, err)
 		}
 	}
