@@ -4,6 +4,7 @@ package agentd
 
 import (
 	"bytes"
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/hex"
@@ -69,11 +70,38 @@ func (s *PinnedHeadStore) Close() error {
 }
 
 func (s *PinnedHeadStore) locked(fn func(int) error) error {
-	if s == nil {
+	return s.lockedContext(context.Background(), fn)
+}
+
+// Poll only during contention. Context cancellation never leaves a goroutine
+// waiting to acquire a lock and perform an abandoned operation later.
+func waitPinnedHeadLock(ctx context.Context) error {
+	timer := time.NewTimer(5 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return ctx.Err()
+	}
+}
+
+func (s *PinnedHeadStore) lockedContext(ctx context.Context, fn func(int) error) error {
+	if s == nil || ctx == nil {
 		return ErrUnverified
 	}
-	s.mu.Lock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	for !s.mu.TryLock() {
+		if err := waitPinnedHeadLock(ctx); err != nil {
+			return err
+		}
+	}
 	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if s.dir == nil {
 		return ErrUnverified
 	}
@@ -93,15 +121,24 @@ func (s *PinnedHeadStore) locked(fn func(int) error) error {
 		return ErrUnverified
 	}
 	for {
-		err = syscall.Flock(lockfd, syscall.LOCK_EX)
-		if !errors.Is(err, syscall.EINTR) {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		err = syscall.Flock(lockfd, syscall.LOCK_EX|syscall.LOCK_NB)
+		if err == nil {
 			break
 		}
-	}
-	if err != nil {
-		return ErrUnverified
+		if !errors.Is(err, syscall.EINTR) && !errors.Is(err, syscall.EWOULDBLOCK) {
+			return ErrUnverified
+		}
+		if err := waitPinnedHeadLock(ctx); err != nil {
+			return err
+		}
 	}
 	defer syscall.Flock(lockfd, syscall.LOCK_UN)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	return fn(fd)
 }
 
@@ -135,6 +172,13 @@ func readPinnedFloor(fd int, expected Ref) (InspectHead, error) {
 }
 
 func writePinnedFloor(fd int, ref Ref, head InspectHead) error {
+	return writePinnedFloorContext(context.Background(), fd, ref, head)
+}
+
+func writePinnedFloorContext(ctx context.Context, fd int, ref Ref, head InspectHead) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	raw, err := json.Marshal(pinnedFloorRecord{Schema: "acp.agentd-local-pinned-floor/v1", Ref: ref, Head: head})
 	if err != nil || len(raw) > maxPinnedHeadGrantBytes {
 		return ErrUnverified
@@ -155,6 +199,9 @@ func writePinnedFloor(fd int, ref Ref, head InspectHead) error {
 	closeErr := tmp.Close()
 	if writeErr != nil || n != len(raw) || syncErr != nil || closeErr != nil {
 		return ErrUnverified
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	if syscall.Renameat(fd, name, fd, pinnedFloorFile) != nil || syscall.Fsync(fd) != nil {
 		return ErrUnverified
@@ -202,12 +249,20 @@ func (s *PinnedHeadStore) Read(ref Ref) (InspectHead, error) {
 // time includes lock contention and chain verification, so a queued grant
 // cannot retain its pre-lock freshness. This is not atomic with disk commit.
 func (s *PinnedHeadStore) Advance(ref Ref, expected InspectHead, raw, signature []byte, events []JournaledInspection, authorityKey, sourceKey ed25519.PublicKey, now time.Time) (InspectHead, error) {
-	if now.IsZero() {
+	return s.AdvanceContext(context.Background(), ref, expected, raw, signature, events, authorityKey, sourceKey, now)
+}
+
+// AdvanceContext bounds lock waiting by the caller's context and checks
+// cancellation before publishing the new floor. Once rename starts, an
+// observed failure or lost ACK still requires Read reconciliation. Filesystem
+// I/O and commit are not atomically cancellable.
+func (s *PinnedHeadStore) AdvanceContext(ctx context.Context, ref Ref, expected InspectHead, raw, signature []byte, events []JournaledInspection, authorityKey, sourceKey ed25519.PublicKey, now time.Time) (InspectHead, error) {
+	if now.IsZero() || ctx == nil {
 		return InspectHead{}, ErrUnverified
 	}
 	started := time.Now()
 	var candidate InspectHead
-	err := s.locked(func(fd int) error {
+	err := s.lockedContext(ctx, func(fd int) error {
 		floor, err := readPinnedFloor(fd, ref)
 		if err != nil || floor != expected {
 			return ErrUnverified
@@ -220,13 +275,16 @@ func (s *PinnedHeadStore) Advance(ref Ref, expected InspectHead, raw, signature 
 		if _, err := VerifyPinnedHeadGrant(raw, signature, ref, floor, authorityKey, now.Add(time.Since(started))); err != nil {
 			return ErrUnverified
 		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if candidate == floor {
 			if syscall.Fsync(fd) != nil {
 				return ErrUnverified
 			}
 			return nil
 		}
-		return writePinnedFloor(fd, ref, candidate)
+		return writePinnedFloorContext(ctx, fd, ref, candidate)
 	})
 	if err != nil {
 		return InspectHead{}, err
