@@ -1,0 +1,174 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"os"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/avaargsh/agent-control-panel/internal/authoritycutover"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+// A disposable schema fixture, not a deployment migration. The proposed store
+// is owner-only and is not connected to the existing Authority HTTP listener.
+func TestAuthorityCutoverPostgresStoreContract(t *testing.T) {
+	dsn := os.Getenv("PGTEST_DSN")
+	if dsn == "" {
+		t.Skip("PGTEST_DSN is not set")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	admin, database := isolatedAuthorityRoleTestDatabase(t, ctx, dsn)
+	defer admin.Close(context.Background())
+	exec := func(sql string) {
+		t.Helper()
+		if _, err := admin.Exec(ctx, sql); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exec(`CREATE TABLE public.acp_authority_cutover_state (
+		id integer PRIMARY KEY CHECK (id=1),
+		generation bigint NOT NULL CHECK (generation>0),
+		revision bigint NOT NULL CHECK (revision>=generation),
+		phase text NOT NULL CHECK (phase IN ('OPEN','DRAINING','CLOSED','VERIFYING')),
+		change_id text NOT NULL,
+		manifest_digest text NOT NULL,
+		operator_id text NOT NULL
+	)`)
+	exec(`CREATE TABLE public.acp_authority_cutover_changes (
+		change_id text PRIMARY KEY,
+		manifest_digest text NOT NULL,
+		operator_id text NOT NULL,
+		start_generation bigint NOT NULL CHECK (start_generation>0)
+	)`)
+	pool := func() *pgxpool.Pool {
+		t.Helper()
+		cfg, err := pgxpool.ParseConfig(dsn)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg.ConnConfig.Database = database
+		p, err := pgxpool.NewWithConfig(ctx, cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(p.Close)
+		return p
+	}
+	poolA, poolB := pool(), pool()
+	a := authoritycutover.NewPostgresStore(poolA)
+	b := authoritycutover.NewPostgresStore(poolB)
+	if _, err := a.Observe(ctx); err == nil {
+		t.Fatal("missing coordinator state was treated as OPEN")
+	}
+	exec("INSERT INTO public.acp_authority_cutover_state VALUES (1,1,1,'OPEN','','','')")
+	initial := authoritycutover.Record{Generation: 1, Revision: 1, Phase: authoritycutover.Open}
+	observe := func(store *authoritycutover.PostgresStore, want authoritycutover.Record) {
+		t.Helper()
+		got, err := store.Observe(ctx)
+		if err != nil || got != want {
+			t.Fatalf("observed record: got=%+v want=%+v err=%v", got, want, err)
+		}
+	}
+	observe(a, initial)
+	first := authoritycutover.Change{ID: "change-a", ManifestDigest: "sha256:" + strings.Repeat("a", 64), Operator: "operator-a"}
+	second := authoritycutover.Change{ID: "change-b", ManifestDigest: "sha256:" + strings.Repeat("b", 64), Operator: "operator-b"}
+	// Force the state update to fail after the change claim, whatever the
+	// statement ordering. Neither the state nor the claim may survive.
+	exec("ALTER TABLE public.acp_authority_cutover_state ADD CONSTRAINT reject_probe_drain CHECK (phase<>'DRAINING')")
+	if _, err := a.Apply(ctx, initial, authoritycutover.Begin, first); err == nil {
+		t.Fatal("forced state constraint failure reported success")
+	}
+	observe(b, initial)
+	var count int
+	if err := admin.QueryRow(ctx, "SELECT count(*) FROM public.acp_authority_cutover_changes").Scan(&count); err != nil || count != 0 {
+		t.Fatalf("failed transition leaked durable change claim: %d %v", count, err)
+	}
+	exec("ALTER TABLE public.acp_authority_cutover_state DROP CONSTRAINT reject_probe_drain")
+
+	type outcome struct {
+		record authoritycutover.Record
+		change authoritycutover.Change
+		err    error
+	}
+	start := make(chan struct{})
+	results := make(chan outcome, 2)
+	for _, worker := range []struct {
+		store  *authoritycutover.PostgresStore
+		change authoritycutover.Change
+	}{{a, first}, {b, second}} {
+		go func() {
+			<-start
+			got, err := worker.store.Apply(ctx, initial, authoritycutover.Begin, worker.change)
+			results <- outcome{got, worker.change, err}
+		}()
+	}
+	close(start)
+	var winner outcome
+	successes, conflicts := 0, 0
+	for i := 0; i < 2; i++ {
+		result := <-results
+		switch {
+		case result.err == nil:
+			winner = result
+			successes++
+		case errors.Is(result.err, authoritycutover.ErrConflict):
+			conflicts++
+		default:
+			t.Fatalf("unexpected CAS result: %v", result.err)
+		}
+	}
+	if successes != 1 || conflicts != 1 {
+		t.Fatalf("two coordinators did not serialize: successes=%d conflicts=%d", successes, conflicts)
+	}
+	observe(a, winner.record)
+	observe(b, winner.record)
+	if err := admin.QueryRow(ctx, "SELECT count(*) FROM public.acp_authority_cutover_changes").Scan(&count); err != nil || count != 1 {
+		t.Fatalf("expected exactly one committed change claim: %d %v", count, err)
+	}
+
+	// Restart the owner adapter with a new pool. No in-memory claim or state
+	// may be required to finish an already committed cutover.
+	poolA.Close()
+	poolB.Close()
+	fresh := authoritycutover.NewPostgresStore(pool())
+	observe(fresh, winner.record)
+	finish := func(current authoritycutover.Record, change authoritycutover.Change) authoritycutover.Record {
+		t.Helper()
+		for _, action := range []authoritycutover.Action{authoritycutover.MarkDrained, authoritycutover.ObserveApplied, authoritycutover.Reopen} {
+			next, err := fresh.Apply(ctx, current, action, change)
+			if err != nil {
+				t.Fatalf("finish %s: %v", action, err)
+			}
+			current = next
+		}
+		return current
+	}
+	opened := finish(winner.record, winner.change)
+	other := first
+	if winner.change == first {
+		other = second
+	}
+	draining, err := fresh.Apply(ctx, opened, authoritycutover.Begin, other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	latest := finish(draining, other)
+	if latest.Generation != 3 || latest.Phase != authoritycutover.Open || latest.Revision != 9 {
+		t.Fatalf("unexpected completed generation: %+v", latest)
+	}
+	// The pure domain model only remembers the last change. The store must
+	// reject historical IDs even after a different cutover completed.
+	for _, replay := range []authoritycutover.Change{winner.change, {ID: winner.change.ID, ManifestDigest: other.ManifestDigest, Operator: other.Operator}} {
+		if _, err := fresh.Apply(ctx, latest, authoritycutover.Begin, replay); !errors.Is(err, authoritycutover.ErrConflict) {
+			t.Fatalf("historical change replay accepted: %v", err)
+		}
+		observe(fresh, latest)
+	}
+	if err := admin.QueryRow(ctx, "SELECT count(*) FROM public.acp_authority_cutover_changes").Scan(&count); err != nil || count != 2 {
+		t.Fatalf("historical replay mutated durable claims: %d %v", count, err)
+	}
+}
