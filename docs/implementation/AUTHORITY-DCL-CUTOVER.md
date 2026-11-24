@@ -1,0 +1,45 @@
+# Proposed ACP Authority DCL cutover contract (#98)
+
+Status: PROPOSED, non-production design only. No new authorization or wire schema is ratified by this document.
+
+## Existing behavior and evidence
+
+The read-only handler in internal/authorityhttp/handler.go attests its reader role before and after catalog reads. #138 adds request cancellation checks; its exact-source Go/PG/race run 45310003768 is green. Issue #98 records an earlier real late-DCL experiment: a privileged grant after the final observation can still produce an authentic signed publication. An extra check cannot make HTTP delivery atomic with arbitrary DBA activity. Repeatable Read alone is not an ACL revocation guarantee.
+
+## Scope and ownership
+
+ACP owns catalog evidence and a proposed catalog authority generation. A dedicated operator/migrator identity owns coordinated DCL, not the read-only HTTP login. Guard remains the sole Permit and protected-action authorization owner; its epoch is distinct from the ACP generation and Runtime breaker epoch. No new dispatch, DB role mutation API, or production credentials.
+
+## Alternatives
+
+1. More per-request catalog checks or a single read-only transaction. Useful defense in depth; cannot guarantee a hard cutover against an uncoordinated privileged actor after the last check.
+2. A coordinated stop/drain/change/re-attest/open barrier with durable generation. Chosen as the next experimental slice. It requires bounded in-flight work, independently authenticated participants and enforced administrative scope. External DBA bypass remains outside the hard-cutover guarantee and must trigger incident handling.
+
+## Proposed contract
+
+A cutover is keyed by immutable change ID, expected generation, exact role/ACL manifest digest and operator identity. The dedicated database's trusted coordinator owns its durable CAS record.
+
+States: OPEN(g) -> DRAINING(g, change) -> CLOSED(g, change) -> VERIFYING(g+1, change) -> OPEN(g+1). Any unknown outcome stays CLOSED/HOLD; no automatic reopen or generation rollback. Initial missing/untrusted state denies serving. Generation is not a Permit.
+
+Conceptual APIs (not existing endpoints):
+- BeginChange(expectedGeneration, changeID, manifestDigest): close new admission and persist intent.
+- Drain(changeID): prove every registered serving replica stopped admission and all old admitted requests finished or were cancelled and their serving connections fenced.
+- ApplyAndObserve(changeID): operator commits scoped DCL only after drain proof; inspect actual catalog and record observed digest/outcome. Lost ACK requires readback, not blind DCL retry.
+- Reopen(changeID, verifiedGeneration): only after fresh independently authenticated reader sessions and exact role attestation satisfy desired manifest, stale pools are closed, and every serving replica accepts the new generation.
+- ObserveGeneration(): trusted read-only status; an unavailable coordinator cannot authorize new reads.
+
+Replica admission must be fenced by authoritative state, not a cached heartbeat or best-effort broadcast. Registration, request admission and drain accounting need a common serialization point and generation-scoped identity. A crashed replica is not presumed drained solely because its lease expired: fence access/serving first or remain CLOSED. Bound request work and transport writes; a response already delivered before the barrier is not retractable. Old in-flight responses may already be in transit; consumers must reject stale generation under the agreed freshness contract. The first implementation must prove these semantics with real PG16 and two service processes before introducing wire changes.
+
+Publication consumption: existing v1 signatures are historical source evidence, not revocable permits. Propose a versioned publication generation binding only after Guard contract review. Guard must independently obtain fresh ACP generation/status and validate its own current Permit/action scope at the protected-effect boundary. Do not treat a local ACP generation check as an atomic Guard/PEP effect fence. No cross-service shared database writes.
+
+## Test-first slices
+
+1. Two actual server replicas, separate reader LOGINs and privileged test operator. Positive authenticated Run/Publication controls; barrier after admission on A while B attempts another request. Observe no new success during DRAINING; DCL does not start before A drains. Show exact source and server-side request results, not client timeout alone.
+2. Crash/lost ACK at each transition; persisted state and explicit readback must prevent reopen on uncertain DCL. Recreated coordinator and replica cannot reset generation. Reject stale CAS, changed duplicate command, unknown membership and unavailable state.
+3. Real committed GRANT/REVOKE including extra table/column/function privilege and restoration, with new connections, actual role checks and fresh authorized positive controls. Show previous connection cannot serve after fence; failure of attestation keeps both replicas closed.
+4. Independent consumer contract tests: old authentic signed publication cannot grant fresh authorization after cutover. Demonstrate Guard's independent ownership and deny on unavailable generation; no actual protected tool effect.
+5. Measure baseline and added p50/p95/p99 latency, DB pool usage and drain time using documented test load. No unbounded lock or unmeasured production SLA.
+
+## Gates
+
+#98 remains OPEN. #107 server-side main protection remains a separate blocker. Exact-head Go/PG/race, deterministic cross-process fault tests and technical review required per implementation slice. Never claim atomic revocation against an uncontrolled superuser, production tenant isolation or G01–G05 completion from this proposal.
