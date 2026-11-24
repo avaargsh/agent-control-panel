@@ -23,11 +23,19 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	return runWithIssueReader(args, stdin, stdout, stderr, issuegoal.NewPublicIssueReader())
 }
 
+const goalUsage = "usage: acp-goal prepare | snapshot | inspect | submit | status"
+
 func runWithIssueReader(args []string, stdin io.Reader, stdout, stderr io.Writer, reader issueReader) error {
 	if len(args) == 0 {
-		return errors.New("usage: acp-goal prepare | snapshot | inspect | submit | status")
+		return errors.New(goalUsage)
 	}
 	switch args[0] {
+	case "--help", "-h", "help":
+		if len(args) != 1 {
+			return errors.New(goalUsage)
+		}
+		_, err := fmt.Fprintln(stderr, goalUsage)
+		return err
 	case "prepare":
 		return prepare(args, stdin, stdout, stderr)
 	case "snapshot":
@@ -43,7 +51,7 @@ func runWithIssueReader(args []string, stdin io.Reader, stdout, stderr io.Writer
 		}
 		return inspect(args, stdin, stdout, stderr, reader, baselines)
 	default:
-		return errors.New("usage: acp-goal prepare --file manifest.json | snapshot --issue-url https://github.com/owner/repo/issues/123")
+		return errors.New(goalUsage)
 	}
 }
 
