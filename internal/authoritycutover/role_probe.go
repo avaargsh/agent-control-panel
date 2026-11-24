@@ -95,6 +95,45 @@ SELECT session_user::text=$1 AND current_user::text=$1
  AND NOT pg_catalog.has_database_privilege(pg_catalog.current_database(),'CREATE')
  AND pg_catalog.has_schema_privilege('public','USAGE')
  AND NOT pg_catalog.has_schema_privilege('public','CREATE')
+ -- A dedicated Cutover LOGIN must not inherit CREATE in another
+ -- application schema, nor read unrelated tables through PUBLIC/group ACLs.
+ AND NOT EXISTS (
+  SELECT 1 FROM pg_catalog.pg_namespace s
+  WHERE s.nspname NOT IN ('pg_catalog','information_schema')
+   AND s.nspname NOT LIKE 'pg_toast%' AND s.nspname NOT LIKE 'pg_temp_%'
+   AND pg_catalog.has_schema_privilege(s.oid,'CREATE')
+ )
+ AND NOT EXISTS (
+  SELECT 1 FROM pg_catalog.pg_class c
+  JOIN pg_catalog.pg_namespace s ON s.oid=c.relnamespace
+  WHERE s.nspname NOT IN ('pg_catalog','information_schema')
+   AND s.nspname NOT LIKE 'pg_toast%' AND s.nspname NOT LIKE 'pg_temp_%'
+   AND c.relkind IN ('r','p','v','m','f')
+   AND NOT (s.nspname='public' AND c.relname IN (
+    'acp_authority_cutover_state','acp_authority_cutover_changes','acp_authority_cutover_transitions'))
+   AND (
+    pg_catalog.has_table_privilege(c.oid,'SELECT')
+    OR pg_catalog.has_table_privilege(c.oid,'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+    OR pg_catalog.has_any_column_privilege(c.oid,'SELECT,INSERT,UPDATE,REFERENCES')
+   )
+ )
+ AND NOT EXISTS (
+  SELECT 1 FROM pg_catalog.pg_class c
+  JOIN pg_catalog.pg_namespace s ON s.oid=c.relnamespace
+  WHERE c.relkind='S'
+   AND s.nspname NOT IN ('pg_catalog','information_schema')
+   AND s.nspname NOT LIKE 'pg_toast%' AND s.nspname NOT LIKE 'pg_temp_%'
+   AND pg_catalog.has_sequence_privilege(c.oid,'SELECT,USAGE,UPDATE')
+ )
+ AND NOT EXISTS (
+  SELECT 1 FROM pg_catalog.pg_proc f
+  JOIN pg_catalog.pg_namespace s ON s.oid=f.pronamespace
+  WHERE f.prosecdef
+   AND s.nspname NOT IN ('pg_catalog','information_schema')
+   AND s.nspname NOT LIKE 'pg_toast%' AND s.nspname NOT LIKE 'pg_temp_%'
+   AND pg_catalog.has_schema_privilege(s.oid,'USAGE')
+   AND pg_catalog.has_function_privilege(f.oid,'EXECUTE')
+ )
  AND (SELECT count(*) FROM target)=3
  AND NOT EXISTS (
   SELECT 1 FROM target t
