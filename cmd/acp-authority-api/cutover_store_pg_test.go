@@ -44,6 +44,14 @@ func TestAuthorityCutoverPostgresStoreContract(t *testing.T) {
 		operator_id text NOT NULL,
 		start_generation bigint NOT NULL CHECK (start_generation>0)
 	)`)
+	exec(`CREATE TABLE public.acp_authority_cutover_transitions (
+		revision bigint PRIMARY KEY CHECK (revision>1),
+		generation bigint NOT NULL CHECK (generation>0),
+		phase text NOT NULL CHECK (phase IN ('OPEN','DRAINING','CLOSED','VERIFYING')),
+		change_id text NOT NULL REFERENCES public.acp_authority_cutover_changes(change_id),
+		manifest_digest text NOT NULL,
+		operator_id text NOT NULL
+	)`)
 	pool := func() *pgxpool.Pool {
 		t.Helper()
 		cfg, err := pgxpool.ParseConfig(dsn)
@@ -88,6 +96,22 @@ func TestAuthorityCutoverPostgresStoreContract(t *testing.T) {
 		t.Fatalf("failed transition leaked durable change claim: %d %v", count, err)
 	}
 	exec("ALTER TABLE public.acp_authority_cutover_state DROP CONSTRAINT reject_probe_drain")
+
+	// The state, change claim and transition history must commit together.
+	exec("ALTER TABLE public.acp_authority_cutover_transitions ADD CONSTRAINT reject_probe_transition CHECK (revision<>2)")
+	if _, err := a.Apply(ctx, initial, authoritycutover.Begin, first); err == nil {
+		t.Errorf("transition history constraint failure reported success")
+	}
+	var transitionCount int
+	if err := admin.QueryRow(ctx, "SELECT count(*) FROM public.acp_authority_cutover_transitions").Scan(&transitionCount); err != nil || transitionCount != 0 {
+		t.Fatalf("failed transaction leaked transition history: %d %v", transitionCount, err)
+	}
+	observe(a, initial)
+	if err := admin.QueryRow(ctx, "SELECT count(*) FROM public.acp_authority_cutover_changes").Scan(&count); err != nil || count != 0 {
+		t.Fatalf("failed history write leaked change claim: %d %v", count, err)
+	}
+	exec("ALTER TABLE public.acp_authority_cutover_transitions DROP CONSTRAINT reject_probe_transition")
+	observe(a, initial)
 
 	type outcome struct {
 		record authoritycutover.Record
@@ -187,6 +211,30 @@ func TestAuthorityCutoverPostgresStoreContract(t *testing.T) {
 	}
 	observe(fresh, latest)
 
+	// Duplicate generation claims must be denied even if the current
+	// claim and complete revision sequence are individually valid.
+	for _, generation := range []int64{1, 2} {
+		duplicate := authoritycutover.Change{ID: "duplicate-generation", ManifestDigest: "sha256:" + strings.Repeat("f", 64), Operator: "operator-f"}
+		if _, err := admin.Exec(ctx, `INSERT INTO public.acp_authority_cutover_changes
+			(change_id,manifest_digest,operator_id,start_generation) VALUES ($1,$2,$3,$4)`,
+			duplicate.ID, duplicate.ManifestDigest, duplicate.Operator, generation); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := fresh.Observe(ctx); !errors.Is(err, authoritycutover.ErrInvalid) {
+			t.Fatalf("duplicate generation %d accepted: %v", generation, err)
+		}
+		if _, err := fresh.Apply(ctx, latest, authoritycutover.Begin, authoritycutover.Change{ID: "blocked-duplicate", ManifestDigest: duplicate.ManifestDigest, Operator: duplicate.Operator}); !errors.Is(err, authoritycutover.ErrInvalid) {
+			t.Fatalf("duplicate generation %d permitted new change: %v", generation, err)
+		}
+		if err := admin.QueryRow(ctx, "SELECT count(*) FROM public.acp_authority_cutover_changes").Scan(&count); err != nil || count != 3 {
+			t.Fatalf("duplicate generation rejection mutated claims: %d %v", count, err)
+		}
+		if _, err := admin.Exec(ctx, "DELETE FROM public.acp_authority_cutover_changes WHERE change_id=$1", duplicate.ID); err != nil {
+			t.Fatal(err)
+		}
+		observe(fresh, latest)
+	}
+
 	// A non-genesis rollback can still reference a genuine historical claim.
 	// Reject it if a later cutover claim survives, even when the old record
 	// and its original claim agree byte-for-byte.
@@ -199,6 +247,114 @@ func TestAuthorityCutoverPostgresStoreContract(t *testing.T) {
 			t.Fatalf("restore fixture: %v", err)
 		}
 	}
+	// Restore VERIFYING from the same completed change. Its generation and
+	// change claim are genuine; only the state revision and phase are older.
+	oldRevision := latest
+	oldRevision.Phase = authoritycutover.Verifying
+	oldRevision.Revision--
+	restoreState(oldRevision)
+	if _, err := fresh.Observe(ctx); !errors.Is(err, authoritycutover.ErrInvalid) {
+		t.Errorf("same-generation rollback accepted: %v", err)
+	}
+	if _, err := fresh.Apply(ctx, oldRevision, authoritycutover.Reopen, other); !errors.Is(err, authoritycutover.ErrInvalid) {
+		t.Errorf("same-generation reopen accepted: %v", err)
+	}
+	restoreState(latest)
+	observe(fresh, latest)
+	if err := admin.QueryRow(ctx, "SELECT count(*) FROM public.acp_authority_cutover_transitions").Scan(&transitionCount); err != nil || transitionCount != 8 {
+		t.Errorf("expected eight durable transitions after two cutovers: %d %v", transitionCount, err)
+	}
+
+	// A continuous revision sequence is insufficient if an older row no
+	// longer agrees with the durable claim. Keep the latest row intact.
+	for _, revision := range []int64{3, 5, 8} {
+		var originalOperator string
+		if err := admin.QueryRow(ctx, "SELECT operator_id FROM public.acp_authority_cutover_transitions WHERE revision=$1", revision).Scan(&originalOperator); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := admin.Exec(ctx, "UPDATE public.acp_authority_cutover_transitions SET operator_id='corrupt' WHERE revision=$1", revision); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := fresh.Observe(ctx); !errors.Is(err, authoritycutover.ErrInvalid) {
+			t.Fatalf("inconsistent historical revision %d accepted: %v", revision, err)
+		}
+		blocked := authoritycutover.Change{ID: "blocked-history-corruption", ManifestDigest: other.ManifestDigest, Operator: other.Operator}
+		if _, err := fresh.Apply(ctx, latest, authoritycutover.Begin, blocked); !errors.Is(err, authoritycutover.ErrInvalid) {
+			t.Fatalf("inconsistent historical revision %d permitted new change: %v", revision, err)
+		}
+		if err := admin.QueryRow(ctx, "SELECT count(*) FROM public.acp_authority_cutover_changes").Scan(&count); err != nil || count != 2 {
+			t.Fatalf("history corruption rejection mutated claims: %d %v", count, err)
+		}
+		if err := admin.QueryRow(ctx, "SELECT count(*) FROM public.acp_authority_cutover_transitions").Scan(&transitionCount); err != nil || transitionCount != 8 {
+			t.Fatalf("history corruption rejection mutated transitions: %d %v", transitionCount, err)
+		}
+		if _, err := admin.Exec(ctx, "UPDATE public.acp_authority_cutover_transitions SET operator_id=$1 WHERE revision=$2", originalOperator, revision); err != nil {
+			t.Fatal(err)
+		}
+		observe(fresh, latest)
+	}
+
+	// Phase order must agree with the revision even when generation and
+	// change identity remain valid. Each pair shares a claim generation.
+	for _, probe := range []struct {
+		revision int64
+		original string
+		corrupt  string
+	}{
+		{2, "DRAINING", "CLOSED"},
+		{3, "CLOSED", "DRAINING"},
+		{4, "VERIFYING", "OPEN"},
+		{5, "OPEN", "VERIFYING"},
+		{6, "DRAINING", "CLOSED"},
+		{7, "CLOSED", "DRAINING"},
+		{8, "VERIFYING", "OPEN"},
+	} {
+		if _, err := admin.Exec(ctx, "UPDATE public.acp_authority_cutover_transitions SET phase=$1 WHERE revision=$2", probe.corrupt, probe.revision); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := fresh.Observe(ctx); !errors.Is(err, authoritycutover.ErrInvalid) {
+			t.Fatalf("historical phase order at revision %d accepted: %v", probe.revision, err)
+		}
+		blocked := authoritycutover.Change{ID: "blocked-phase-order", ManifestDigest: other.ManifestDigest, Operator: other.Operator}
+		if _, err := fresh.Apply(ctx, latest, authoritycutover.Begin, blocked); !errors.Is(err, authoritycutover.ErrInvalid) {
+			t.Fatalf("historical phase order at revision %d permitted new change: %v", probe.revision, err)
+		}
+		if _, err := admin.Exec(ctx, "UPDATE public.acp_authority_cutover_transitions SET phase=$1 WHERE revision=$2", probe.original, probe.revision); err != nil {
+			t.Fatal(err)
+		}
+		observe(fresh, latest)
+	}
+	if err := admin.QueryRow(ctx, "SELECT count(*) FROM public.acp_authority_cutover_changes").Scan(&count); err != nil || count != 2 {
+		t.Fatalf("phase order rejection mutated claims: %d %v", count, err)
+	}
+	if err := admin.QueryRow(ctx, "SELECT count(*) FROM public.acp_authority_cutover_transitions").Scan(&transitionCount); err != nil || transitionCount != 8 {
+		t.Fatalf("phase order rejection mutated transitions: %d %v", transitionCount, err)
+	}
+
+	// Keep the latest revision and claim intact, but remove a historical
+	// transition. A partial restore must not silently erase audit history.
+	exec("DELETE FROM public.acp_authority_cutover_transitions WHERE revision=3")
+	if _, err := fresh.Observe(ctx); !errors.Is(err, authoritycutover.ErrInvalid) {
+		t.Fatalf("missing intermediate revision accepted: %v", err)
+	}
+	gapChange := authoritycutover.Change{ID: "change-with-history-gap", ManifestDigest: "sha256:" + strings.Repeat("e", 64), Operator: "operator-e"}
+	if _, err := fresh.Apply(ctx, latest, authoritycutover.Begin, gapChange); !errors.Is(err, authoritycutover.ErrInvalid) {
+		t.Fatalf("history gap permitted a new change: %v", err)
+	}
+	if err := admin.QueryRow(ctx, "SELECT count(*) FROM public.acp_authority_cutover_transitions").Scan(&transitionCount); err != nil || transitionCount != 7 {
+		t.Fatalf("history gap rejection mutated transitions: %d %v", transitionCount, err)
+	}
+	if err := admin.QueryRow(ctx, "SELECT count(*) FROM public.acp_authority_cutover_changes").Scan(&count); err != nil || count != 2 {
+		t.Fatalf("history gap rejection mutated claims: %d %v", count, err)
+	}
+	// Restore only the missing original CLOSED record; no state update.
+	if _, err := admin.Exec(ctx, `INSERT INTO public.acp_authority_cutover_transitions
+		(revision,generation,phase,change_id,manifest_digest,operator_id)
+		VALUES (3,1,'CLOSED',$1,$2,$3)`, winner.change.ID, winner.change.ManifestDigest, winner.change.Operator); err != nil {
+		t.Fatal(err)
+	}
+	observe(fresh, latest)
+
 	restoreState(opened)
 	if _, err := fresh.Observe(ctx); !errors.Is(err, authoritycutover.ErrInvalid) {
 		t.Errorf("old OPEN record with newer surviving claim accepted: %v", err)

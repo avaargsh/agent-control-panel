@@ -33,15 +33,45 @@ type stateQueryer interface {
 const observeSQL = `SELECT s.generation,s.revision,s.phase,s.change_id,s.manifest_digest,s.operator_id,
 	CASE WHEN s.change_id='' THEN NOT EXISTS (
 		SELECT 1 FROM public.acp_authority_cutover_changes
+	) AND NOT EXISTS (
+		SELECT 1 FROM public.acp_authority_cutover_transitions
 	) ELSE EXISTS (
 		SELECT 1 FROM public.acp_authority_cutover_changes c
 		WHERE c.change_id=s.change_id AND c.manifest_digest=s.manifest_digest
 		AND c.operator_id=s.operator_id
 		AND c.start_generation=s.generation-CASE WHEN s.phase IN ('OPEN','VERIFYING') THEN 1 ELSE 0 END
+		AND (SELECT count(*) FROM public.acp_authority_cutover_changes)=c.start_generation
+		AND (SELECT count(DISTINCT start_generation) FROM public.acp_authority_cutover_changes)=c.start_generation
 		AND NOT EXISTS (
 			SELECT 1 FROM public.acp_authority_cutover_changes newer
 			WHERE newer.start_generation>c.start_generation
 		)
+	) AND EXISTS (
+		SELECT 1 FROM public.acp_authority_cutover_transitions h
+		WHERE h.revision=s.revision AND h.generation=s.generation
+		AND h.phase=s.phase AND h.change_id=s.change_id
+		AND h.manifest_digest=s.manifest_digest AND h.operator_id=s.operator_id
+	) AND NOT EXISTS (
+		SELECT 1 FROM public.acp_authority_cutover_transitions newer
+		WHERE newer.revision>s.revision
+	) AND (
+		SELECT count(*) FROM public.acp_authority_cutover_transitions
+	)=s.revision-1 AND NOT EXISTS (
+		SELECT 1 FROM public.acp_authority_cutover_transitions historical
+		WHERE NOT EXISTS (
+			SELECT 1 FROM public.acp_authority_cutover_changes claim
+			WHERE claim.change_id=historical.change_id
+			AND claim.manifest_digest=historical.manifest_digest
+			AND claim.operator_id=historical.operator_id
+			AND claim.start_generation=historical.generation-CASE WHEN historical.phase IN ('OPEN','VERIFYING') THEN 1 ELSE 0 END
+		)
+	) AND NOT EXISTS (
+		SELECT 1 FROM public.acp_authority_cutover_transitions h
+		JOIN public.acp_authority_cutover_changes c ON c.change_id=h.change_id
+		WHERE (h.revision-2)/4+1<>c.start_generation
+		OR h.phase<>CASE (h.revision-2)%4
+			WHEN 0 THEN 'DRAINING' WHEN 1 THEN 'CLOSED'
+			WHEN 2 THEN 'VERIFYING' WHEN 3 THEN 'OPEN' END
 	) END
 	FROM public.acp_authority_cutover_state s WHERE s.id=1`
 
@@ -125,6 +155,18 @@ func (s *PostgresStore) Apply(ctx context.Context, expected Record, action Actio
 		current.Generation, current.Revision, string(current.Phase), current.Change.ID, current.Change.ManifestDigest, current.Change.Operator)
 	if err != nil {
 		return Record{}, fmt.Errorf("%w: update state: %w", ErrStoreUnavailable, err)
+	}
+	if tag.RowsAffected() != 1 {
+		return Record{}, ErrConflict
+	}
+	// Append the full transition record in the same transaction as the state
+	// and change claim. Never update or delete previous revisions here.
+	tag, err = tx.Exec(ctx, `INSERT INTO public.acp_authority_cutover_transitions
+		(revision,generation,phase,change_id,manifest_digest,operator_id)
+		VALUES ($1,$2,$3,$4,$5,$6)`,
+		next.Revision, next.Generation, string(next.Phase), next.Change.ID, next.Change.ManifestDigest, next.Change.Operator)
+	if err != nil {
+		return Record{}, fmt.Errorf("%w: append transition: %w", ErrStoreUnavailable, err)
 	}
 	if tag.RowsAffected() != 1 {
 		return Record{}, ErrConflict
