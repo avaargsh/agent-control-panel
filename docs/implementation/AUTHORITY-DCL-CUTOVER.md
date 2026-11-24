@@ -50,3 +50,20 @@ Publication consumption: existing v1 signatures are historical source evidence, 
 ## Gates
 
 #98 remains OPEN. #107 server-side main protection remains a separate blocker. Exact-head Go/PG/race, deterministic cross-process fault tests and technical review required per implementation slice. Never claim atomic revocation against an uncontrolled superuser, production tenant isolation or G01–G05 completion from this proposal.
+
+
+## Implemented experimental admission barrier (PR #151)
+
+The opt-in `authoritycutover.PostgresBarrier` uses one stable, database-scoped PostgreSQL advisory-lock key on the same primary used by the authority catalog:
+
+1. After mTLS and request syntax validation, each serving replica obtains a non-blocking shared session lock using its independently authenticated `acp_cutover_observer` LOGIN.
+2. On that same backend it verifies the Observer role and reads the complete durable ledger. Only `OPEN` admits the request. The lease is retained through Run Authority lookup or Decision Publication signing and the final HTTP response flush.
+3. The trusted coordinator commits `OPEN -> DRAINING` before requesting the exclusive session lock. New requests observe `DRAINING` and fail closed. The exclusive lock waits for every previously admitted shared lease to finish.
+4. After exclusive acquisition, the coordinator records `CLOSED`, invokes scoped DCL using a separate operator identity, verifies the actual catalog with fresh independently authenticated Observer sessions, records `VERIFYING -> OPEN`, then releases the exclusive lock.
+5. If the coordinator crashes or an ACK is uncertain, advisory lock release does not mutate the durable ledger. `DRAINING` / `CLOSED` / `VERIFYING` continue to deny new admissions; recovery requires authoritative readback and explicit state transitions. Never retry DCL blindly or auto-reopen.
+
+The service opt-in requires both `ACP_AUTHORITY_CUTOVER_OBSERVER_DATABASE_URL` and `ACP_AUTHORITY_CUTOVER_OBSERVER_LOGIN`. Startup verifies the independent Observer role and confirms both pools reach the same PostgreSQL primary (database, server address/port, postmaster start time, and not in recovery). The option is disabled when both settings are absent; a partial pair is a startup configuration error. Existing `0001_state_ledger.sql` and `0002_table_acl.sql` remain explicit opt-in bootstrap steps. No production deployment or migration is enabled by this PR.
+
+The real PostgreSQL 16 regression uses two independently authenticated replica LOGINs, a separate Coordinator LOGIN and a separate DCL owner. It verifies positive admission, durable DRAINING rejection, an exclusive lock that cannot pass an in-flight replica, coordinator-loss recovery without implicit reopen, DCL GRANT detection, role recovery after REVOKE, and explicit generation reopen. An mTLS handler regression verifies both Run Authority and Decision Publication acquire the lease only after mTLS/request validation and release it only after response flush.
+
+**Guarantee boundary:** this is a cooperating-replica protocol, not protection against an uncoordinated superuser or a process that bypasses the gate. Every serving replica must use the same database primary and barrier. Already flushed bytes and historical signed publications cannot be recalled; Guard must independently enforce fresh authority generation and its own current Permit at protected-effect consumption. The barrier does not create a cross-service atomic Guard/PEP fence, production G01–G05 evidence, or tenant RLS proof. Keep #98 open pending full independent cross-process fault, lost-ACK, timeout/cancellation and latency acceptance.
