@@ -106,13 +106,9 @@ func TestAuthorityCutoverPostgresStoreContract(t *testing.T) {
 	if err := admin.QueryRow(ctx, "SELECT count(*) FROM public.acp_authority_cutover_transitions").Scan(&transitionCount); err != nil || transitionCount != 0 {
 		t.Fatalf("failed transaction leaked transition history: %d %v", transitionCount, err)
 	}
-	// Restore the fixture even when the old implementation incorrectly
-	// committed, so the remaining rollback assertions can run.
-	if _, err := admin.Exec(ctx, "UPDATE public.acp_authority_cutover_state SET generation=1,revision=1,phase='OPEN',change_id='',manifest_digest='',operator_id='' WHERE id=1"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := admin.Exec(ctx, "DELETE FROM public.acp_authority_cutover_changes"); err != nil {
-		t.Fatal(err)
+	observe(a, initial)
+	if err := admin.QueryRow(ctx, "SELECT count(*) FROM public.acp_authority_cutover_changes").Scan(&count); err != nil || count != 0 {
+		t.Fatalf("failed history write leaked change claim: %d %v", count, err)
 	}
 	exec("ALTER TABLE public.acp_authority_cutover_transitions DROP CONSTRAINT reject_probe_transition")
 	observe(a, initial)
