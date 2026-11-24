@@ -178,7 +178,13 @@ jobs:
           PGTEST_STANDBY_DSN: postgres://postgres:agent-ci@127.0.0.1:5433/postgres?sslmode=disable
         run: |
           set -euo pipefail
-          go test -race -count=1 -v -run '^TestPrimaryFenceRejectsStandbyAndPromotedPrimaryAfterFailover      # The regular PR checkout above tests GitHub's synthetic merge commit.
+          go test -race -count=1 -v -run '^TestPrimaryFenceRejectsStandbyAndPromotedPrimaryAfterFailover$' ./internal/authoritycutover | tee failover-fence.log
+          grep -F -- '--- PASS: TestPrimaryFenceRejectsStandbyAndPromotedPrimaryAfterFailover' failover-fence.log
+          if grep -F -- '--- SKIP: TestPrimaryFenceRejectsStandbyAndPromotedPrimaryAfterFailover' failover-fence.log; then
+            echo 'physical PostgreSQL failover fencing regression was skipped' >&2
+            exit 1
+          fi
+      # The regular PR checkout above tests GitHub's synthetic merge commit.
       # Security approval additionally needs the literal immutable PR source:
       # do not pass synthetic-merge tests off as source HEAD evidence.
       - name: Checkout exact pull request source SHA
@@ -204,128 +210,12 @@ jobs:
             exit 1
           fi
           go test -race -count=1 ./cmd/acp-authority-api
-          go test -race -count=1 -v -run '^TestPrimaryFenceRejectsStandbyAndPromotedPrimaryAfterFailover          test -n "$PGTEST_DSN"
-          go test -race -count=1 -v -run '^TestAuthorityCutoverPostgres(DrainPrimitive|GenerationCAS|StoreContract|Migration|LedgerACL|BarrierCoordinatesIndependentReplicas)$' ./cmd/acp-authority-api | tee cutover-probes.log
-          for probe in TestAuthorityCutoverPostgresDrainPrimitive TestAuthorityCutoverPostgresGenerationCAS TestAuthorityCutoverPostgresStoreContract TestAuthorityCutoverPostgresMigration TestAuthorityCutoverPostgresLedgerACL TestAuthorityCutoverPostgresBarrierCoordinatesIndependentReplicas; do
-            grep -F -- "--- PASS: $probe (" cutover-probes.log
-            if grep -F -- "--- SKIP: $probe" cutover-probes.log; then
-              echo "Required cutover probe skipped: $probe" >&2
-              exit 1
-            fi
-          done
-          go test -race -count=1 -v -run '^TestGuardReadEndpointsRejectCancelledSuccessfulAuthorityReadOverMTLS$' ./internal/authorityhttp | tee guard-cancel.log
-          for probe in capability protected_workspace; do
-            grep -F -- "--- PASS: TestGuardReadEndpointsRejectCancelledSuccessfulAuthorityReadOverMTLS/$probe (" guard-cancel.log
-          done
-          grep -F -- '--- PASS: TestGuardReadEndpointsRejectCancelledSuccessfulAuthorityReadOverMTLS (' guard-cancel.log
-          if grep -F -- '--- SKIP: TestGuardReadEndpointsRejectCancelledSuccessfulAuthorityReadOverMTLS' guard-cancel.log; then
-            echo 'Guard cancellation regression skipped' >&2
-            exit 1
-          fi
- ./internal/authoritycutover | tee failover-fence.log
-          grep -F -- '--- PASS: TestPrimaryFenceRejectsStandbyAndPromotedPrimaryAfterFailover' failover-fence.log
-          if grep -F -- '--- SKIP: TestPrimaryFenceRejectsStandbyAndPromotedPrimaryAfterFailover' failover-fence.log; then
-            echo 'physical PostgreSQL failover fencing regression was skipped' >&2
-            exit 1
-          fi
-      # The regular PR checkout above tests GitHub's synthetic merge commit.
-      # Security approval additionally needs the literal immutable PR source:
-      # do not pass synthetic-merge tests off as source HEAD evidence.
-      - name: Checkout exact pull request source SHA
-        if: github.event_name == 'pull_request'
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6 pinned
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
-          persist-credentials: false
-      - name: Verify literal source HEAD security regression and race
-        if: github.event_name == 'pull_request'
-        shell: bash
-        env:
-          EXPECTED_SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          set -euo pipefail
-          test "$(git rev-parse --verify HEAD)" = "$EXPECTED_SOURCE_SHA"
-          printf 'VERIFIED_SOURCE_ONLY_HEAD=%s\n' "$EXPECTED_SOURCE_SHA"
-          go test -count=1 -v -run '^TestAuthorityDatabaseRoleFailClosed$' ./cmd/acp-authority-api | tee source-head-role.log
-          grep -F -- '--- PASS: TestAuthorityDatabaseRoleFailClosed' source-head-role.log
-          if grep -F -- '--- SKIP: TestAuthorityDatabaseRoleFailClosed' source-head-role.log; then
-            echo 'source HEAD real PostgreSQL role security test was skipped' >&2
-            exit 1
-          fi
-          go test -race -count=1 ./cmd/acp-authority-api
-          test -n "$PGTEST_DSN"
-          go test -race -count=1 -v -run '^TestAuthorityCutoverPostgres(DrainPrimitive|GenerationCAS|StoreContract|Migration|LedgerACL|BarrierCoordinatesIndependentReplicas)$' ./cmd/acp-authority-api | tee cutover-probes.log
-          for probe in TestAuthorityCutoverPostgresDrainPrimitive TestAuthorityCutoverPostgresGenerationCAS TestAuthorityCutoverPostgresStoreContract TestAuthorityCutoverPostgresMigration TestAuthorityCutoverPostgresLedgerACL TestAuthorityCutoverPostgresBarrierCoordinatesIndependentReplicas; do
-            grep -F -- "--- PASS: $probe (" cutover-probes.log
-            if grep -F -- "--- SKIP: $probe" cutover-probes.log; then
-              echo "Required cutover probe skipped: $probe" >&2
-              exit 1
-            fi
-          done
-          go test -race -count=1 -v -run '^TestGuardReadEndpointsRejectCancelledSuccessfulAuthorityReadOverMTLS$' ./internal/authorityhttp | tee guard-cancel.log
-          for probe in capability protected_workspace; do
-            grep -F -- "--- PASS: TestGuardReadEndpointsRejectCancelledSuccessfulAuthorityReadOverMTLS/$probe (" guard-cancel.log
-          done
-          grep -F -- '--- PASS: TestGuardReadEndpointsRejectCancelledSuccessfulAuthorityReadOverMTLS (' guard-cancel.log
-          if grep -F -- '--- SKIP: TestGuardReadEndpointsRejectCancelledSuccessfulAuthorityReadOverMTLS' guard-cancel.log; then
-            echo 'Guard cancellation regression skipped' >&2
-            exit 1
-          fi
- ./internal/authoritycutover | tee failover-fence.log
+          go test -race -count=1 -v -run '^TestPrimaryFenceRejectsStandbyAndPromotedPrimaryAfterFailover$' ./internal/authoritycutover | tee failover-fence.log
           grep -F -- '--- PASS: TestPrimaryFenceRejectsStandbyAndPromotedPrimaryAfterFailover' failover-fence.log
           if grep -F -- '--- SKIP: TestPrimaryFenceRejectsStandbyAndPromotedPrimaryAfterFailover' failover-fence.log; then
             echo 'literal source HEAD physical failover regression was skipped' >&2
             exit 1
           fi
-          test -n "$PGTEST_DSN"
-          go test -race -count=1 -v -run '^TestAuthorityCutoverPostgres(DrainPrimitive|GenerationCAS|StoreContract|Migration|LedgerACL|BarrierCoordinatesIndependentReplicas)$' ./cmd/acp-authority-api | tee cutover-probes.log
-          for probe in TestAuthorityCutoverPostgresDrainPrimitive TestAuthorityCutoverPostgresGenerationCAS TestAuthorityCutoverPostgresStoreContract TestAuthorityCutoverPostgresMigration TestAuthorityCutoverPostgresLedgerACL TestAuthorityCutoverPostgresBarrierCoordinatesIndependentReplicas; do
-            grep -F -- "--- PASS: $probe (" cutover-probes.log
-            if grep -F -- "--- SKIP: $probe" cutover-probes.log; then
-              echo "Required cutover probe skipped: $probe" >&2
-              exit 1
-            fi
-          done
-          go test -race -count=1 -v -run '^TestGuardReadEndpointsRejectCancelledSuccessfulAuthorityReadOverMTLS$' ./internal/authorityhttp | tee guard-cancel.log
-          for probe in capability protected_workspace; do
-            grep -F -- "--- PASS: TestGuardReadEndpointsRejectCancelledSuccessfulAuthorityReadOverMTLS/$probe (" guard-cancel.log
-          done
-          grep -F -- '--- PASS: TestGuardReadEndpointsRejectCancelledSuccessfulAuthorityReadOverMTLS (' guard-cancel.log
-          if grep -F -- '--- SKIP: TestGuardReadEndpointsRejectCancelledSuccessfulAuthorityReadOverMTLS' guard-cancel.log; then
-            echo 'Guard cancellation regression skipped' >&2
-            exit 1
-          fi
- ./internal/authoritycutover | tee failover-fence.log
-          grep -F -- '--- PASS: TestPrimaryFenceRejectsStandbyAndPromotedPrimaryAfterFailover' failover-fence.log
-          if grep -F -- '--- SKIP: TestPrimaryFenceRejectsStandbyAndPromotedPrimaryAfterFailover' failover-fence.log; then
-            echo 'physical PostgreSQL failover fencing regression was skipped' >&2
-            exit 1
-          fi
-      # The regular PR checkout above tests GitHub's synthetic merge commit.
-      # Security approval additionally needs the literal immutable PR source:
-      # do not pass synthetic-merge tests off as source HEAD evidence.
-      - name: Checkout exact pull request source SHA
-        if: github.event_name == 'pull_request'
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6 pinned
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
-          persist-credentials: false
-      - name: Verify literal source HEAD security regression and race
-        if: github.event_name == 'pull_request'
-        shell: bash
-        env:
-          EXPECTED_SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          set -euo pipefail
-          test "$(git rev-parse --verify HEAD)" = "$EXPECTED_SOURCE_SHA"
-          printf 'VERIFIED_SOURCE_ONLY_HEAD=%s\n' "$EXPECTED_SOURCE_SHA"
-          go test -count=1 -v -run '^TestAuthorityDatabaseRoleFailClosed$' ./cmd/acp-authority-api | tee source-head-role.log
-          grep -F -- '--- PASS: TestAuthorityDatabaseRoleFailClosed' source-head-role.log
-          if grep -F -- '--- SKIP: TestAuthorityDatabaseRoleFailClosed' source-head-role.log; then
-            echo 'source HEAD real PostgreSQL role security test was skipped' >&2
-            exit 1
-          fi
-          go test -race -count=1 ./cmd/acp-authority-api
           test -n "$PGTEST_DSN"
           go test -race -count=1 -v -run '^TestAuthorityCutoverPostgres(DrainPrimitive|GenerationCAS|StoreContract|Migration|LedgerACL|BarrierCoordinatesIndependentReplicas)$' ./cmd/acp-authority-api | tee cutover-probes.log
           for probe in TestAuthorityCutoverPostgresDrainPrimitive TestAuthorityCutoverPostgresGenerationCAS TestAuthorityCutoverPostgresStoreContract TestAuthorityCutoverPostgresMigration TestAuthorityCutoverPostgresLedgerACL TestAuthorityCutoverPostgresBarrierCoordinatesIndependentReplicas; do
