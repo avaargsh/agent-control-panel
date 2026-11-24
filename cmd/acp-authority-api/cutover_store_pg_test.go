@@ -241,6 +241,30 @@ func TestAuthorityCutoverPostgresStoreContract(t *testing.T) {
 		t.Errorf("expected eight durable transitions after two cutovers: %d %v", transitionCount, err)
 	}
 
+	// Keep the latest revision and claim intact, but remove a historical
+	// transition. A partial restore must not silently erase audit history.
+	exec("DELETE FROM public.acp_authority_cutover_transitions WHERE revision=3")
+	if _, err := fresh.Observe(ctx); !errors.Is(err, authoritycutover.ErrInvalid) {
+		t.Fatalf("missing intermediate revision accepted: %v", err)
+	}
+	gapChange := authoritycutover.Change{ID: "change-with-history-gap", ManifestDigest: "sha256:" + strings.Repeat("e", 64), Operator: "operator-e"}
+	if _, err := fresh.Apply(ctx, latest, authoritycutover.Begin, gapChange); !errors.Is(err, authoritycutover.ErrInvalid) {
+		t.Fatalf("history gap permitted a new change: %v", err)
+	}
+	if err := admin.QueryRow(ctx, "SELECT count(*) FROM public.acp_authority_cutover_transitions").Scan(&transitionCount); err != nil || transitionCount != 7 {
+		t.Fatalf("history gap rejection mutated transitions: %d %v", transitionCount, err)
+	}
+	if err := admin.QueryRow(ctx, "SELECT count(*) FROM public.acp_authority_cutover_changes").Scan(&count); err != nil || count != 2 {
+		t.Fatalf("history gap rejection mutated claims: %d %v", count, err)
+	}
+	// Restore only the missing original CLOSED record; no state update.
+	if _, err := admin.Exec(ctx, `INSERT INTO public.acp_authority_cutover_transitions
+		(revision,generation,phase,change_id,manifest_digest,operator_id)
+		VALUES (3,1,'CLOSED',$1,$2,$3)`, winner.change.ID, winner.change.ManifestDigest, winner.change.Operator); err != nil {
+		t.Fatal(err)
+	}
+	observe(fresh, latest)
+
 	restoreState(opened)
 	if _, err := fresh.Observe(ctx); !errors.Is(err, authoritycutover.ErrInvalid) {
 		t.Errorf("old OPEN record with newer surviving claim accepted: %v", err)
