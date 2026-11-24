@@ -18,6 +18,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/avaargsh/agent-control-panel/internal/authoritycutover"
 	runpg "github.com/avaargsh/agent-control-panel/internal/runintent/postgres"
 )
 
@@ -109,7 +110,7 @@ func nilReader(reader Reader) bool {
 // RequireAndVerifyClientCert and the dedicated trust-domain CA. The exact
 // workload and tenant are provisioned out-of-band, never request claims.
 func NewHandler(reader Reader, peer, tenant string) (http.Handler, error) {
-	return newHandler(reader, nil, peer, tenant, nil)
+	return newHandler(reader, nil, peer, tenant, nil, nil)
 }
 
 // NewGuardedHandler requires an independently provisioned database-role
@@ -119,7 +120,7 @@ func NewGuardedHandler(reader Reader, peer, tenant string, readGuard func(contex
 	if readGuard == nil {
 		return nil, errors.New("ACP authority request role guard required")
 	}
-	return newHandler(reader, nil, peer, tenant, readGuard)
+	return newHandler(reader, nil, peer, tenant, readGuard, nil)
 }
 
 // NewPublicationHandler serves both existing authority and signed
@@ -128,7 +129,7 @@ func NewPublicationHandler(reader PublicationReader, publisher *Publisher, peer,
 	if publisher == nil || publisher.root == nil {
 		return nil, ErrPublicationUnavailable
 	}
-	return newHandler(reader, publisher, peer, tenant, nil)
+	return newHandler(reader, publisher, peer, tenant, nil, nil)
 }
 
 // NewGuardedPublicationHandler applies the same fresh pre-read role check to
@@ -140,10 +141,34 @@ func NewGuardedPublicationHandler(reader PublicationReader, publisher *Publisher
 	if publisher == nil || publisher.root == nil {
 		return nil, ErrPublicationUnavailable
 	}
-	return newHandler(reader, publisher, peer, tenant, readGuard)
+	return newHandler(reader, publisher, peer, tenant, readGuard, nil)
 }
 
-func newHandler(reader Reader, publisher *Publisher, peer, tenant string, readGuard func(context.Context) error) (http.Handler, error) {
+// NewBarrierGuardedHandler opts the Run Authority endpoint into the durable
+// cross-replica admission barrier. The gate is evaluated only after mTLS and
+// request validation, and its lease is held through the final response flush.
+func NewBarrierGuardedHandler(reader Reader, peer, tenant string, readGuard func(context.Context) error, gate authoritycutover.RequestGate) (http.Handler, error) {
+	if readGuard == nil || gate == nil {
+		return nil, errors.New("ACP authority request role guard and admission barrier required")
+	}
+	return newHandler(reader, nil, peer, tenant, readGuard, gate)
+}
+
+// NewBarrierGuardedPublicationHandler applies the same barrier to both Run
+// Authority and Decision Publication reads. The lock is held through signing
+// and the final response flush; it does not make old signed artifacts into
+// revocable Guard permits.
+func NewBarrierGuardedPublicationHandler(reader PublicationReader, publisher *Publisher, peer, tenant string, readGuard func(context.Context) error, gate authoritycutover.RequestGate) (http.Handler, error) {
+	if readGuard == nil || gate == nil {
+		return nil, errors.New("ACP authority publication role guard and admission barrier required")
+	}
+	if publisher == nil || publisher.root == nil {
+		return nil, ErrPublicationUnavailable
+	}
+	return newHandler(reader, publisher, peer, tenant, readGuard, gate)
+}
+
+func newHandler(reader Reader, publisher *Publisher, peer, tenant string, readGuard func(context.Context) error, gate authoritycutover.RequestGate) (http.Handler, error) {
 	if nilReader(reader) || !validIdentity(peer) || !validTenant(tenant) {
 		return nil, errors.New("invalid ACP execution authority configuration")
 	}
@@ -195,6 +220,35 @@ func newHandler(reader Reader, publisher *Publisher, peer, tenant string, readGu
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 		defer cancel()
+		// Admission is acquired only after mTLS and request syntax validation.
+		// The shared PostgreSQL lease remains held through the final response
+		// flush, so a coordinated exclusive DCL lock cannot pass an in-flight
+		// authority read or signed publication.
+		if gate != nil {
+			lease, err := gate.Acquire(ctx)
+			if err != nil {
+				if publication {
+					fail(http.StatusServiceUnavailable, "PUBLICATION_UNAVAILABLE")
+				} else {
+					fail(http.StatusServiceUnavailable, "RUN_AUTHORITY_UNAVAILABLE")
+				}
+				return
+			}
+			flusher, ok := w.(http.Flusher)
+			if !ok {
+				_ = lease.Release()
+				if publication {
+					fail(http.StatusServiceUnavailable, "PUBLICATION_UNAVAILABLE")
+				} else {
+					fail(http.StatusServiceUnavailable, "RUN_AUTHORITY_UNAVAILABLE")
+				}
+				return
+			}
+			defer func() {
+				flusher.Flush()
+				_ = lease.Release()
+			}()
+		}
 		// This check is deliberately uncached: an out-of-band GRANT or
 		// REVOKE must affect the next authorized request without restart.
 		// Validate only after mTLS and request syntax checks to avoid
