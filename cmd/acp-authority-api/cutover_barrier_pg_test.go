@@ -90,6 +90,7 @@ func TestAuthorityCutoverPostgresBarrierCoordinatesIndependentReplicas(t *testin
 	exec(string(fenceSQL))
 
 	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	primaryFence := authoritycutover.NewPrimaryFence()
 	login := func(prefix, group string) (*pgxpool.Pool, string) {
 		t.Helper()
 		name := prefix + suffix
@@ -108,6 +109,7 @@ func TestAuthorityCutoverPostgresBarrierCoordinatesIndependentReplicas(t *testin
 		cfg.ConnConfig.User = name
 		cfg.ConnConfig.Password = password
 		cfg.MaxConns = 4
+		cfg.BeforeAcquire = primaryFence.BeforeAcquire
 		pool, err := pgxpool.NewWithConfig(ctx, cfg)
 		if err != nil {
 			t.Fatal(err)
@@ -122,10 +124,16 @@ func TestAuthorityCutoverPostgresBarrierCoordinatesIndependentReplicas(t *testin
 	coordinatorPool, coordinatorLogin := login("acp_cutover_coordinator_", coordinatorGroup)
 	replicaAPool, replicaALogin := login("acp_cutover_replica_a_", observerGroup)
 	replicaBPool, replicaBLogin := login("acp_cutover_replica_b_", observerGroup)
-	if !samePostgresPrimary(ctx, coordinatorPool, replicaAPool) ||
-		!samePostgresPrimary(ctx, replicaAPool, replicaBPool) {
-		t.Fatal("serving replicas and coordinator did not resolve to the same PostgreSQL primary")
+	if err := primaryFence.Initialize(ctx, coordinatorPool, replicaAPool); err != nil {
+		t.Fatalf("serving replica and coordinator did not resolve to one writable PostgreSQL primary: %v", err)
 	}
+	// The third pool was created with the same BeforeAcquire fence; prove it
+	// also rejects any backend outside the pinned primary before serving.
+	thirdBackend, err := replicaBPool.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("replica B did not acquire the pinned writable PostgreSQL primary: %v", err)
+	}
+	thirdBackend.Release()
 
 	// A separate DCL owner performs the test GRANT/REVOKE. The coordinator
 	// identity never receives arbitrary schema ownership or DDL privileges.
