@@ -31,6 +31,20 @@ func TestAuthorityCutoverPostgresMigration(t *testing.T) {
 	if _, err := admin.Exec(ctx, string(sql)); err != nil {
 		t.Fatal(err)
 	}
+	fenceSQL, err := os.ReadFile("../../migrations/authority-cutover/0003_acl_change_barrier.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admin.Exec(ctx, string(fenceSQL)); err != nil {
+		t.Fatal(err)
+	}
+	var fenceExists bool
+	if err := admin.QueryRow(ctx, `SELECT EXISTS (
+		SELECT 1 FROM pg_catalog.pg_event_trigger
+		WHERE evtname='acp_authority_catalog_change_fence'
+	)`).Scan(&fenceExists); err != nil || !fenceExists {
+		t.Fatalf("authority ACL-change event trigger missing: exists=%v err=%v", fenceExists, err)
+	}
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		t.Fatal(err)
