@@ -171,4 +171,33 @@ func TestAuthorityCutoverPostgresStoreContract(t *testing.T) {
 	if err := admin.QueryRow(ctx, "SELECT count(*) FROM public.acp_authority_cutover_changes").Scan(&count); err != nil || count != 2 {
 		t.Fatalf("historical replay mutated durable claims: %d %v", count, err)
 	}
+
+	// Simulate accidental partial restore by the trusted owner, not an
+	// attacker with unrestricted database ownership. A current record
+	// whose claim is missing or has a mismatched start generation must not
+	// be accepted, and restoring the claim must recover the positive case.
+	if _, err := admin.Exec(ctx, "UPDATE public.acp_authority_cutover_changes SET start_generation=1 WHERE change_id=$1", other.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fresh.Observe(ctx); !errors.Is(err, authoritycutover.ErrInvalid) {
+		t.Fatalf("mismatched claim accepted: %v", err)
+	}
+	if _, err := admin.Exec(ctx, "UPDATE public.acp_authority_cutover_changes SET start_generation=2 WHERE change_id=$1", other.ID); err != nil {
+		t.Fatal(err)
+	}
+	observe(fresh, latest)
+
+	// A state-only restore to genesis must not silently reopen a database
+	// whose durable change ledger still proves prior cutovers occurred.
+	exec("UPDATE public.acp_authority_cutover_state SET generation=1,revision=1,phase='OPEN',change_id='',manifest_digest='',operator_id='' WHERE id=1")
+	if _, err := fresh.Observe(ctx); !errors.Is(err, authoritycutover.ErrInvalid) {
+		t.Errorf("genesis with existing change history was accepted: %v", err)
+	}
+	third := authoritycutover.Change{ID: "change-c", ManifestDigest: "sha256:" + strings.Repeat("c", 64), Operator: "operator-c"}
+	if _, err := fresh.Apply(ctx, initial, authoritycutover.Begin, third); !errors.Is(err, authoritycutover.ErrInvalid) {
+		t.Errorf("partial restore permitted a new change: %v", err)
+	}
+	if err := admin.QueryRow(ctx, "SELECT count(*) FROM public.acp_authority_cutover_changes").Scan(&count); err != nil || count != 2 {
+		t.Fatalf("partial restore mutated history: %d %v", count, err)
+	}
 }
