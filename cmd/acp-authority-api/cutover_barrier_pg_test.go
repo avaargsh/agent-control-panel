@@ -176,6 +176,7 @@ func TestAuthorityCutoverPostgresBarrierCoordinatesIndependentReplicas(t *testin
 	}
 
 	// The exclusive coordinator lock cannot pass replica A's in-flight lease.
+	drainStarted := time.Now()
 	waitCtx, waitCancel := context.WithTimeout(ctx, 700*time.Millisecond)
 	_, waitErr := coordinator.AcquireCutover(waitCtx, draining)
 	waitCancel()
@@ -190,6 +191,7 @@ func TestAuthorityCutoverPostgresBarrierCoordinatesIndependentReplicas(t *testin
 	if err != nil {
 		t.Fatalf("acquire exclusive drain after replica A completed: %v", err)
 	}
+	t.Logf("two-replica drain wait including held in-flight lease: %s", time.Since(drainStarted))
 	// Simulate coordinator loss after obtaining the barrier but before DCL.
 	// Releasing the session lock must NOT reopen the durable DRAINING state.
 	if err := cutover.Release(); err != nil {
