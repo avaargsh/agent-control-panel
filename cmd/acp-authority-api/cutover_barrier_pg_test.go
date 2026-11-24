@@ -268,8 +268,8 @@ func TestAuthorityCutoverPostgresBarrierCoordinatesIndependentReplicas(t *testin
 		waiting <- cutoverResult{lease: lease, err: err}
 	}()
 	waiterSeen := false
-	waitDeadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(waitDeadline) {
+	drainWaitDeadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(drainWaitDeadline) {
 		var count int
 		if err := admin.QueryRow(ctx, `SELECT count(*) FROM pg_catalog.pg_locks
 			WHERE locktype='advisory' AND NOT granted
