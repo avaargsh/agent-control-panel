@@ -44,6 +44,14 @@ func TestAuthorityCutoverPostgresStoreContract(t *testing.T) {
 		operator_id text NOT NULL,
 		start_generation bigint NOT NULL CHECK (start_generation>0)
 	)`)
+	exec(`CREATE TABLE public.acp_authority_cutover_transitions (
+		revision bigint PRIMARY KEY CHECK (revision>1),
+		generation bigint NOT NULL CHECK (generation>0),
+		phase text NOT NULL CHECK (phase IN ('OPEN','DRAINING','CLOSED','VERIFYING')),
+		change_id text NOT NULL REFERENCES public.acp_authority_cutover_changes(change_id),
+		manifest_digest text NOT NULL,
+		operator_id text NOT NULL
+	)`)
 	pool := func() *pgxpool.Pool {
 		t.Helper()
 		cfg, err := pgxpool.ParseConfig(dsn)
@@ -88,6 +96,26 @@ func TestAuthorityCutoverPostgresStoreContract(t *testing.T) {
 		t.Fatalf("failed transition leaked durable change claim: %d %v", count, err)
 	}
 	exec("ALTER TABLE public.acp_authority_cutover_state DROP CONSTRAINT reject_probe_drain")
+
+	// The state, change claim and transition history must commit together.
+	exec("ALTER TABLE public.acp_authority_cutover_transitions ADD CONSTRAINT reject_probe_transition CHECK (revision<>2)")
+	if _, err := a.Apply(ctx, initial, authoritycutover.Begin, first); err == nil {
+		t.Errorf("transition history constraint failure reported success")
+	}
+	var transitionCount int
+	if err := admin.QueryRow(ctx, "SELECT count(*) FROM public.acp_authority_cutover_transitions").Scan(&transitionCount); err != nil || transitionCount != 0 {
+		t.Fatalf("failed transaction leaked transition history: %d %v", transitionCount, err)
+	}
+	// Restore the fixture even when the old implementation incorrectly
+	// committed, so the remaining rollback assertions can run.
+	if _, err := admin.Exec(ctx, "UPDATE public.acp_authority_cutover_state SET generation=1,revision=1,phase='OPEN',change_id='',manifest_digest='',operator_id='' WHERE id=1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admin.Exec(ctx, "DELETE FROM public.acp_authority_cutover_changes"); err != nil {
+		t.Fatal(err)
+	}
+	exec("ALTER TABLE public.acp_authority_cutover_transitions DROP CONSTRAINT reject_probe_transition")
+	observe(a, initial)
 
 	type outcome struct {
 		record authoritycutover.Record
@@ -199,6 +227,24 @@ func TestAuthorityCutoverPostgresStoreContract(t *testing.T) {
 			t.Fatalf("restore fixture: %v", err)
 		}
 	}
+	// Restore VERIFYING from the same completed change. Its generation and
+	// change claim are genuine; only the state revision and phase are older.
+	oldRevision := latest
+	oldRevision.Phase = authoritycutover.Verifying
+	oldRevision.Revision--
+	restoreState(oldRevision)
+	if _, err := fresh.Observe(ctx); !errors.Is(err, authoritycutover.ErrInvalid) {
+		t.Errorf("same-generation rollback accepted: %v", err)
+	}
+	if _, err := fresh.Apply(ctx, oldRevision, authoritycutover.Reopen, other); !errors.Is(err, authoritycutover.ErrInvalid) {
+		t.Errorf("same-generation reopen accepted: %v", err)
+	}
+	restoreState(latest)
+	observe(fresh, latest)
+	if err := admin.QueryRow(ctx, "SELECT count(*) FROM public.acp_authority_cutover_transitions").Scan(&transitionCount); err != nil || transitionCount != 8 {
+		t.Errorf("expected eight durable transitions after two cutovers: %d %v", transitionCount, err)
+	}
+
 	restoreState(opened)
 	if _, err := fresh.Observe(ctx); !errors.Is(err, authoritycutover.ErrInvalid) {
 		t.Errorf("old OPEN record with newer surviving claim accepted: %v", err)
