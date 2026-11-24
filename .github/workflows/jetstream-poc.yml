@@ -1,6 +1,8 @@
 name: JetStream broker POC (non-production)
 
 on:
+  push:
+    branches: [main]
   pull_request:
     paths:
       - 'experiments/jetstream-poc/**'
@@ -18,7 +20,7 @@ env:
 jobs:
   actual-broker:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     env:
       PGTEST_DSN: postgres://postgres:agent-ci@127.0.0.1:5432/postgres?sslmode=disable
       NATS_POC_URL: nats://127.0.0.1:4222
@@ -48,7 +50,7 @@ jobs:
           go version
       - name: Launch real pinned JetStream server
         run: |
-          docker run -d --name acp-jetstream -p 4222:4222 nats:2.15.2 -js -sd /data
+          docker run --pull=always -d --name acp-jetstream -p 4222:4222 nats:2.15.2@sha256:b6c40dcfe5ae9174dcafa9c43f800afb93b8b0ffcde02ac00efc6b66031d9a50 -js -sd /data
           for i in $(seq 1 30); do
             if bash -c 'echo > /dev/tcp/127.0.0.1/4222' 2>/dev/null; then exit 0; fi
             sleep 1
@@ -70,6 +72,42 @@ jobs:
       - name: Execute actual broker and PostgreSQL race tests
         working-directory: experiments/jetstream-poc
         run: go test -race -count=1 -v ./...
+      - name: Require real NATS mTLS identity and tenant ACL evidence
+        working-directory: experiments/jetstream-poc
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -race -count=1 -v -run '^TestRealJetStreamMTLSAndTenantIsolation$' . | tee "$RUNNER_TEMP/jetstream-mtls.log"
+          grep -F -- '--- PASS: TestRealJetStreamMTLSAndTenantIsolation' "$RUNNER_TEMP/jetstream-mtls.log"
+          if grep -F -- '--- SKIP: TestRealJetStreamMTLSAndTenantIsolation' "$RUNNER_TEMP/jetstream-mtls.log"; then
+            echo 'Required real NATS mTLS test was skipped' >&2
+            exit 1
+          fi
+      # The ordinary PR checkout tests GitHub's synthetic merge tree. Repeat
+      # the security-specific test on the literal immutable PR source SHA.
+      - name: Checkout exact pull request source SHA
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # pinned v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Require mTLS evidence on literal source HEAD
+        if: github.event_name == 'pull_request'
+        working-directory: experiments/jetstream-poc
+        shell: bash
+        env:
+          EXPECTED_SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse --verify HEAD)" = "$EXPECTED_SOURCE_SHA"
+          printf 'VERIFIED_JETSTREAM_SOURCE_HEAD=%s\n' "$EXPECTED_SOURCE_SHA"
+          go test -race -count=1 -v -run '^TestRealJetStreamMTLSAndTenantIsolation$' . | tee "$RUNNER_TEMP/jetstream-mtls-source.log"
+          grep -F -- '--- PASS: TestRealJetStreamMTLSAndTenantIsolation' "$RUNNER_TEMP/jetstream-mtls-source.log"
+          if grep -F -- '--- SKIP: TestRealJetStreamMTLSAndTenantIsolation' "$RUNNER_TEMP/jetstream-mtls-source.log"; then
+            echo 'Literal-source NATS mTLS test was skipped' >&2
+            exit 1
+          fi
       - name: Report NATS logs on failure
         if: failure()
-        run: docker logs acp-jetstream || true
+        run: |
+          docker logs acp-jetstream || true
