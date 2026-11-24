@@ -294,6 +294,43 @@ func TestAuthorityCutoverPostgresStoreContract(t *testing.T) {
 		observe(fresh, latest)
 	}
 
+	// Phase order must agree with the revision even when generation and
+	// change identity remain valid. Each pair shares a claim generation.
+	for _, probe := range []struct {
+		revision int64
+		original string
+		corrupt  string
+	}{
+		{2, "DRAINING", "CLOSED"},
+		{3, "CLOSED", "DRAINING"},
+		{4, "VERIFYING", "OPEN"},
+		{5, "OPEN", "VERIFYING"},
+		{6, "DRAINING", "CLOSED"},
+		{7, "CLOSED", "DRAINING"},
+		{8, "VERIFYING", "OPEN"},
+	} {
+		if _, err := admin.Exec(ctx, "UPDATE public.acp_authority_cutover_transitions SET phase=$1 WHERE revision=$2", probe.corrupt, probe.revision); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := fresh.Observe(ctx); !errors.Is(err, authoritycutover.ErrInvalid) {
+			t.Fatalf("historical phase order at revision %d accepted: %v", probe.revision, err)
+		}
+		blocked := authoritycutover.Change{ID: "blocked-phase-order", ManifestDigest: other.ManifestDigest, Operator: other.Operator}
+		if _, err := fresh.Apply(ctx, latest, authoritycutover.Begin, blocked); !errors.Is(err, authoritycutover.ErrInvalid) {
+			t.Fatalf("historical phase order at revision %d permitted new change: %v", probe.revision, err)
+		}
+		if _, err := admin.Exec(ctx, "UPDATE public.acp_authority_cutover_transitions SET phase=$1 WHERE revision=$2", probe.original, probe.revision); err != nil {
+			t.Fatal(err)
+		}
+		observe(fresh, latest)
+	}
+	if err := admin.QueryRow(ctx, "SELECT count(*) FROM public.acp_authority_cutover_changes").Scan(&count); err != nil || count != 2 {
+		t.Fatalf("phase order rejection mutated claims: %d %v", count, err)
+	}
+	if err := admin.QueryRow(ctx, "SELECT count(*) FROM public.acp_authority_cutover_transitions").Scan(&transitionCount); err != nil || transitionCount != 8 {
+		t.Fatalf("phase order rejection mutated transitions: %d %v", transitionCount, err)
+	}
+
 	// Keep the latest revision and claim intact, but remove a historical
 	// transition. A partial restore must not silently erase audit history.
 	exec("DELETE FROM public.acp_authority_cutover_transitions WHERE revision=3")
