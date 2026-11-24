@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -69,98 +71,141 @@ func TestPrimaryFencePinsBothPoolsToOneWritablePostgresBackend(t *testing.T) {
 func TestPrimaryFenceRejectsStandbyAndPromotedPrimaryAfterFailover(t *testing.T) {
 	primaryDSN := os.Getenv("PGTEST_DSN")
 	standbyDSN := os.Getenv("PGTEST_STANDBY_DSN")
-	if primaryDSN == "" {
-		t.Skip("PGTEST_DSN is required for real PostgreSQL failover fencing verification")
+	if primaryDSN == "" || standbyDSN == "" {
+		t.Skip("both PostgreSQL fixture DSNs are required")
 	}
-	if standbyDSN == "" {
-		t.Skip("PGTEST_STANDBY_DSN is required for the dedicated physical failover regression")
+	if os.Getenv("PGTEST_ALLOW_STANDBY_PROMOTION") != "1" {
+		t.Skip("standby promotion requires explicit disposable-fixture opt-in")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
+	primaryConfig, err := pgxpool.ParseConfig(primaryDSN)
+	if err != nil {
+		t.Fatal("invalid primary fixture DSN")
+	}
+	standbyConfig, err := pgxpool.ParseConfig(standbyDSN)
+	if err != nil {
+		t.Fatal("invalid standby fixture DSN")
+	}
+	if primaryConfig.ConnConfig.Host != "127.0.0.1" ||
+		standbyConfig.ConnConfig.Host != "127.0.0.1" ||
+		primaryConfig.ConnConfig.Port == standbyConfig.ConnConfig.Port ||
+		primaryConfig.ConnConfig.Database != standbyConfig.ConnConfig.Database {
+		t.Fatal("promotion regression requires distinct loopback fixture endpoints for the same database")
+	}
+
 	fence := NewPrimaryFence()
-	newPool := func(dsn string, beforeAcquire bool) *pgxpool.Pool {
+	var reroute atomic.Bool
+	type fixturePool struct {
+		name             string
+		pool             *pgxpool.Pool
+		standbyRejected  atomic.Int64
+		promotedRejected atomic.Int64
+	}
+
+	newFencedPool := func(name string) *fixturePool {
 		t.Helper()
-		cfg, err := pgxpool.ParseConfig(dsn)
-		if err != nil {
-			t.Fatalf("parse PostgreSQL DSN: %v", err)
-		}
+		fixture := &fixturePool{name: name}
+		cfg := primaryConfig.Copy()
 		cfg.MaxConns = 1
-		if beforeAcquire {
-			cfg.BeforeAcquire = fence.BeforeAcquire
+		cfg.ConnConfig.Fallbacks = nil
+		cfg.BeforeConnect = func(_ context.Context, connConfig *pgx.ConnConfig) error {
+			if reroute.Load() {
+				connConfig.Host = standbyConfig.ConnConfig.Host
+				connConfig.Port = standbyConfig.ConnConfig.Port
+			}
+			return nil
+		}
+		cfg.BeforeAcquire = func(acquireCtx context.Context, conn *pgx.Conn) bool {
+			allowed := fence.BeforeAcquire(acquireCtx, conn)
+			if !allowed && reroute.Load() {
+				var inRecovery bool
+				var port int
+				if err := conn.QueryRow(acquireCtx, "SELECT pg_is_in_recovery(), inet_server_port()").Scan(&inRecovery, &port); err == nil &&
+					port == int(standbyConfig.ConnConfig.Port) {
+					if inRecovery {
+						fixture.standbyRejected.Add(1)
+					} else {
+						fixture.promotedRejected.Add(1)
+					}
+				}
+			}
+			return allowed
 		}
 		pool, err := pgxpool.NewWithConfig(ctx, cfg)
 		if err != nil {
-			t.Fatalf("create PostgreSQL pool: %v", err)
+			t.Fatalf("create %s pool: %v", name, err)
 		}
+		fixture.pool = pool
 		t.Cleanup(pool.Close)
-		return pool
+		return fixture
 	}
 
-	authority := newPool(primaryDSN, true)
-	cutover := newPool(primaryDSN, true)
-	if err := fence.Initialize(ctx, authority, cutover); err != nil {
+	authority := newFencedPool("authority")
+	cutover := newFencedPool("cutover")
+	if err := fence.Initialize(ctx, authority.pool, cutover.pool); err != nil {
 		t.Fatalf("pin the original writable primary: %v", err)
 	}
+	for _, fixture := range []*fixturePool{authority, cutover} {
+		var port int
+		if err := fixture.pool.QueryRow(ctx, "SELECT inet_server_port()").Scan(&port); err != nil || port != int(primaryConfig.ConnConfig.Port) {
+			t.Fatalf("%s positive control did not reach the pinned primary: port=%d err=%v", fixture.name, port, err)
+		}
+	}
 
-	standbyProbe := newPool(standbyDSN, false)
+	standbyProbe, err := pgxpool.NewWithConfig(ctx, standbyConfig)
+	if err != nil {
+		t.Fatalf("create independent standby probe: %v", err)
+	}
+	t.Cleanup(standbyProbe.Close)
 	var inRecovery bool
-	if err := standbyProbe.QueryRow(ctx, "SELECT pg_is_in_recovery()").Scan(&inRecovery); err != nil {
-		t.Fatalf("inspect physical standby before failover: %v", err)
-	}
-	if !inRecovery {
-		t.Fatal("PGTEST_STANDBY_DSN must point to a physical standby before promotion")
+	if err := standbyProbe.QueryRow(ctx, "SELECT pg_is_in_recovery()").Scan(&inRecovery); err != nil || !inRecovery {
+		t.Fatalf("physical standby positive control failed: recovery=%t err=%v", inRecovery, err)
 	}
 
-	// Model a pool reconnecting through an endpoint that now routes to a
-	// standby. The per-connection callback must reject it before any query
-	// can return an authority result.
-	reroutedPool := newPool(standbyDSN, true)
-	rejectAcquire := func(stage string) {
+	// Keep both original pools and the pinned fence. Reset only their
+	// connections so the next dial follows the fixture's changed endpoint.
+	reroute.Store(true)
+	authority.pool.Reset()
+	cutover.pool.Reset()
+	rejectAcquire := func(fixture *fixturePool, promoted bool) {
 		t.Helper()
-		acquireCtx, stop := context.WithTimeout(ctx, 2*time.Second)
+		acquireCtx, stop := context.WithTimeout(ctx, 3*time.Second)
 		defer stop()
-		conn, err := reroutedPool.Acquire(acquireCtx)
+		conn, err := fixture.pool.Acquire(acquireCtx)
 		if err == nil {
 			conn.Release()
-			t.Fatalf("primary fence admitted a rerouted backend %s", stage)
+			t.Fatalf("%s admitted a different backend (promoted=%t)", fixture.name, promoted)
+		}
+		if (!promoted && fixture.standbyRejected.Load() == 0) ||
+			(promoted && fixture.promotedRejected.Load() == 0) {
+			t.Fatalf("%s did not observe a fence rejection on the expected live backend (promoted=%t): %v", fixture.name, promoted, err)
 		}
 	}
-	rejectAcquire("while it is in recovery")
+	for _, fixture := range []*fixturePool{authority, cutover} {
+		rejectAcquire(fixture, false)
+	}
 
-	// Promote the standby to simulate a real failover. It is writable now,
-	// but it is not the postmaster identity pinned at service startup.
+	// Only the explicitly opted-in disposable loopback standby is promoted.
 	var promoted bool
-	if err := standbyProbe.QueryRow(ctx, "SELECT pg_promote(true, 30)").Scan(&promoted); err != nil {
-		t.Fatalf("promote standby for failover regression: %v", err)
+	if err := standbyProbe.QueryRow(ctx, "SELECT pg_promote(true, 30)").Scan(&promoted); err != nil || !promoted {
+		t.Fatalf("fixture standby promotion failed: promoted=%t err=%v", promoted, err)
 	}
-	if !promoted {
-		t.Fatal("PostgreSQL did not promote the standby")
+	if err := standbyProbe.QueryRow(ctx, "SELECT pg_is_in_recovery()").Scan(&inRecovery); err != nil || inRecovery {
+		t.Fatalf("promoted server positive control failed: recovery=%t err=%v", inRecovery, err)
 	}
 
-	promotionCtx, stopPromotion := context.WithTimeout(ctx, 30*time.Second)
-	defer stopPromotion()
-	for {
-		if err := standbyProbe.QueryRow(promotionCtx, "SELECT pg_is_in_recovery()").Scan(&inRecovery); err == nil && !inRecovery {
-			break
+	for _, fixture := range []*fixturePool{authority, cutover} {
+		fixture.pool.Reset()
+		rejectAcquire(fixture, true)
+		queryCtx, stopQuery := context.WithTimeout(ctx, 3*time.Second)
+		var result string
+		err := fixture.pool.QueryRow(queryCtx, "SELECT 'unexpected-authority-result'").Scan(&result)
+		stopQuery()
+		if err == nil {
+			t.Fatalf("%s returned authority data from a different primary: %q", fixture.name, result)
 		}
-		if promotionCtx.Err() != nil {
-			t.Fatalf("promoted PostgreSQL server did not leave recovery: %v", promotionCtx.Err())
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-
-	// The same pool now reconnects to a writable but different postmaster.
-	// Identity mismatch must still fail closed; writability alone is not
-	// sufficient to move the admission barrier after uncertain failover.
-	rejectAcquire("after it has been promoted to a different primary")
-
-	queryCtx, stopQuery := context.WithTimeout(ctx, 2*time.Second)
-	defer stopQuery()
-	var result string
-	err := reroutedPool.QueryRow(queryCtx, "SELECT 'unexpected-authority-result'").Scan(&result)
-	if err == nil {
-		t.Fatalf("rerouted pool returned authority data from a different primary: %q", result)
 	}
 }
