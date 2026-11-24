@@ -105,9 +105,9 @@ func TestBarrierGuardedAuthorityAndPublicationHoldLeaseThroughResponseFlush(t *t
 		Services: []string{"payments"},
 		Capabilities: []CapabilityContract{{
 			ID: "sre.metrics.read", Version: "1.0.0",
-			InputSchema: json.RawMessage(`{"type":"object","required":["service"]}`),
+			InputSchema:  json.RawMessage(`{"type":"object","required":["service"]}`),
 			OutputSchema: json.RawMessage(`{"type":"object","required":["series"]}`),
-			EffectClass: "read_only", Idempotency: "safe", TenantScoped: true,
+			EffectClass:  "read_only", Idempotency: "safe", TenantScoped: true,
 		}},
 	}
 	raw, err := json.Marshal(config)
