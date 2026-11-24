@@ -136,6 +136,9 @@ func TestAuthorityCutoverPostgresBarrierCoordinatesIndependentReplicas(t *testin
 	createRole(dclLogin, "LOGIN NOSUPERUSER NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS PASSWORD '"+dclPassword+"'")
 	exec("CREATE TABLE public.cutover_barrier_secret (id integer PRIMARY KEY)")
 	exec("ALTER TABLE public.cutover_barrier_secret OWNER TO " + pgx.Identifier{dclLogin}.Sanitize())
+	exec("CREATE FUNCTION public.cutover_barrier_definer() RETURNS integer LANGUAGE sql SECURITY DEFINER AS 'SELECT 1'")
+	exec("ALTER FUNCTION public.cutover_barrier_definer() OWNER TO " + pgx.Identifier{dclLogin}.Sanitize())
+	exec("REVOKE ALL ON FUNCTION public.cutover_barrier_definer() FROM PUBLIC")
 	dclCfg, err := pgx.ParseConfig(dsn)
 	if err != nil {
 		t.Fatal(err)
@@ -162,6 +165,13 @@ func TestAuthorityCutoverPostgresBarrierCoordinatesIndependentReplicas(t *testin
 	if err != nil {
 		t.Fatalf("replica A admission: %v", err)
 	}
+	// Always release the in-flight request lease on assertion failure so the
+	// test cannot strand a checked-out pool connection during cleanup.
+	defer func() {
+		if leaseA != nil {
+			_ = leaseA.Release()
+		}
+	}()
 	leaseB, err := replicaB.Acquire(ctx)
 	if err != nil {
 		t.Fatalf("replica B admission: %v", err)
@@ -246,7 +256,79 @@ func TestAuthorityCutoverPostgresBarrierCoordinatesIndependentReplicas(t *testin
 	if err != nil {
 		t.Fatalf("replica A could not reacquire after DCL restore: %v", err)
 	}
-	t.Logf("out-of-band DCL fencing: separate DCL pid=%d waited on the transaction-scoped advisory fence until request lease release", dclPID)
+
+	// The same fence must cover SECURITY DEFINER routine ACL changes, not
+	// only table/sequence ACL changes. The independent object owner attempts
+	// GRANT EXECUTE while another request lease is active.
+	functionGrantCtx, functionGrantCancel := context.WithTimeout(ctx, 10*time.Second)
+	defer functionGrantCancel()
+	functionGrantDone := make(chan error, 1)
+	go func() {
+		_, err := dcl.Exec(functionGrantCtx, "GRANT EXECUTE ON FUNCTION public.cutover_barrier_definer() TO "+pgx.Identifier{observerGroup}.Sanitize())
+		functionGrantDone <- err
+	}()
+	functionWaiting := false
+	functionDeadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(functionDeadline) {
+		select {
+		case err := <-functionGrantDone:
+			if err == nil {
+				t.Fatal("SECURITY DEFINER GRANT committed while an observer request lease was held")
+			}
+			t.Fatalf("SECURITY DEFINER GRANT failed instead of waiting on the DDL fence: %v", err)
+		default:
+		}
+		var waitType string
+		if err := admin.QueryRow(ctx, "SELECT COALESCE(wait_event_type,'') FROM pg_catalog.pg_stat_activity WHERE pid=$1", dclPID).Scan(&waitType); err != nil {
+			t.Fatal(err)
+		}
+		var waitingOnFence bool
+		if err := admin.QueryRow(ctx, `SELECT EXISTS (
+			SELECT 1 FROM pg_catalog.pg_locks
+			WHERE pid=$1 AND locktype='advisory'
+			  AND mode='ExclusiveLock' AND NOT granted
+		)`, dclPID).Scan(&waitingOnFence); err != nil {
+			t.Fatal(err)
+		}
+		if waitType == "Lock" && waitingOnFence {
+			functionWaiting = true
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !functionWaiting {
+		t.Fatal("SECURITY DEFINER GRANT did not wait on the transaction-scoped advisory fence")
+	}
+	if err := leaseA.Release(); err != nil {
+		functionGrantCancel()
+		t.Fatal(err)
+	}
+	select {
+	case err := <-functionGrantDone:
+		if err != nil {
+			t.Fatalf("SECURITY DEFINER GRANT did not commit after request lease release: %v", err)
+		}
+	case <-functionGrantCtx.Done():
+		t.Fatalf("SECURITY DEFINER GRANT remained blocked after request lease release: %v", functionGrantCtx.Err())
+	}
+	if _, err := replicaB.Acquire(ctx); !errors.Is(err, authoritycutover.ErrBarrierUnavailable) {
+		t.Fatalf("observer did not fail closed after SECURITY DEFINER EXECUTE grant: %v", err)
+	}
+	if _, err := dcl.Exec(ctx, "REVOKE EXECUTE ON FUNCTION public.cutover_barrier_definer() FROM "+pgx.Identifier{observerGroup}.Sanitize()); err != nil {
+		t.Fatal(err)
+	}
+	functionRestored, err := replicaB.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("observer did not recover after SECURITY DEFINER EXECUTE revoke: %v", err)
+	}
+	if err := functionRestored.Release(); err != nil {
+		t.Fatal(err)
+	}
+	leaseA, err = replicaA.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("replica A could not reacquire after SECURITY DEFINER DCL restore: %v", err)
+	}
+	t.Logf("out-of-band table and SECURITY DEFINER DCL fencing: separate DCL pid=%d waited on transaction-scoped advisory fence", dclPID)
 
 	// Persist DRAINING before waiting for the exclusive lock. Requests that
 	// race after this commit must fail closed rather than join the drain.
