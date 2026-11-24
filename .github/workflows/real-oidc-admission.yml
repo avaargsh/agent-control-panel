@@ -3,6 +3,10 @@ name: Live OIDC service-account admission (non-production)
 on:
   pull_request:
     paths:
+      - 'cmd/acp-goal/**'
+      - 'cmd/acp-goal-api/**'
+      - 'go.mod'
+      - 'go.sum'
       - 'internal/admission/**'
       - 'internal/goalhttp/**'
       - 'internal/issuegoal/**'
