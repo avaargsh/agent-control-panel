@@ -138,6 +138,14 @@ func (b *PostgresBarrier) AcquireCutover(ctx context.Context, expected Record) (
 		discardBarrierBackend(conn)
 		return nil, fmt.Errorf("%w: exclusive lock: %w", ErrBarrierUnavailable, err)
 	}
+	// Re-attest after waiting for the barrier: a prior DCL may have changed
+	// the coordinator's own grants while this backend was queued.
+	if err := VerifyPostgresRole(ctx, conn.Conn(), b.login, CoordinatorRole); err != nil {
+		if releaseErr := releaseBarrierBackend(conn, false); releaseErr != nil {
+			return nil, fmt.Errorf("%w: coordinator role after lock: %v; lock release: %w", ErrBarrierUnavailable, err, releaseErr)
+		}
+		return nil, fmt.Errorf("%w: coordinator role after lock: %w", ErrBarrierUnavailable, err)
+	}
 	record, err := readRecord(ctx, conn, false)
 	if err != nil {
 		if releaseErr := releaseBarrierBackend(conn, false); releaseErr != nil {
