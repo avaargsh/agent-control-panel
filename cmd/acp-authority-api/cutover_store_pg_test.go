@@ -211,6 +211,30 @@ func TestAuthorityCutoverPostgresStoreContract(t *testing.T) {
 	}
 	observe(fresh, latest)
 
+	// Duplicate generation claims must be denied even if the current
+	// claim and complete revision sequence are individually valid.
+	for _, generation := range []int64{1, 2} {
+		duplicate := authoritycutover.Change{ID: "duplicate-generation", ManifestDigest: "sha256:" + strings.Repeat("f", 64), Operator: "operator-f"}
+		if _, err := admin.Exec(ctx, `INSERT INTO public.acp_authority_cutover_changes
+			(change_id,manifest_digest,operator_id,start_generation) VALUES ($1,$2,$3,$4)`,
+			duplicate.ID, duplicate.ManifestDigest, duplicate.Operator, generation); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := fresh.Observe(ctx); !errors.Is(err, authoritycutover.ErrInvalid) {
+			t.Fatalf("duplicate generation %d accepted: %v", generation, err)
+		}
+		if _, err := fresh.Apply(ctx, latest, authoritycutover.Begin, authoritycutover.Change{ID: "blocked-duplicate", ManifestDigest: duplicate.ManifestDigest, Operator: duplicate.Operator}); !errors.Is(err, authoritycutover.ErrInvalid) {
+			t.Fatalf("duplicate generation %d permitted new change: %v", generation, err)
+		}
+		if err := admin.QueryRow(ctx, "SELECT count(*) FROM public.acp_authority_cutover_changes").Scan(&count); err != nil || count != 3 {
+			t.Fatalf("duplicate generation rejection mutated claims: %d %v", count, err)
+		}
+		if _, err := admin.Exec(ctx, "DELETE FROM public.acp_authority_cutover_changes WHERE change_id=$1", duplicate.ID); err != nil {
+			t.Fatal(err)
+		}
+		observe(fresh, latest)
+	}
+
 	// A non-genesis rollback can still reference a genuine historical claim.
 	// Reject it if a later cutover claim survives, even when the old record
 	// and its original claim agree byte-for-byte.
