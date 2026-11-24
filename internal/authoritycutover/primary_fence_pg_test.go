@@ -79,6 +79,7 @@ func TestPrimaryFenceRejectsStandbyAndPromotedPrimaryAfterFailover(t *testing.T)
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
+	fence := NewPrimaryFence()
 	newPool := func(dsn string, beforeAcquire bool) *pgxpool.Pool {
 		t.Helper()
 		cfg, err := pgxpool.ParseConfig(dsn)
@@ -97,7 +98,6 @@ func TestPrimaryFenceRejectsStandbyAndPromotedPrimaryAfterFailover(t *testing.T)
 		return pool
 	}
 
-	fence := NewPrimaryFence()
 	authority := newPool(primaryDSN, true)
 	cutover := newPool(primaryDSN, true)
 	if err := fence.Initialize(ctx, authority, cutover); err != nil {
