@@ -138,7 +138,7 @@ func TestAuthorityCutoverPostgresBarrierCoordinatesIndependentReplicas(t *testin
 	createRole(dclLogin, "LOGIN NOSUPERUSER NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS PASSWORD '"+dclPassword+"'")
 	// This narrowly delegated DCL identity may grant/revoke only the test role.
 	// It is not a superuser and has no general CREATEROLE privilege.
-	exec("GRANT "+pgx.Identifier{delegatedGroup}.Sanitize()+" TO "+pgx.Identifier{dclLogin}.Sanitize()+" WITH ADMIN OPTION")
+	exec("GRANT " + pgx.Identifier{delegatedGroup}.Sanitize() + " TO " + pgx.Identifier{dclLogin}.Sanitize() + " WITH ADMIN OPTION")
 	exec("CREATE TABLE public.cutover_barrier_secret (id integer PRIMARY KEY)")
 	exec("ALTER TABLE public.cutover_barrier_secret OWNER TO " + pgx.Identifier{dclLogin}.Sanitize())
 	exec("CREATE FUNCTION public.cutover_barrier_definer() RETURNS integer LANGUAGE sql SECURITY DEFINER AS 'SELECT 1'")
@@ -505,11 +505,11 @@ func TestAuthorityCutoverPostgresBarrierCoordinatesIndependentReplicas(t *testin
 		}
 		return nil
 	}
-	if err := runSharedRoleDCL("GRANT "+pgx.Identifier{delegatedGroup}.Sanitize()+" TO "+pgx.Identifier{replicaALogin}.Sanitize()); err != nil {
+	if err := runSharedRoleDCL("GRANT " + pgx.Identifier{delegatedGroup}.Sanitize() + " TO " + pgx.Identifier{replicaALogin}.Sanitize()); err != nil {
 		t.Fatalf("fenced role membership grant: %v", err)
 	}
 	checkReplicaRole(false)
-	if err := runSharedRoleDCL("REVOKE "+pgx.Identifier{delegatedGroup}.Sanitize()+" FROM "+pgx.Identifier{replicaALogin}.Sanitize()); err != nil {
+	if err := runSharedRoleDCL("REVOKE " + pgx.Identifier{delegatedGroup}.Sanitize() + " FROM " + pgx.Identifier{replicaALogin}.Sanitize()); err != nil {
 		t.Fatalf("fenced role membership revoke: %v", err)
 	}
 	checkReplicaRole(true)
