@@ -446,9 +446,18 @@ func TestAuthorityHTTPRejectsRuntimeRoleDrift(t *testing.T) {
 					}
 				}()
 				var armed, triggered atomic.Bool
+				var cancelAfterFinal atomic.Bool
+				var cancellationChecks atomic.Int32
+				type cancelKey struct{}
 				guard := func(requestCtx context.Context) error {
 					if err := verifyAuthorityDatabaseRole(requestCtx, reader); err != nil {
 						return err
+					}
+					// Cancel the server-side request after the real final database
+					// attestation succeeds. The client transport remains live so
+					// we can inspect the actual HTTP response and signed fields.
+					if cancelAfterFinal.Load() && cancellationChecks.Add(1) == 2 {
+						requestCtx.Value(cancelKey{}).(context.CancelFunc)()
 					}
 					if armed.Load() && triggered.CompareAndSwap(false, true) {
 						_, err := admin.Exec(requestCtx, "GRANT SELECT ON "+schema+".outbox_events TO "+role)
@@ -466,7 +475,11 @@ func TestAuthorityHTTPRejectsRuntimeRoleDrift(t *testing.T) {
 				if handlerErr != nil {
 					t.Fatal(handlerErr)
 				}
-				server := httptest.NewUnstartedServer(handler)
+				server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					requestCtx, cancelRequest := context.WithCancel(r.Context())
+					defer cancelRequest()
+					handler.ServeHTTP(w, r.WithContext(context.WithValue(requestCtx, cancelKey{}, cancelRequest)))
+				}))
 				server.TLS = &tls.Config{
 					MinVersion: tls.VersionTLS13, ClientAuth: tls.RequireAndVerifyClientCert,
 					ClientCAs: trust, Certificates: []tls.Certificate{certificate},
@@ -547,6 +560,33 @@ func TestAuthorityHTTPRejectsRuntimeRoleDrift(t *testing.T) {
 				}
 				if strings.Contains(string(body), "\"signature\"") || strings.Contains(string(body), "\"payload\"") {
 					t.Fatal("denied DCL-race request leaked signed publication fields")
+				}
+
+				// Restore least privilege before probing cancellation, so a
+				// 503 cannot be explained by the prior injected DCL grant.
+				if _, err := admin.Exec(ctx, "REVOKE SELECT ON "+schema+".outbox_events FROM "+role); err != nil {
+					t.Fatal(err)
+				}
+				armed.Store(false)
+				recoveredStatus, _ = request()
+				if recoveredStatus != http.StatusOK {
+					t.Fatalf("authority reader did not recover before cancellation probe: HTTP %d", recoveredStatus)
+				}
+				cancelAfterFinal.Store(true)
+				cancelledStatus, cancelledBody := request()
+				cancelAfterFinal.Store(false)
+				if cancellationChecks.Load() != 2 {
+					t.Fatalf("cancellation did not follow two successful role attestations: %d", cancellationChecks.Load())
+				}
+				if cancelledStatus != http.StatusServiceUnavailable {
+					t.Errorf("cancelled authority request %s: expected 503, got HTTP %d", name, cancelledStatus)
+				}
+				if strings.Contains(string(cancelledBody), "\"signature\"") || strings.Contains(string(cancelledBody), "\"payload\"") {
+					t.Error("cancelled authority request exposed signed publication fields")
+				}
+				recoveredStatus, _ = request()
+				if recoveredStatus != http.StatusOK {
+					t.Fatalf("authority reader did not recover after cancelled request: HTTP %d", recoveredStatus)
 				}
 			})
 		}
