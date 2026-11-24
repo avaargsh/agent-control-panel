@@ -180,6 +180,10 @@ func NewGuardCapabilityHandler(
 		ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
 		defer cancel()
 		current, input, err := reader.GetGuardRunAuthority(ctx, tenant, q.RunID)
+		if ctx.Err() != nil {
+			fail(http.StatusServiceUnavailable, "AUTHORITY_UNAVAILABLE")
+			return
+		}
 		if errors.Is(err, runpg.ErrCatalogDenied) {
 			fail(http.StatusForbidden, "CAPABILITY_DENIED")
 			return
@@ -200,6 +204,10 @@ func NewGuardCapabilityHandler(
 			PolicyRevision: current.Snapshot.PolicyRevision, ConfigDigest: current.Snapshot.ConfigDigest,
 		}
 		publication, err := publisher.Publish(snapshot, input, time.Now().UTC())
+		if ctx.Err() != nil {
+			fail(http.StatusServiceUnavailable, "AUTHORITY_UNAVAILABLE")
+			return
+		}
 		if errors.Is(err, ErrPublicationDenied) {
 			fail(http.StatusForbidden, "CAPABILITY_DENIED")
 			return
@@ -214,6 +222,10 @@ func NewGuardCapabilityHandler(
 			return
 		}
 		receipt, err := MatchGuardCapability(decoded, q)
+		if ctx.Err() != nil {
+			fail(http.StatusServiceUnavailable, "AUTHORITY_UNAVAILABLE")
+			return
+		}
 		if err != nil {
 			fail(http.StatusForbidden, "CAPABILITY_DENIED")
 			return
