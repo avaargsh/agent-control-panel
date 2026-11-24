@@ -242,4 +242,6 @@ jobs:
 
       - name: Remove temporary physical PostgreSQL standby
         if: always()
-        run: docker rm -f acp-standby >/dev/null 2>&1 || true
+        run: |
+          docker rm -f acp-standby >/dev/null 2>&1 || true
+          docker volume rm -f acp-standby-data >/dev/null 2>&1 || true
