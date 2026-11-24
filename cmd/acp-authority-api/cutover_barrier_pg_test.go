@@ -176,22 +176,64 @@ func TestAuthorityCutoverPostgresBarrierCoordinatesIndependentReplicas(t *testin
 	}
 
 	// The exclusive coordinator lock cannot pass replica A's in-flight lease.
+	// Observe the real PostgreSQL lock waiter, then revoke the coordinator
+	// membership while it is queued. Post-lock re-attestation must reject it.
 	drainStarted := time.Now()
-	waitCtx, waitCancel := context.WithTimeout(ctx, 700*time.Millisecond)
-	_, waitErr := coordinator.AcquireCutover(waitCtx, draining)
-	waitCancel()
-	if !errors.Is(waitErr, context.DeadlineExceeded) && !errors.Is(waitErr, context.Canceled) {
-		t.Fatalf("exclusive drain did not wait for in-flight replica A: %v", waitErr)
+	type cutoverResult struct {
+		lease *authoritycutover.CutoverLease
+		err   error
+	}
+	waitCtx, waitCancel := context.WithTimeout(ctx, 10*time.Second)
+	waiting := make(chan cutoverResult, 1)
+	go func() {
+		lease, err := coordinator.AcquireCutover(waitCtx, draining)
+		waiting <- cutoverResult{lease: lease, err: err}
+	}()
+	waiterSeen := false
+	waitDeadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(waitDeadline) {
+		var count int
+		if err := admin.QueryRow(ctx, `SELECT count(*) FROM pg_catalog.pg_locks
+			WHERE locktype='advisory' AND NOT granted
+			AND database=(SELECT oid FROM pg_catalog.pg_database WHERE datname=current_database())`).Scan(&count); err != nil {
+			waitCancel()
+			t.Fatal(err)
+		}
+		if count > 0 {
+			waiterSeen = true
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !waiterSeen {
+		waitCancel()
+		t.Fatal("PostgreSQL did not expose the coordinator as waiting behind replica A")
+	}
+	if _, err := admin.Exec(ctx, "REVOKE "+pgx.Identifier{coordinatorGroup}.Sanitize()+" FROM "+pgx.Identifier{coordinatorLogin}.Sanitize()); err != nil {
+		waitCancel()
+		t.Fatal(err)
 	}
 	if err := leaseA.Release(); err != nil {
+		waitCancel()
+		t.Fatal(err)
+	}
+	waitResult := <-waiting
+	waitCancel()
+	if waitResult.lease != nil {
+		_ = waitResult.lease.Release()
+	}
+	if !errors.Is(waitResult.err, authoritycutover.ErrBarrierUnavailable) {
+		t.Fatalf("coordinator role drift while queued was not rejected after exclusive lock: %v", waitResult.err)
+	}
+	t.Logf("two-replica drain wait including held in-flight lease and post-lock re-attestation: %s", time.Since(drainStarted))
+	if _, err := admin.Exec(ctx, "GRANT "+pgx.Identifier{coordinatorGroup}.Sanitize()+" TO "+pgx.Identifier{coordinatorLogin}.Sanitize()); err != nil {
 		t.Fatal(err)
 	}
 
 	cutover, err := coordinator.AcquireCutover(ctx, draining)
 	if err != nil {
-		t.Fatalf("acquire exclusive drain after replica A completed: %v", err)
+		t.Fatalf("acquire exclusive drain after restoring coordinator role: %v", err)
 	}
-	t.Logf("two-replica drain wait including held in-flight lease: %s", time.Since(drainStarted))
 	// Simulate coordinator loss after obtaining the barrier but before DCL.
 	// Releasing the session lock must NOT reopen the durable DRAINING state.
 	if err := cutover.Release(); err != nil {
