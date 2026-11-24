@@ -76,7 +76,7 @@ func (b *PostgresBarrier) Acquire(ctx context.Context) (RequestLease, error) {
 	// flush. The observer LOGIN has no write grants; READ WRITE is requested
 	// only because PostgreSQL requires a read-write transaction for LOCK TABLE.
 	tx, err := conn.BeginTx(ctx, pgx.TxOptions{
-		IsoLevel: pgx.ReadCommitted,
+		IsoLevel:   pgx.ReadCommitted,
 		AccessMode: pgx.ReadWrite,
 	})
 	if err != nil {
