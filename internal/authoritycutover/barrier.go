@@ -76,7 +76,7 @@ func (b *PostgresBarrier) Acquire(ctx context.Context) (RequestLease, error) {
 		}
 		return nil, fmt.Errorf("%w: observer role: %w", ErrBarrierUnavailable, err)
 	}
-	record, err := readRecord(ctx, conn, false)
+	record, err := readAdmissionHead(ctx, conn)
 	if err != nil {
 		if releaseErr := releaseBarrierBackend(conn, true); releaseErr != nil {
 			return nil, fmt.Errorf("%w: state read: %v; lock release: %w", ErrBarrierUnavailable, err, releaseErr)
