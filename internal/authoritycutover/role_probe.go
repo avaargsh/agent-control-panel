@@ -111,11 +111,13 @@ SELECT session_user::text=$1 AND current_user::text=$1
    AND c.relkind IN ('r','p','v','m','f')
    AND NOT (s.nspname='public' AND c.relname IN (
     'acp_authority_cutover_state','acp_authority_cutover_changes','acp_authority_cutover_transitions'))
-   AND (
+   -- SQL predicate evaluation order is not guaranteed. Guard type-specific
+   -- ACL calls with CASE so catalog rows of other kinds cannot raise 42809.
+   AND CASE WHEN c.relkind IN ('r','p','v','m','f') THEN (
     pg_catalog.has_table_privilege(c.oid,'SELECT')
     OR pg_catalog.has_table_privilege(c.oid,'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
     OR pg_catalog.has_any_column_privilege(c.oid,'SELECT,INSERT,UPDATE,REFERENCES')
-   )
+   ) ELSE false END
  )
  AND NOT EXISTS (
   SELECT 1 FROM pg_catalog.pg_class c
@@ -123,7 +125,9 @@ SELECT session_user::text=$1 AND current_user::text=$1
   WHERE c.relkind='S'
    AND s.nspname NOT IN ('pg_catalog','information_schema')
    AND s.nspname NOT LIKE 'pg_toast%' AND s.nspname NOT LIKE 'pg_temp_%'
-   AND pg_catalog.has_sequence_privilege(c.oid,'SELECT,USAGE,UPDATE')
+   AND CASE WHEN c.relkind='S' THEN
+    pg_catalog.has_sequence_privilege(c.oid,'SELECT,USAGE,UPDATE')
+   ELSE false END
  )
  AND NOT EXISTS (
   SELECT 1 FROM pg_catalog.pg_proc f
