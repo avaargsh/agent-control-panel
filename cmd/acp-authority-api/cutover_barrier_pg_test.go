@@ -446,9 +446,12 @@ func TestAuthorityCutoverPostgresBarrierCoordinatesIndependentReplicas(t *testin
 	if err := cutover.Release(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := dcl.Exec(ctx, "GRANT SELECT ON public.cutover_barrier_secret TO PUBLIC"); err != nil {
-		t.Fatal(err)
+	dclCutoverCtx, dclCutoverCancel := context.WithTimeout(ctx, 5*time.Second)
+	if _, err := dcl.Exec(dclCutoverCtx, "GRANT SELECT ON public.cutover_barrier_secret TO PUBLIC"); err != nil {
+		dclCutoverCancel()
+		t.Fatalf("separate DCL LOGIN must run while coordinator holds the distinct admission lock: %v", err)
 	}
+	dclCutoverCancel()
 	// PUBLIC drift affects both the coordinator and serving identities. Do
 	// not weaken their attestation or use the unverified Store as a fallback.
 	if got, err := store.ObserveVerified(ctx, coordinatorLogin, authoritycutover.CoordinatorRole); !errors.Is(err, authoritycutover.ErrRoleDrift) || got != (authoritycutover.Record{}) {
@@ -491,9 +494,12 @@ func TestAuthorityCutoverPostgresBarrierCoordinatesIndependentReplicas(t *testin
 		}
 	}
 	checkRole(false)
-	if _, err := dcl.Exec(ctx, "REVOKE SELECT ON public.cutover_barrier_secret FROM PUBLIC"); err != nil {
-		t.Fatal(err)
+	dclRevokeCtx, dclRevokeCancel := context.WithTimeout(ctx, 5*time.Second)
+	if _, err := dcl.Exec(dclRevokeCtx, "REVOKE SELECT ON public.cutover_barrier_secret FROM PUBLIC"); err != nil {
+		dclRevokeCancel()
+		t.Fatalf("separate DCL LOGIN could not revoke ACL while coordinator holds the distinct admission lock: %v", err)
 	}
+	dclRevokeCancel()
 	checkRole(true)
 	if got, err := store.ObserveVerified(ctx, coordinatorLogin, authoritycutover.CoordinatorRole); err != nil || got != closed {
 		t.Fatalf("restored coordinator did not observe original CLOSED record: got=%+v err=%v", got, err)

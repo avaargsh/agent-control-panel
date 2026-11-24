@@ -54,12 +54,12 @@ Publication consumption: existing v1 signatures are historical source evidence, 
 
 ## Implemented experimental admission barrier (PR #151)
 
-The opt-in `authoritycutover.PostgresBarrier` uses one stable, database-scoped PostgreSQL advisory-lock key on the same primary used by the authority catalog:
+The opt-in `authoritycutover.PostgresBarrier` uses two stable, database-scoped PostgreSQL advisory-lock keys on the same primary used by the authority catalog:
 
-1. After mTLS and request syntax validation, each serving replica obtains a non-blocking shared session lock using its independently authenticated `acp_cutover_observer` LOGIN.
+1. After mTLS and request syntax validation, each serving replica obtains non-blocking shared session locks for admission and local DDL using its independently authenticated `acp_cutover_observer` LOGIN.
 2. On that same backend it verifies the Observer role and reads the complete durable ledger. Only `OPEN` admits the request. The lease is retained through Run Authority lookup or Decision Publication signing and the final HTTP response flush.
 3. The trusted coordinator commits `OPEN -> DRAINING` before requesting the exclusive session lock. New requests observe `DRAINING` and fail closed. The exclusive lock waits for every previously admitted shared lease to finish.
-4. After exclusive acquisition, the coordinator records `CLOSED`, invokes scoped DCL using a separate operator identity, verifies the actual catalog with fresh independently authenticated Observer sessions, records `VERIFYING -> OPEN`, then releases the exclusive lock.
+4. After exclusive acquisition, the coordinator records `CLOSED`, retains the exclusive admission lock, and invokes scoped DCL using a separate operator identity. The database-local `ddl_command_start` event trigger takes a transaction-exclusive lock on the distinct DDL key, so the DCL actor can proceed after all request DDL leases have drained. The coordinator then verifies the actual catalog with fresh independently authenticated Observer sessions, records `VERIFYING -> OPEN`, and releases the exclusive admission lock.
 5. If the coordinator crashes or an ACK is uncertain, advisory lock release does not mutate the durable ledger. `DRAINING` / `CLOSED` / `VERIFYING` continue to deny new admissions; recovery requires authoritative readback and explicit state transitions. Never retry DCL blindly or auto-reopen.
 
 The service opt-in requires both `ACP_AUTHORITY_CUTOVER_OBSERVER_DATABASE_URL` and `ACP_AUTHORITY_CUTOVER_OBSERVER_LOGIN`. Startup verifies the independent Observer role and confirms both pools reach the same PostgreSQL primary (database, server address/port, postmaster start time, and not in recovery). The option is disabled when both settings are absent; a partial pair is a startup configuration error. Existing `0001_state_ledger.sql` and `0002_table_acl.sql` remain explicit opt-in bootstrap steps. No production deployment or migration is enabled by this PR.
@@ -76,3 +76,10 @@ The exclusive coordinator path re-attests its LOGIN after the lock is granted, n
 
 
 The request path uses two distinct advisory keys: shared admission leases conflict with the coordinator's exclusive drain lock; shared DDL leases conflict with the event trigger's transaction-exclusive DDL lock. Keeping these keys separate allows the independent DCL operator to execute local DDL while the coordinator holds admission CLOSED.
+
+
+### Local DDL / GRANT fence
+
+Migration `0003_acl_change_barrier.sql` installs a database-local `ddl_command_start` event trigger. PostgreSQL fires this event before local `GRANT` and `REVOKE` as well as supported CREATE/ALTER/DROP commands. The trigger obtains a transaction-scoped exclusive advisory lock on the DDL key. Every admitted request holds the corresponding shared DDL key until the final response flush. The coordinator uses a separate admission key, allowing the independent DCL operator to perform scoped changes while admission remains CLOSED. The PG16 regression proves both table ACL and SECURITY DEFINER EXECUTE grants wait on the DDL fence, then commit after request release; subsequent Observer admission fails closed until REVOKE.
+
+The event trigger does not fire for shared-object commands such as role definitions/memberships, database/tablespace ACLs, parameter privileges, or ALTER SYSTEM. Event-trigger management itself is also excluded. A superuser can disable/drop/replace the trigger. Request admission and coordinator cutover verify the enabled trigger and its expected function/key contract, but a malicious superuser remains outside the trust boundary. #98 therefore remains open for shared-object DCL and independent production acceptance.
