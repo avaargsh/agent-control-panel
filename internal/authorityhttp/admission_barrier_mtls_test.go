@@ -81,12 +81,12 @@ func (r *barrierAuthorityReader) GetExecutionAuthorityInput(_ context.Context, r
 	return r.authority, append([]byte(nil), r.input...), nil
 }
 
-type barrierFlushWriter struct {
+type admissionBarrierFlushWriter struct {
 	http.ResponseWriter
 	events *barrierEventLog
 }
 
-func (w *barrierFlushWriter) Flush() {
+func (w *admissionBarrierFlushWriter) Flush() {
 	w.events.add("flush")
 	if f, ok := w.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
@@ -151,7 +151,7 @@ func TestBarrierGuardedAuthorityAndPublicationHoldLeaseThroughResponseFlush(t *t
 	}
 	serverCert, clientCert, roots := testProtectedTLS(t, peer)
 	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		handler.ServeHTTP(&barrierFlushWriter{ResponseWriter: w, events: events}, r)
+		handler.ServeHTTP(&admissionBarrierFlushWriter{ResponseWriter: w, events: events}, r)
 	}))
 	server.TLS = &tls.Config{
 		MinVersion: tls.VersionTLS13, ClientAuth: tls.RequireAndVerifyClientCert,
