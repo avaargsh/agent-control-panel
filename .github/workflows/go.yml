@@ -77,16 +77,21 @@ jobs:
           test "$(psql "$PGTEST_DSN" -Atqc 'SHOW max_wal_senders')" -ge 1
           psql "$PGTEST_DSN" -v ON_ERROR_STOP=1 -c "CREATE ROLE acp_repl WITH REPLICATION LOGIN PASSWORD 'acp-repl-ci'"
           docker exec -u postgres "$primary_container" sh -c 'printf "%s\n" "host replication acp_repl 0.0.0.0/0 scram-sha-256" >> "$PGDATA/pg_hba.conf"; pg_ctl reload -D "$PGDATA"'
-          docker run -d --name acp-standby --network host --entrypoint sleep postgres:16-alpine infinity
-          docker exec -u postgres -e PGPASSWORD=acp-repl-ci acp-standby pg_basebackup -h 127.0.0.1 -p 5432 -U acp_repl -D /var/lib/postgresql/data -Fp -Xs -P -R
-          docker exec -d -u postgres acp-standby postgres -D /var/lib/postgresql/data -p 5433
+          docker volume create acp-standby-data >/dev/null
+          docker run --rm --user root -v acp-standby-data:/var/lib/postgresql/data --entrypoint sh postgres:16-alpine -c 'chown -R postgres:postgres "$PGDATA"; chmod 700 "$PGDATA"'
+          docker run --rm --network host -v acp-standby-data:/var/lib/postgresql/data -e PGPASSWORD=acp-repl-ci --entrypoint pg_basebackup postgres:16-alpine -h 127.0.0.1 -p 5432 -U acp_repl -D /var/lib/postgresql/data -Fp -Xs -P
+          docker run --rm -v acp-standby-data:/var/lib/postgresql/data --entrypoint sh postgres:16-alpine -c 'touch "$PGDATA/standby.signal"; printf "%s\n" "primary_conninfo = \"host=127.0.0.1 port=5432 user=acp_repl password=acp-repl-ci application_name=acp-standby\"" >> "$PGDATA/postgresql.auto.conf"'
+          docker run -d --name acp-standby --network host -v acp-standby-data:/var/lib/postgresql/data postgres:16-alpine -p 5433
           for attempt in $(seq 1 60); do
             if PGPASSWORD=agent-ci psql "$PGTEST_STANDBY_DSN" -Atqc 'SELECT 1' >/dev/null 2>&1; then
               break
             fi
             sleep 1
           done
-          test "$(PGPASSWORD=agent-ci psql "$PGTEST_STANDBY_DSN" -Atqc 'SELECT pg_is_in_recovery()')" = "t"
+          if ! PGPASSWORD=agent-ci psql "$PGTEST_STANDBY_DSN" -Atqc 'SELECT pg_is_in_recovery()' | grep -qx t; then
+            docker logs acp-standby
+            exit 1
+          fi
           for attempt in $(seq 1 60); do
             replicas="$(psql "$PGTEST_DSN" -Atqc "SELECT count(*) FROM pg_stat_replication WHERE usename = 'acp_repl'")"
             if [ "$replicas" -ge 1 ]; then
