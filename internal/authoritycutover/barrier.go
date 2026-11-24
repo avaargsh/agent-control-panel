@@ -58,10 +58,6 @@ func (b *PostgresBarrier) Acquire(ctx context.Context) (RequestLease, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: acquire observer backend: %w", ErrBarrierUnavailable, err)
 	}
-	if err := VerifyPostgresRole(ctx, conn.Conn(), b.login, ObserverRole); err != nil {
-		conn.Release()
-		return nil, fmt.Errorf("%w: observer role: %w", ErrBarrierUnavailable, err)
-	}
 	var locked bool
 	if err := conn.QueryRow(ctx, "SELECT pg_catalog.pg_try_advisory_lock_shared($1)", admissionBarrierLockKey).Scan(&locked); err != nil {
 		discardBarrierBackend(conn)
@@ -70,6 +66,15 @@ func (b *PostgresBarrier) Acquire(ctx context.Context) (RequestLease, error) {
 	if !locked {
 		conn.Release()
 		return nil, ErrAdmissionClosed
+	}
+	// Acquire the shared lock before catalog attestation. Once an exclusive
+	// coordinator lock is held, new requests fail fast without querying the
+	// catalog; a DCL coordinator cannot pass this request until its lease ends.
+	if err := VerifyPostgresRole(ctx, conn.Conn(), b.login, ObserverRole); err != nil {
+		if releaseErr := releaseBarrierBackend(conn, true); releaseErr != nil {
+			return nil, fmt.Errorf("%w: observer role: %v; lock release: %w", ErrBarrierUnavailable, err, releaseErr)
+		}
+		return nil, fmt.Errorf("%w: observer role: %w", ErrBarrierUnavailable, err)
 	}
 	record, err := readRecord(ctx, conn, false)
 	if err != nil {
