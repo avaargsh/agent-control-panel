@@ -38,6 +38,10 @@ const observeSQL = `SELECT s.generation,s.revision,s.phase,s.change_id,s.manifes
 		WHERE c.change_id=s.change_id AND c.manifest_digest=s.manifest_digest
 		AND c.operator_id=s.operator_id
 		AND c.start_generation=s.generation-CASE WHEN s.phase IN ('OPEN','VERIFYING') THEN 1 ELSE 0 END
+		AND NOT EXISTS (
+			SELECT 1 FROM public.acp_authority_cutover_changes newer
+			WHERE newer.start_generation>c.start_generation
+		)
 	) END
 	FROM public.acp_authority_cutover_state s WHERE s.id=1`
 
