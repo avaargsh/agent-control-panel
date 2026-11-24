@@ -277,8 +277,12 @@ func TestAuthorityCutoverPostgresBarrierCoordinatesIndependentReplicas(t *testin
 	if err := cutover.Release(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := replicaB.Acquire(ctx); !errors.Is(err, authoritycutover.ErrAdmissionClosed) {
-		t.Fatalf("lost DCL ACK reopened CLOSED state: %v", err)
+	durableAfterLostACK, err := store.ObserveVerified(ctx, coordinatorLogin, authoritycutover.CoordinatorRole)
+	if err != nil || durableAfterLostACK != closed {
+		t.Fatalf("lost DCL ACK changed durable CLOSED record: got=%+v want=%+v err=%v", durableAfterLostACK, closed, err)
+	}
+	if _, err := replicaB.Acquire(ctx); !errors.Is(err, authoritycutover.ErrBarrierUnavailable) {
+		t.Fatalf("observer with live DCL drift was not denied after lost ACK: %v", err)
 	}
 	cutover, err = coordinator.AcquireCutover(ctx, closed)
 	if err != nil {
