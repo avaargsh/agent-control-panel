@@ -180,6 +180,11 @@ func TestAuthorityCutoverPostgresLedgerACL(t *testing.T) {
 		if _, err := authoritycutover.NewPostgresStore(drift.pool).ObserveVerified(ctx, drift.name, drift.mode); !errors.Is(err, authoritycutover.ErrRoleDrift) {
 			t.Fatalf("verified Store accepted live privilege drift for %s: %v", drift.name, err)
 		}
+		if drift.mode == authoritycutover.CoordinatorRole {
+			if _, err := authoritycutover.NewPostgresStore(drift.pool).ApplyVerified(ctx, drift.name, initial, authoritycutover.Begin, change); !errors.Is(err, authoritycutover.ErrRoleDrift) {
+				t.Fatalf("verified Store mutated with drifted coordinator %s: %v", drift.name, err)
+			}
+		}
 		exec(drift.revoke)
 		verify(drift.conn, drift.name, drift.mode, true)
 		if _, err := authoritycutover.NewPostgresStore(drift.pool).ObserveVerified(ctx, drift.name, drift.mode); err != nil {
