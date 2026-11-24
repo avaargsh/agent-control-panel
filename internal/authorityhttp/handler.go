@@ -245,8 +245,9 @@ func newHandler(reader Reader, publisher *Publisher, peer, tenant string, readGu
 				return
 			}
 			defer func() {
+				// Release even if a custom ResponseWriter panics during Flush.
+				defer func() { _ = lease.Release() }()
 				flusher.Flush()
-				_ = lease.Release()
 			}()
 		}
 		// This check is deliberately uncached: an out-of-band GRANT or
