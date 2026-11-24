@@ -224,17 +224,23 @@ func (s *PinnedHeadStore) Enroll(ref Ref, head InspectHead) error {
 }
 
 func (s *PinnedHeadStore) Read(ref Ref) (InspectHead, error) {
+	return s.ReadContext(context.Background(), ref)
+}
+
+// ReadContext obtains the durable floor with cancellable lock waiting.
+// The snapshot is valid as of the read, not a lease preventing later CAS.
+func (s *PinnedHeadStore) ReadContext(ctx context.Context, ref Ref) (InspectHead, error) {
 	var head InspectHead
 	if !ref.valid() {
 		return head, ErrUnverified
 	}
-	err := s.locked(func(fd int) error {
+	err := s.lockedContext(ctx, func(fd int) error {
 		var err error
 		head, err = readPinnedFloor(fd, ref)
 		if err != nil || syscall.Fsync(fd) != nil {
 			return ErrUnverified
 		}
-		return nil
+		return ctx.Err()
 	})
 	if err != nil {
 		return InspectHead{}, err
