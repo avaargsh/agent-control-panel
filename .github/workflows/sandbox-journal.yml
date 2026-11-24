@@ -7,6 +7,11 @@ on:
       - '.github/workflows/sandbox-journal.yml'
   workflow_dispatch:
 
+# Coalesce superseded PR runs only; preserve main and manual evidence.
+concurrency:
+  group: acp-ci-sandbox-journal-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 
