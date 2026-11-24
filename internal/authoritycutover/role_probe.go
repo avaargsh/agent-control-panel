@@ -44,6 +44,47 @@ func VerifyPostgresRole(ctx context.Context, conn *pgx.Conn, login string, mode 
 	return nil
 }
 
+// ErrACLChangeFenceUnavailable means the database-level local-DDL fence is
+// missing, disabled, or no longer matches the reviewed advisory-lock contract.
+var ErrACLChangeFenceUnavailable = errors.New("authority DDL fence unavailable")
+
+// VerifyACLChangeFence checks the installed event trigger before a request is
+// admitted. The function is deliberately read-only and validates the trigger
+// tag, enabled mode, invoker security, fixed advisory key and hardened path.
+func VerifyACLChangeFence(ctx context.Context, conn *pgx.Conn) error {
+	if conn == nil || ctx.Err() != nil {
+		return ErrACLChangeFenceUnavailable
+	}
+	var valid bool
+	if err := conn.QueryRow(ctx, aclChangeFenceProbeSQL).Scan(&valid); err != nil {
+		return fmt.Errorf("%w: %w", ErrACLChangeFenceUnavailable, err)
+	}
+	if !valid || ctx.Err() != nil {
+		return ErrACLChangeFenceUnavailable
+	}
+	return nil
+}
+
+const aclChangeFenceProbeSQL = `
+SELECT EXISTS (
+	SELECT 1
+	FROM pg_catalog.pg_event_trigger e
+	JOIN pg_catalog.pg_proc p ON p.oid=e.evtfoid
+	JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace
+	JOIN pg_catalog.pg_language l ON l.oid=p.prolang
+	WHERE e.evtname='acp_authority_catalog_change_fence'
+	  AND e.evtevent='ddl_command_start'
+	  AND e.evtenabled IN ('O','A')
+	  AND e.evttags IS NULL
+	  AND n.nspname='public'
+	  AND p.proname='acp_authority_catalog_change_fence'
+	  AND NOT p.prosecdef
+	  AND l.lanname='plpgsql'
+	  AND position('pg_advisory_xact_lock(4702690686029549398)' IN p.prosrc)>0
+	  AND COALESCE(p.proconfig, ARRAY[]::text[]) @> ARRAY['search_path=pg_catalog']
+)`
+
+
 // Check effective table/column privileges, including inherited grants, and
 // explicitly reject PUBLIC ACLs even when they add no effective privilege
 // to the expected login. Qualified catalog functions avoid search_path
