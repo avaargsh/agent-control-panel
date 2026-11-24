@@ -159,6 +159,15 @@ func TestAuthorityCutoverPostgresBarrierCoordinatesIndependentReplicas(t *testin
 		ID: "two-replica-cutover", ManifestDigest: "sha256:" + strings.Repeat("a", 64), Operator: "operator-test",
 	}
 
+	// The serving gate must fail closed if the database-local DDL trigger
+	// is missing or disabled; otherwise an out-of-band GRANT could bypass the
+	// shared DDL advisory lease. Restore it before the positive controls.
+	exec("ALTER EVENT TRIGGER acp_authority_catalog_change_fence DISABLE")
+	if _, err := replicaA.Acquire(ctx); !errors.Is(err, authoritycutover.ErrBarrierUnavailable) {
+		t.Fatalf("observer admitted while the required DDL event trigger was disabled: %v", err)
+	}
+	exec("ALTER EVENT TRIGGER acp_authority_catalog_change_fence ENABLE")
+
 	// Positive controls: both independently authenticated serving logins are
 	// eligible before the cutover begins.
 	leaseA, err := replicaA.Acquire(ctx)
