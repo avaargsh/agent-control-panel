@@ -198,15 +198,26 @@ func (s *PinnedHeadStore) Read(ref Ref) (InspectHead, error) {
 // Advance atomically checks the expected current floor and authenticates the
 // complete extension while holding the independent local verifier lock.
 // A lost acknowledgement must be reconciled with Read, not blind retry.
+// now must be sampled by the trusted caller at invocation. Monotonic elapsed
+// time includes lock contention and chain verification, so a queued grant
+// cannot retain its pre-lock freshness. This is not atomic with disk commit.
 func (s *PinnedHeadStore) Advance(ref Ref, expected InspectHead, raw, signature []byte, events []JournaledInspection, authorityKey, sourceKey ed25519.PublicKey, now time.Time) (InspectHead, error) {
+	if now.IsZero() {
+		return InspectHead{}, ErrUnverified
+	}
+	started := time.Now()
 	var candidate InspectHead
 	err := s.locked(func(fd int) error {
 		floor, err := readPinnedFloor(fd, ref)
 		if err != nil || floor != expected {
 			return ErrUnverified
 		}
-		candidate, err = VerifyPinnedHeadExtension(raw, signature, events, ref, floor, authorityKey, sourceKey, now)
+		candidate, err = VerifyPinnedHeadExtension(raw, signature, events, ref, floor, authorityKey, sourceKey, now.Add(time.Since(started)))
 		if err != nil {
+			return ErrUnverified
+		}
+		// Full history verification can also consume the remaining lifetime.
+		if _, err := VerifyPinnedHeadGrant(raw, signature, ref, floor, authorityKey, now.Add(time.Since(started))); err != nil {
 			return ErrUnverified
 		}
 		if candidate == floor {
