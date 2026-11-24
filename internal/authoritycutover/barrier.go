@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -67,29 +68,59 @@ func (b *PostgresBarrier) Acquire(ctx context.Context) (RequestLease, error) {
 		conn.Release()
 		return nil, ErrAdmissionClosed
 	}
-	// Acquire the shared lock before catalog attestation. Once an exclusive
-	// coordinator lock is held, new requests fail fast without querying the
-	// catalog; a DCL coordinator cannot pass this request until its lease ends.
-	if err := VerifyPostgresRole(ctx, conn.Conn(), b.login, ObserverRole); err != nil {
+	// The advisory lock coordinates cooperative replicas. It cannot fence an
+	// arbitrary DBA, so hold PostgreSQL ACL catalogs in SHARE mode for the
+	// complete request transaction as well. GRANT/REVOKE updates acquire
+	// conflicting ROW EXCLUSIVE locks on these catalogs and therefore cannot
+	// commit between role attestation, authority reads and the final response
+	// flush. The observer LOGIN has no write grants; READ WRITE is requested
+	// only because PostgreSQL requires a read-write transaction for LOCK TABLE.
+	tx, err := conn.BeginTx(ctx, pgx.TxOptions{
+		IsoLevel: pgx.ReadCommitted,
+		AccessMode: pgx.ReadWrite,
+	})
+	if err != nil {
 		if releaseErr := releaseBarrierBackend(conn, true); releaseErr != nil {
-			return nil, fmt.Errorf("%w: observer role: %v; lock release: %w", ErrBarrierUnavailable, err, releaseErr)
+			return nil, fmt.Errorf("%w: begin catalog fence: %v; lock release: %w", ErrBarrierUnavailable, err, releaseErr)
+		}
+		return nil, fmt.Errorf("%w: begin catalog fence: %w", ErrBarrierUnavailable, err)
+	}
+	if _, err := tx.Exec(ctx, `LOCK TABLE
+		pg_catalog.pg_class,
+		pg_catalog.pg_attribute,
+		pg_catalog.pg_proc,
+		pg_catalog.pg_namespace,
+		pg_catalog.pg_auth_members,
+		pg_catalog.pg_database
+		IN SHARE MODE`); err != nil {
+		if releaseErr := rollbackAndReleaseBarrierBackend(conn, tx, true); releaseErr != nil {
+			return nil, fmt.Errorf("%w: acquire ACL catalog fence: %v; cleanup: %w", ErrBarrierUnavailable, err, releaseErr)
+		}
+		return nil, fmt.Errorf("%w: acquire ACL catalog fence: %w", ErrBarrierUnavailable, err)
+	}
+	// Attest only after the ACL catalogs are pinned. A DCL operation that
+	// committed before the locks were acquired is visible to this probe; one
+	// that starts afterwards must wait until the request lease is released.
+	if err := VerifyPostgresRole(ctx, conn.Conn(), b.login, ObserverRole); err != nil {
+		if releaseErr := rollbackAndReleaseBarrierBackend(conn, tx, true); releaseErr != nil {
+			return nil, fmt.Errorf("%w: observer role: %v; cleanup: %w", ErrBarrierUnavailable, err, releaseErr)
 		}
 		return nil, fmt.Errorf("%w: observer role: %w", ErrBarrierUnavailable, err)
 	}
-	record, err := readAdmissionHead(ctx, conn)
+	record, err := readAdmissionHead(ctx, tx)
 	if err != nil {
-		if releaseErr := releaseBarrierBackend(conn, true); releaseErr != nil {
-			return nil, fmt.Errorf("%w: state read: %v; lock release: %w", ErrBarrierUnavailable, err, releaseErr)
+		if releaseErr := rollbackAndReleaseBarrierBackend(conn, tx, true); releaseErr != nil {
+			return nil, fmt.Errorf("%w: state read: %v; cleanup: %w", ErrBarrierUnavailable, err, releaseErr)
 		}
 		return nil, fmt.Errorf("%w: state read: %w", ErrBarrierUnavailable, err)
 	}
 	if record.Phase != Open {
-		if err := releaseBarrierBackend(conn, true); err != nil {
+		if err := rollbackAndReleaseBarrierBackend(conn, tx, true); err != nil {
 			return nil, fmt.Errorf("%w: release rejected admission: %w", ErrBarrierUnavailable, err)
 		}
 		return nil, ErrAdmissionClosed
 	}
-	return &sessionLease{conn: conn, shared: true}, nil
+	return &sessionLease{conn: conn, tx: tx, shared: true}, nil
 }
 
 // CutoverLease holds the exclusive session lock. The caller must first commit
@@ -164,6 +195,7 @@ func (b *PostgresBarrier) AcquireCutover(ctx context.Context, expected Record) (
 
 type sessionLease struct {
 	conn   *pgxpool.Conn
+	tx     pgx.Tx
 	shared bool
 	once   sync.Once
 	err    error
@@ -178,10 +210,41 @@ func (l *sessionLease) Release() error {
 			l.err = ErrBarrierUnavailable
 			return
 		}
+		if l.tx != nil {
+			if err := rollbackBarrierTransaction(l.tx); err != nil {
+				discardBarrierBackend(l.conn)
+				l.conn = nil
+				l.tx = nil
+				l.err = fmt.Errorf("%w: release ACL catalog fence: %w", ErrBarrierUnavailable, err)
+				return
+			}
+			l.tx = nil
+		}
 		l.err = releaseBarrierBackend(l.conn, l.shared)
 		l.conn = nil
 	})
 	return l.err
+}
+
+func rollbackBarrierTransaction(tx pgx.Tx) error {
+	if tx == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err := tx.Rollback(ctx)
+	if errors.Is(err, pgx.ErrTxClosed) {
+		return nil
+	}
+	return err
+}
+
+func rollbackAndReleaseBarrierBackend(conn *pgxpool.Conn, tx pgx.Tx, shared bool) error {
+	if err := rollbackBarrierTransaction(tx); err != nil {
+		discardBarrierBackend(conn)
+		return err
+	}
+	return releaseBarrierBackend(conn, shared)
 }
 
 func releaseBarrierBackend(conn *pgxpool.Conn, shared bool) error {
