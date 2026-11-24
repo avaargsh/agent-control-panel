@@ -3,10 +3,9 @@ name: Sandbox-owned Command Journal (non-dispatch)
 on:
   push:
     branches: [main]
+  # Run the real journal check on every PR so a required check cannot
+  # remain pending simply because no Sandbox path changed. No no-op success.
   pull_request:
-    paths:
-      - 'services/sandbox-journal/**'
-      - '.github/workflows/sandbox-journal.yml'
   workflow_dispatch:
 
 # Coalesce superseded PR runs only; preserve main and manual evidence.
