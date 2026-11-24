@@ -116,8 +116,8 @@ jobs:
         run: |
           set -euo pipefail
           test -n "$PGTEST_DSN"
-          go test -race -count=1 -v -run '^TestAuthorityCutoverPostgres(DrainPrimitive|GenerationCAS|StoreContract|Migration|LedgerACL)$' ./cmd/acp-authority-api | tee cutover-probes.log
-          for probe in TestAuthorityCutoverPostgresDrainPrimitive TestAuthorityCutoverPostgresGenerationCAS TestAuthorityCutoverPostgresStoreContract TestAuthorityCutoverPostgresMigration TestAuthorityCutoverPostgresLedgerACL; do
+          go test -race -count=1 -v -run '^TestAuthorityCutoverPostgres(DrainPrimitive|GenerationCAS|StoreContract|Migration|LedgerACL|BarrierCoordinatesIndependentReplicas)$' ./cmd/acp-authority-api | tee cutover-probes.log
+          for probe in TestAuthorityCutoverPostgresDrainPrimitive TestAuthorityCutoverPostgresGenerationCAS TestAuthorityCutoverPostgresStoreContract TestAuthorityCutoverPostgresMigration TestAuthorityCutoverPostgresLedgerACL TestAuthorityCutoverPostgresBarrierCoordinatesIndependentReplicas; do
             grep -F -- "--- PASS: $probe (" cutover-probes.log
             if grep -F -- "--- SKIP: $probe" cutover-probes.log; then
               echo "Required cutover probe skipped: $probe" >&2
@@ -165,8 +165,8 @@ jobs:
           fi
           go test -race -count=1 ./cmd/acp-authority-api
           test -n "$PGTEST_DSN"
-          go test -race -count=1 -v -run '^TestAuthorityCutoverPostgres(DrainPrimitive|GenerationCAS|StoreContract|Migration|LedgerACL)$' ./cmd/acp-authority-api | tee cutover-probes.log
-          for probe in TestAuthorityCutoverPostgresDrainPrimitive TestAuthorityCutoverPostgresGenerationCAS TestAuthorityCutoverPostgresStoreContract TestAuthorityCutoverPostgresMigration TestAuthorityCutoverPostgresLedgerACL; do
+          go test -race -count=1 -v -run '^TestAuthorityCutoverPostgres(DrainPrimitive|GenerationCAS|StoreContract|Migration|LedgerACL|BarrierCoordinatesIndependentReplicas)$' ./cmd/acp-authority-api | tee cutover-probes.log
+          for probe in TestAuthorityCutoverPostgresDrainPrimitive TestAuthorityCutoverPostgresGenerationCAS TestAuthorityCutoverPostgresStoreContract TestAuthorityCutoverPostgresMigration TestAuthorityCutoverPostgresLedgerACL TestAuthorityCutoverPostgresBarrierCoordinatesIndependentReplicas; do
             grep -F -- "--- PASS: $probe (" cutover-probes.log
             if grep -F -- "--- SKIP: $probe" cutover-probes.log; then
               echo "Required cutover probe skipped: $probe" >&2

@@ -1,10 +1,11 @@
 name: Sandbox-owned Command Journal (non-dispatch)
 
 on:
+  push:
+    branches: [main]
+  # Run the real journal check on every PR so a required check cannot
+  # remain pending simply because no Sandbox path changed. No no-op success.
   pull_request:
-    paths:
-      - 'services/sandbox-journal/**'
-      - '.github/workflows/sandbox-journal.yml'
   workflow_dispatch:
 
 # Coalesce superseded PR runs only; preserve main and manual evidence.
@@ -72,6 +73,20 @@ jobs:
       - name: Verify independent module hashes
         working-directory: services/sandbox-journal
         run: go mod verify
+      - name: Require real AgentD tenant RLS and LOGIN OID upgrade evidence
+        working-directory: services/sandbox-journal
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$SANDBOX_JOURNAL_TEST_DSN"
+          go test -p 1 -race -count=1 -v -run '^(TestEvidenceReaderTwoLoginsAllSourceTables|TestAgentDEvidenceReaderOIDUpgradeRequiresExplicitReenrollment)$' ./agentd | tee "$RUNNER_TEMP/agentd-rls-gate.log"
+          for probe in TestEvidenceReaderTwoLoginsAllSourceTables TestAgentDEvidenceReaderOIDUpgradeRequiresExplicitReenrollment; do
+            grep -F -- "--- PASS: $probe (" "$RUNNER_TEMP/agentd-rls-gate.log"
+            if grep -F -- "--- SKIP: $probe" "$RUNNER_TEMP/agentd-rls-gate.log"; then
+              echo "Required AgentD security probe skipped: $probe" >&2
+              exit 1
+            fi
+          done
       - name: Sandbox journal PostgreSQL replay and rollback tests
         working-directory: services/sandbox-journal
         # All Go packages share one disposable PostgreSQL database. Serializing

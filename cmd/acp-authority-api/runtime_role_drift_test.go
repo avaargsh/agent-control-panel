@@ -328,9 +328,9 @@ func TestAuthorityHTTPRejectsRuntimeRoleDrift(t *testing.T) {
 
 	checkBothRoutes("after-role-membership-revoke", http.StatusForbidden)
 
-	// P0 Issue #98: prove that a real ACCEPTED Run and publication can still
-	// slip through when privileged DCL commits after preflight but before SQL.
-	// This is a deterministic test-only barrier, not a production test hook.
+	// P0 Issue #98: prove that a real ACCEPTED Run and publication fail closed
+	// when a separate DCL LOGIN commits a privilege grant after preflight and
+	// before the catalog read. This is a deterministic test-only barrier.
 	t.Run("accepted-run-TOCTOU", func(t *testing.T) {
 		const tenant = "tenant-drift"
 		const id = "11111111-1111-4111-8111-111111111111"
@@ -401,15 +401,108 @@ func TestAuthorityHTTPRejectsRuntimeRoleDrift(t *testing.T) {
 		if _, err := admin.Exec(ctx, insert, intent.RequestDigest, configDigest, rawInput); err != nil {
 			t.Fatal(err)
 		}
+		// Use a separately authenticated, narrowly scoped DCL actor. It owns
+		// only a disposable decoy relation and cannot administer the database.
+		dclRole := "acp_issue98_dcl_" + suffix
+		dclPasswordBytes := make([]byte, 24)
+		if _, err := rand.Read(dclPasswordBytes); err != nil {
+			t.Fatal(err)
+		}
+		dclPassword := fmt.Sprintf("%x", dclPasswordBytes)
+		if _, err := admin.Exec(ctx, "CREATE ROLE "+dclRole+" LOGIN NOSUPERUSER NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS PASSWORD '"+dclPassword+"'"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := admin.Exec(ctx, "GRANT USAGE, CREATE ON SCHEMA "+schema+" TO "+dclRole); err != nil {
+			t.Fatal(err)
+		}
+		dclConfig, err := pgxpool.ParseConfig(dsn)
+		if err != nil {
+			t.Fatal(err)
+		}
+		dclConfig.ConnConfig.Database = databaseName
+		dclConfig.ConnConfig.User = dclRole
+		dclConfig.ConnConfig.Password = dclPassword
+		dclConfig.ConnConfig.RuntimeParams["search_path"] = schema
+		dclConfig.ConnConfig.RuntimeParams["application_name"] = "acp-issue98-dcl-" + suffix
+		dclConfig.MaxConns = 1
+		dcl, err := pgxpool.NewWithConfig(ctx, dclConfig)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			cleanupCtx, stop := context.WithTimeout(context.Background(), 5*time.Second)
+			defer stop()
+			if _, err := admin.Exec(cleanupCtx, "DROP OWNED BY "+dclRole); err != nil {
+				t.Errorf("drop DCL actor grants and owned fixture: %v", err)
+			}
+			if _, err := admin.Exec(cleanupCtx, "DROP ROLE "+dclRole); err != nil {
+				t.Errorf("drop DCL actor: %v", err)
+			}
+		}()
+		if _, err := dcl.Exec(ctx, "CREATE TABLE "+schema+".dcl_probe_secret (id integer PRIMARY KEY)"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := dcl.Exec(ctx, "INSERT INTO "+schema+".dcl_probe_secret VALUES (1)"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := admin.Exec(ctx, "REVOKE CREATE ON SCHEMA "+schema+" FROM "+dclRole); err != nil {
+			t.Fatal(err)
+		}
+		defer dcl.Close()
+
 		readerConfig, err := pgxpool.ParseConfig(roleURL.String())
 		if err != nil {
 			t.Fatal(err)
 		}
+		// One connection makes the observed reader PID the exact backend used
+		// by the guard and catalog read throughout this deterministic probe.
+		readerConfig.MaxConns = 1
+		readerConfig.ConnConfig.RuntimeParams["application_name"] = "acp-issue98-reader-" + suffix
 		reader, err := pgxpool.NewWithConfig(ctx, readerConfig)
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer reader.Close()
+		var readerPID, dclPID int
+		var readerSession, readerCurrent, dclSession, dclCurrent string
+		if err := reader.QueryRow(ctx, "SELECT pg_backend_pid(),session_user::text,current_user::text").Scan(
+			&readerPID, &readerSession, &readerCurrent,
+		); err != nil {
+			t.Fatal(err)
+		}
+		if readerSession != role || readerCurrent != role {
+			t.Fatalf("reader backend identity mismatch: pid=%d session_user=%q current_user=%q", readerPID, readerSession, readerCurrent)
+		}
+		if err := dcl.QueryRow(ctx, "SELECT pg_backend_pid(),session_user::text,current_user::text").Scan(
+			&dclPID, &dclSession, &dclCurrent,
+		); err != nil {
+			t.Fatal(err)
+		}
+		if dclSession != dclRole || dclCurrent != dclRole || dclPID == readerPID {
+			t.Fatalf("DCL actor must use a distinct LOGIN/backend: pid=%d session_user=%q current_user=%q reader_pid=%d", dclPID, dclSession, dclCurrent, readerPID)
+		}
+		t.Logf("Issue #98 independent sessions: reader_pid=%d reader_login=%s dcl_pid=%d dcl_login=%s", readerPID, readerSession, dclPID, dclSession)
+		readCatalogACL := func(queryCtx context.Context) (xmin, acl string, err error) {
+			err = admin.QueryRow(queryCtx, "SELECT c.xmin::text,COALESCE(c.relacl::text,'<default>') FROM pg_catalog.pg_class c WHERE c.oid=$1::regclass", schema+".dcl_probe_secret").Scan(&xmin, &acl)
+			return xmin, acl, err
+		}
+		assertReaderCannotReadDecoy := func(phase string) {
+			t.Helper()
+			var secret int
+			err := reader.QueryRow(ctx, "SELECT id FROM "+schema+".dcl_probe_secret").Scan(&secret)
+			if err == nil {
+				t.Fatalf("%s: reader unexpectedly read decoy secret %d", phase, secret)
+			}
+			state := ""
+			if stateErr, ok := err.(interface{ SQLState() string }); ok {
+				state = stateErr.SQLState()
+			}
+			if state != "42501" {
+				t.Fatalf("%s: expected PostgreSQL insufficient_privilege SQLSTATE 42501, got %q (%v)", phase, state, err)
+			}
+			t.Logf("Issue #98 %s: reader_pid=%d reader_login=%s SQLSTATE=%s", phase, readerPID, readerSession, state)
+		}
+		assertReaderCannotReadDecoy("baseline least-privilege control")
 		if err := verifyAuthorityDatabaseRole(ctx, reader); err != nil {
 			t.Fatalf("reader positive control: %v", err)
 		}
@@ -441,8 +534,8 @@ func TestAuthorityHTTPRejectsRuntimeRoleDrift(t *testing.T) {
 			}
 			t.Run(name, func(t *testing.T) {
 				defer func() {
-					if _, err := admin.Exec(context.Background(), "REVOKE SELECT ON "+schema+".outbox_events FROM "+role); err != nil {
-						t.Errorf("revoke injected grant: %v", err)
+					if _, err := dcl.Exec(context.Background(), "REVOKE SELECT ON "+schema+".dcl_probe_secret FROM "+role); err != nil {
+						t.Errorf("revoke injected DCL actor grant: %v", err)
 					}
 				}()
 				var armed, triggered atomic.Bool
@@ -460,8 +553,23 @@ func TestAuthorityHTTPRejectsRuntimeRoleDrift(t *testing.T) {
 						requestCtx.Value(cancelKey{}).(context.CancelFunc)()
 					}
 					if armed.Load() && triggered.CompareAndSwap(false, true) {
-						_, err := admin.Exec(requestCtx, "GRANT SELECT ON "+schema+".outbox_events TO "+role)
-						return err
+						beforeXmin, beforeACL, err := readCatalogACL(requestCtx)
+						if err != nil {
+							return err
+						}
+						if _, err := dcl.Exec(requestCtx, "GRANT SELECT ON "+schema+".dcl_probe_secret TO "+role); err != nil {
+							return err
+						}
+						var secret int
+						if err := reader.QueryRow(requestCtx, "SELECT id FROM "+schema+".dcl_probe_secret").Scan(&secret); err != nil || secret != 1 {
+							return fmt.Errorf("independent DCL grant was not effective for the reader: value=%d err=%v", secret, err)
+						}
+						afterXmin, afterACL, err := readCatalogACL(requestCtx)
+						if err != nil {
+							return err
+						}
+						t.Logf("Issue #98 committed out-of-band DCL before catalog read: reader_pid=%d reader_login=%s dcl_pid=%d dcl_login=%s effective_role=%s pg_class_xmin=%s->%s relacl=%q->%q reader_can_select_decoy=true",
+							readerPID, readerSession, dclPID, dclSession, readerCurrent, beforeXmin, afterXmin, beforeACL, afterACL)
 					}
 					return nil
 				}
@@ -540,9 +648,15 @@ func TestAuthorityHTTPRejectsRuntimeRoleDrift(t *testing.T) {
 				if strings.Contains(string(missingBody), "\"signature\"") || strings.Contains(string(missingBody), "\"payload\"") {
 					t.Fatal("denied-Run DCL race leaked signed publication fields")
 				}
-				if _, err := admin.Exec(ctx, "REVOKE SELECT ON "+schema+".outbox_events FROM "+role); err != nil {
+				if _, err := dcl.Exec(ctx, "REVOKE SELECT ON "+schema+".dcl_probe_secret FROM "+role); err != nil {
 					t.Fatal(err)
 				}
+				assertReaderCannotReadDecoy("after DCL revoke")
+				afterRevokeXmin, afterRevokeACL, err := readCatalogACL(ctx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Logf("Issue #98 restored ACL: reader_pid=%d dcl_pid=%d pg_class_xmin=%s relacl=%q", readerPID, dclPID, afterRevokeXmin, afterRevokeACL)
 				triggered.Store(false)
 				armed.Store(false)
 				recoveredStatus, _ := request()
@@ -558,15 +672,27 @@ func TestAuthorityHTTPRejectsRuntimeRoleDrift(t *testing.T) {
 				if status != http.StatusServiceUnavailable {
 					t.Fatalf("P0 TOCTOU %s: expected 503, got HTTP %d with %d response bytes after committed GRANT between attestation and read", name, status, len(body))
 				}
+				for _, field := range []string{"tenant_id", "run_intent_id", "principal_id", "agent_id", "signature", "payload"} {
+					if strings.Contains(string(body), "\""+field+"\"") {
+						t.Fatalf("DCL-race response leaked protected field %q: %s", field, body)
+					}
+				}
+				t.Logf("Issue #98 accepted Run %s denied after committed DCL: HTTP %d response_bytes=%d reader_pid=%d dcl_pid=%d", name, status, len(body), readerPID, dclPID)
 				if strings.Contains(string(body), "\"signature\"") || strings.Contains(string(body), "\"payload\"") {
 					t.Fatal("denied DCL-race request leaked signed publication fields")
 				}
 
 				// Restore least privilege before probing cancellation, so a
 				// 503 cannot be explained by the prior injected DCL grant.
-				if _, err := admin.Exec(ctx, "REVOKE SELECT ON "+schema+".outbox_events FROM "+role); err != nil {
+				if _, err := dcl.Exec(ctx, "REVOKE SELECT ON "+schema+".dcl_probe_secret FROM "+role); err != nil {
 					t.Fatal(err)
 				}
+				assertReaderCannotReadDecoy("after accepted-Run DCL revoke")
+				afterAcceptedRevokeXmin, afterAcceptedRevokeACL, err := readCatalogACL(ctx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Logf("Issue #98 accepted-Run ACL restored: reader_pid=%d dcl_pid=%d pg_class_xmin=%s relacl=%q", readerPID, dclPID, afterAcceptedRevokeXmin, afterAcceptedRevokeACL)
 				armed.Store(false)
 				recoveredStatus, _ = request()
 				if recoveredStatus != http.StatusOK {
