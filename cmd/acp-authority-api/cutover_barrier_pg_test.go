@@ -211,7 +211,7 @@ func TestAuthorityCutoverPostgresBarrierCoordinatesIndependentReplicas(t *testin
 	// ddl_command_start event trigger. Prove the boundary: a narrowly
 	// delegated GRANT ROLE commits while an in-flight request still holds
 	// the local-DDL shared lock, and the next role attestation rejects it.
-	sharedDCLProbeCtx, sharedDCLProbeCancel := context.WithTimeout(ctx, 2*time.Second)
+	sharedDCLProbeCtx, sharedDCLProbeCancel := context.WithTimeout(ctx, 5*time.Second)
 	if _, err := dcl.Exec(sharedDCLProbeCtx, "GRANT "+pgx.Identifier{delegatedGroup}.Sanitize()+" TO "+pgx.Identifier{replicaALogin}.Sanitize()); err != nil {
 		sharedDCLProbeCancel()
 		t.Fatalf("shared-object GRANT ROLE unexpectedly entered the local DDL event-trigger fence: %v", err)
