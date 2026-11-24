@@ -235,6 +235,16 @@ func newHandler(reader Reader, publisher *Publisher, peer, tenant string, readGu
 				return
 			}
 		}
+		// A successful final role check does not imply the request is still
+		// live. Reject cancellation or deadline expiry before using its data.
+		if ctx.Err() != nil {
+			if publication {
+				fail(http.StatusServiceUnavailable, "PUBLICATION_UNAVAILABLE")
+			} else {
+				fail(http.StatusServiceUnavailable, "RUN_AUTHORITY_UNAVAILABLE")
+			}
+			return
+		}
 		if errors.Is(err, runpg.ErrCatalogDenied) {
 			fail(http.StatusForbidden, "RUN_AUTHORITY_DENIED")
 			return
@@ -254,6 +264,11 @@ func newHandler(reader Reader, publisher *Publisher, peer, tenant string, readGu
 		}
 		if publication {
 			got, err := publisher.Publish(snapshot, input, time.Now().UTC())
+			// Signing may outlive the request. Do not emit its result then.
+			if ctx.Err() != nil {
+				fail(http.StatusServiceUnavailable, "PUBLICATION_UNAVAILABLE")
+				return
+			}
 			switch {
 			case errors.Is(err, ErrPublicationDenied):
 				fail(http.StatusForbidden, "PUBLICATION_DENIED")
@@ -262,6 +277,10 @@ func newHandler(reader Reader, publisher *Publisher, peer, tenant string, readGu
 			default:
 				_ = json.NewEncoder(w).Encode(got)
 			}
+			return
+		}
+		if ctx.Err() != nil {
+			fail(http.StatusServiceUnavailable, "RUN_AUTHORITY_UNAVAILABLE")
 			return
 		}
 		_ = json.NewEncoder(w).Encode(snapshot)
