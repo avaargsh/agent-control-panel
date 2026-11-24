@@ -75,12 +75,14 @@ func serve(ctx context.Context, c config) error {
 	if !cas.AppendCertsFromPEM(pem) {
 		return errors.New("invalid authority client CA")
 	}
+	primaryFence := authoritycutover.NewPrimaryFence()
 	cfg, err := pgxpool.ParseConfig(c.dsn)
 	if err != nil {
 		return errors.New("invalid authority database configuration")
 	}
 	// Defense in depth; production must also enforce DB role restrictions.
 	cfg.ConnConfig.RuntimeParams["default_transaction_read_only"] = "on"
+	cfg.BeforeAcquire = primaryFence.BeforeAcquire
 	cfg.MaxConns = 8
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
@@ -106,6 +108,7 @@ func serve(ctx context.Context, c config) error {
 			return errors.New("invalid authority cutover observer database configuration")
 		}
 		cutoverConfig.ConnConfig.RuntimeParams["default_transaction_read_only"] = "on"
+		cutoverConfig.BeforeAcquire = primaryFence.BeforeAcquire
 		cutoverConfig.MaxConns = 8
 		cutoverPool, err = pgxpool.NewWithConfig(ctx, cutoverConfig)
 		if err != nil {
@@ -125,8 +128,8 @@ func serve(ctx context.Context, c config) error {
 		); err != nil {
 			return errors.New("authority cutover observer LOGIN or durable ledger failed startup verification")
 		}
-		if !samePostgresPrimary(ctx, pool, cutoverPool) {
-			return errors.New("authority and cutover observer pools must reach the same PostgreSQL primary")
+		if err := primaryFence.Initialize(ctx, pool, cutoverPool); err != nil {
+			return errors.New("authority and cutover observer pools must remain pinned to the same writable PostgreSQL primary")
 		}
 		fenceConn, err := cutoverPool.Acquire(ctx)
 		if err != nil {
@@ -266,35 +269,6 @@ func serve(ctx context.Context, c config) error {
 		}
 		return nil
 	}
-}
-
-// samePostgresPrimary prevents the admission lock from silently coordinating
-// a different database or a standby than the authority catalog reads.
-func samePostgresPrimary(ctx context.Context, authority, cutover *pgxpool.Pool) bool {
-	type identity struct {
-		database, address string
-		port              int
-		started           time.Time
-		recovery          bool
-	}
-	read := func(pool *pgxpool.Pool) (identity, error) {
-		var got identity
-		err := pool.QueryRow(ctx, `SELECT current_database(),
-			COALESCE(inet_server_addr()::text, ''), COALESCE(inet_server_port(), 0),
-			pg_postmaster_start_time(), pg_is_in_recovery()`).Scan(
-			&got.database, &got.address, &got.port, &got.started, &got.recovery)
-		return got, err
-	}
-	a, err := read(authority)
-	if err != nil {
-		return false
-	}
-	b, err := read(cutover)
-	if err != nil {
-		return false
-	}
-	return !a.recovery && !b.recovery && a.database == b.database &&
-		a.address == b.address && a.port == b.port && a.started.Equal(b.started)
 }
 
 // requireAuthorityReadRole prevents a new Guard route from bypassing
