@@ -187,6 +187,32 @@ func TestAuthorityCutoverPostgresStoreContract(t *testing.T) {
 	}
 	observe(fresh, latest)
 
+	// A non-genesis rollback can still reference a genuine historical claim.
+	// Reject it if a later cutover claim survives, even when the old record
+	// and its original claim agree byte-for-byte.
+	restoreState := func(r authoritycutover.Record) {
+		t.Helper()
+		tag, err := admin.Exec(ctx, `UPDATE public.acp_authority_cutover_state
+			SET generation=$1,revision=$2,phase=$3,change_id=$4,manifest_digest=$5,operator_id=$6 WHERE id=1`,
+			r.Generation, r.Revision, string(r.Phase), r.Change.ID, r.Change.ManifestDigest, r.Change.Operator)
+		if err != nil || tag.RowsAffected() != 1 {
+			t.Fatalf("restore fixture: %v", err)
+		}
+	}
+	restoreState(opened)
+	if _, err := fresh.Observe(ctx); !errors.Is(err, authoritycutover.ErrInvalid) {
+		t.Errorf("old OPEN record with newer surviving claim accepted: %v", err)
+	}
+	future := authoritycutover.Change{ID: "change-after-rollback", ManifestDigest: "sha256:" + strings.Repeat("d", 64), Operator: "operator-d"}
+	if _, err := fresh.Apply(ctx, opened, authoritycutover.Begin, future); !errors.Is(err, authoritycutover.ErrInvalid) {
+		t.Errorf("old OPEN record permitted a new change: %v", err)
+	}
+	if err := admin.QueryRow(ctx, "SELECT count(*) FROM public.acp_authority_cutover_changes").Scan(&count); err != nil || count != 2 {
+		t.Fatalf("non-genesis rollback mutated history: %d %v", count, err)
+	}
+	restoreState(latest)
+	observe(fresh, latest)
+
 	// A state-only restore to genesis must not silently reopen a database
 	// whose durable change ledger still proves prior cutovers occurred.
 	exec("UPDATE public.acp_authority_cutover_state SET generation=1,revision=1,phase='OPEN',change_id='',manifest_digest='',operator_id='' WHERE id=1")
