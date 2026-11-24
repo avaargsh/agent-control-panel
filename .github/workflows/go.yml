@@ -106,6 +106,89 @@ jobs:
             echo 'two-tenant PostgreSQL isolation test was skipped' >&2
             exit 1
           fi
+      - name: Require real PostgreSQL cutover probes
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$PGTEST_DSN"
+          go test -race -count=1 -v -run '^TestAuthorityCutoverPostgres(DrainPrimitive|GenerationCAS)        run: go test -race -count=1 ./...
+      # The regular PR checkout above tests GitHub's synthetic merge commit.
+      # Security approval additionally needs the literal immutable PR source:
+      # do not pass synthetic-merge tests off as source HEAD evidence.
+      - name: Checkout exact pull request source SHA
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6 pinned
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Verify literal source HEAD security regression and race
+        if: github.event_name == 'pull_request'
+        shell: bash
+        env:
+          EXPECTED_SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse --verify HEAD)" = "$EXPECTED_SOURCE_SHA"
+          printf 'VERIFIED_SOURCE_ONLY_HEAD=%s\n' "$EXPECTED_SOURCE_SHA"
+          go test -count=1 -v -run '^TestAuthorityDatabaseRoleFailClosed$' ./cmd/acp-authority-api | tee source-head-role.log
+          grep -F -- '--- PASS: TestAuthorityDatabaseRoleFailClosed' source-head-role.log
+          if grep -F -- '--- SKIP: TestAuthorityDatabaseRoleFailClosed' source-head-role.log; then
+            echo 'source HEAD real PostgreSQL role security test was skipped' >&2
+            exit 1
+          fi
+          go test -race -count=1 ./cmd/acp-authority-api
+          test -n "$PGTEST_DSN"
+          go test -race -count=1 -v -run '^TestAuthorityCutoverPostgres(DrainPrimitive|GenerationCAS) ./cmd/acp-authority-api | tee cutover-probes.log
+          for test in TestAuthorityCutoverPostgresDrainPrimitive TestAuthorityCutoverPostgresGenerationCAS; do
+            grep -E -- "^--- PASS: ${test} \\(" cutover-probes.log
+            if grep -F -- "--- SKIP: $test" cutover-probes.log; then
+              echo "Required cutover probe skipped: $test" >&2
+              exit 1
+            fi
+          done
+      - name: Race-enabled tests
+        run: go test -race -count=1 ./...
+      # The regular PR checkout above tests GitHub's synthetic merge commit.
+      # Security approval additionally needs the literal immutable PR source:
+      # do not pass synthetic-merge tests off as source HEAD evidence.
+      - name: Checkout exact pull request source SHA
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6 pinned
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Verify literal source HEAD security regression and race
+        if: github.event_name == 'pull_request'
+        shell: bash
+        env:
+          EXPECTED_SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse --verify HEAD)" = "$EXPECTED_SOURCE_SHA"
+          printf 'VERIFIED_SOURCE_ONLY_HEAD=%s\n' "$EXPECTED_SOURCE_SHA"
+          go test -count=1 -v -run '^TestAuthorityDatabaseRoleFailClosed$' ./cmd/acp-authority-api | tee source-head-role.log
+          grep -F -- '--- PASS: TestAuthorityDatabaseRoleFailClosed' source-head-role.log
+          if grep -F -- '--- SKIP: TestAuthorityDatabaseRoleFailClosed' source-head-role.log; then
+            echo 'source HEAD real PostgreSQL role security test was skipped' >&2
+            exit 1
+          fi
+          go test -race -count=1 ./cmd/acp-authority-api
+ ./cmd/acp-authority-api | tee cutover-probes.log
+          for test in TestAuthorityCutoverPostgresDrainPrimitive TestAuthorityCutoverPostgresGenerationCAS; do
+            grep -E -- "^--- PASS: ${test} \\(" cutover-probes.log
+            if grep -F -- "--- SKIP: $test" cutover-probes.log; then
+              echo "Required cutover probe skipped: $test" >&2
+              exit 1
+            fi
+          done
+ ./cmd/acp-authority-api | tee cutover-probes.log
+          for test in TestAuthorityCutoverPostgresDrainPrimitive TestAuthorityCutoverPostgresGenerationCAS; do
+            grep -E -- "^--- PASS: ${test} \\(" cutover-probes.log
+            if grep -F -- "--- SKIP: $test" cutover-probes.log; then
+              echo "Required cutover probe skipped: $test" >&2
+              exit 1
+            fi
+          done
       - name: Race-enabled tests
         run: go test -race -count=1 ./...
       # The regular PR checkout above tests GitHub's synthetic merge commit.
