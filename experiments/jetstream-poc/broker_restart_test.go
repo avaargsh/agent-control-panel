@@ -60,12 +60,14 @@ func TestRealJetStreamBrokerRestartPreservesConfirmedDLQ(t *testing.T) {
 	docker("volume", "create", volume)
 	docker("run", "-d", "--name", name, "-p", "127.0.0.1::4222", "-v", volume+":/data",
 		restartBrokerImage, "-js", "-sd", "/data")
-	address := docker("port", name, "4222/tcp")
-	if !strings.HasPrefix(address, "127.0.0.1:") || strings.Contains(address, "\n") {
-		t.Fatalf("unexpected isolated broker address: %q", address)
-	}
 	connect := func() *nats.Conn {
 		t.Helper()
+		// Docker may allocate a different host port after a stopped
+		// container is started again. Never reuse a stale port mapping.
+		address := docker("port", name, "4222/tcp")
+		if !strings.HasPrefix(address, "127.0.0.1:") || strings.Contains(address, "\n") {
+			t.Fatalf("unexpected isolated broker address: %q", address)
+		}
 		ready, stop := context.WithTimeout(ctx, 20*time.Second)
 		defer stop()
 		var last error
@@ -80,7 +82,8 @@ func TestRealJetStreamBrokerRestartPreservesConfirmedDLQ(t *testing.T) {
 			case <-time.After(100 * time.Millisecond):
 			}
 		}
-		t.Fatalf("isolated broker did not become ready: %v", last)
+		logs, _ := exec.CommandContext(ctx, "docker", "logs", "--tail", "50", name).CombinedOutput()
+		t.Fatalf("isolated broker did not become ready at %s: %v; broker logs: %s", address, last, logs)
 		return nil
 	}
 
