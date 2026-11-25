@@ -47,9 +47,10 @@ checksum-recorded PostgreSQL v1/v2 migrations.
   connected process observes actual JetStream redelivery, keeps one Inbox
   record and applies exactly one ordered cursor version.
 - The separate mTLS integration uses NATS `verify_and_map` to map a client
-  certificate subject to an allowlisted workload identity. It rejects
-  plaintext, TLS clients without certificates and CA-trusted but unmapped
-  client certificates. Two NATS accounts each create and publish to their
+  certificate subject to an allowlisted workload identity. The raw broker INFO
+  greeting advertises required TLS; the test does not independently establish
+  wire-level plaintext rejection. TLS clients without certificates and
+  CA-trusted but unmapped client certificates are rejected. Two NATS accounts each create and publish to their
   own JetStream stream. A cross-account stream lookup must return stream
   not found. A cross-tenant Core NATS publish and subscription must each
   return a broker permissions violation for the attempted operation.
