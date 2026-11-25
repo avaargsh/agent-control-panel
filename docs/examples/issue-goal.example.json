@@ -9,7 +9,7 @@
   },
   "idempotency_key": "issue-123",
   "issue_url": "https://github.com/example/repository/issues/123",
-  "issue_snapshot_digest": "sha256:4444444444444444444444444444444444444444444444444444444444",
+  "issue_snapshot_digest": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
   "target_branch": "main",
   "experiment_baseline_sha": "1111111111111111111111111111111111111111",
   "integration_baseline_sha": "2222222222222222222222222222222222222222",
