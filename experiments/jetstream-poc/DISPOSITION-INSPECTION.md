@@ -106,4 +106,6 @@ go test -race -count=1 -v -run '^TestDispositionInspectCLI' .
 ```
 
 The live test requires the disposable PostgreSQL/NATS configuration described
-in the POC README; ensure the named live test reports PASS, not SKIP.
+in the POC README. It also builds a race-enabled CLI executable and runs it
+as a separate OS process against the same retained evidence; require the
+named test PASS (not SKIP) and JETSTREAM_DISPOSITION_CLI_LIVE_EXEC_PASS.

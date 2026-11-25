@@ -38,14 +38,16 @@ includes these markers:
 --- PASS: TestRealDispositionInspectorWithRestrictedRoleAndAmbiguousPublish (...)
 --- PASS: TestDispositionInspectCLIRealEvidence (...)
 --- PASS: TestDispositionInspectCLIRejectsUnsafeInputs (...)
+JETSTREAM_DISPOSITION_CLI_LIVE_EXEC_PASS
 JETSTREAM_DISPOSITION_CLI_SMOKE_PASS
 JETSTREAM_LOCAL_REPRO_PASS
 ```
 
 The demo also builds the actual disposition-inspect executable in a private
 temporary directory, checks its help and invalid-argument exit status, and
-removes the binary and temporary logs. The live test exercises the CLI
-helper against actual PostgreSQL/NATS evidence. See the
+removes the binary and temporary logs. The live test also builds and executes the actual command in a separate OS
+process against PostgreSQL/NATS evidence, comparing its JSON output to the
+verified helper result and checking that the journal remains unchanged. See the
 [inspection guide](DISPOSITION-INSPECTION.md) for using the command on
 separately prepared fixtures.
 

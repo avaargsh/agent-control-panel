@@ -85,6 +85,7 @@ for test in TestJetStreamRealBrokerAckLossConflictAndDLQFailure \
     TestDispositionInspectCLIRejectsUnsafeInputs; do
     grep -Fq -- "--- PASS: $test (" "$log" || die "Required test did not pass: $test"
 done
+grep -Fq 'JETSTREAM_DISPOSITION_CLI_LIVE_EXEC_PASS' "$log" || die "Live CLI executable evidence is missing."
 # Exercise the actual command wrapper, not just its Go helper.
 go build -mod=readonly -o "$demo_dir/disposition-inspect" ./cmd/disposition-inspect
 "$demo_dir/disposition-inspect" -help > "$demo_dir/help.log"
