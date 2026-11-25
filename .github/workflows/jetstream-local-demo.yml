@@ -1,0 +1,38 @@
+name: JetStream local reproduction
+
+on:
+  pull_request:
+    paths:
+      - 'experiments/jetstream-poc/run-local.sh'
+      - 'experiments/jetstream-poc/LOCAL-REPRO.md'
+      - '.github/workflows/jetstream-local-demo.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  local-repro:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # pinned v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # pinned v6
+        with:
+          go-version: '1.27.4'
+          cache: false
+      - name: Verify shell syntax
+        run: bash -n experiments/jetstream-poc/run-local.sh
+      - name: Run documented local demo and check cleanup
+        shell: bash
+        run: |
+          set -euo pipefail
+          before="$(docker ps -aq | sort)"
+          before_volumes="$(docker volume ls -q | sort)"
+          bash experiments/jetstream-poc/run-local.sh | tee /tmp/acp-local-demo.log
+          grep -Fxq JETSTREAM_LOCAL_REPRO_PASS /tmp/acp-local-demo.log
+          test "$(docker ps -aq | sort)" = "$before"
+          test "$(docker volume ls -q | sort)" = "$before_volumes"
+          echo JETSTREAM_LOCAL_REPRO_CLEANUP_PASS
