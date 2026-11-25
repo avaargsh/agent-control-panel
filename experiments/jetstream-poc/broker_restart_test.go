@@ -177,12 +177,23 @@ func TestRealJetStreamBrokerRestartPreservesConfirmedDLQ(t *testing.T) {
 	}
 	replay := nextMessage(t, consumer2)
 	replayMeta, err := replay.Metadata()
-	if err != nil || replayMeta.Sequence.Stream != meta.Sequence.Stream || replayMeta.NumDelivered < 2 {
-		t.Fatalf("expected same source redelivery after broker restart: %+v err=%v", replayMeta, err)
+	// An abrupt broker restart can roll back the delivery-attempt counter.
+	// Identify the replay by its actual source stream, consumer, sequence,
+	// subject and bytes, not by a counter that is not a durable identity.
+	if err != nil || replayMeta == nil || replayMeta.Stream != meta.Stream ||
+		replayMeta.Consumer != meta.Consumer || replayMeta.Sequence.Stream != meta.Sequence.Stream ||
+		replay.Subject() != first.Subject() || !bytes.Equal(replay.Data(), first.Data()) {
+		t.Fatalf("expected identical source replay after broker restart: %+v err=%v", replayMeta, err)
 	}
+	t.Logf("broker restart replay: stream_sequence=%d deliveries_before=%d deliveries_after=%d",
+		replayMeta.Sequence.Stream, meta.NumDelivered, replayMeta.NumDelivered)
 	recovery := &noRestartPublish{JetStream: js2}
 	if err := HandleMessage(ctx, repository, recovery, replay, cfg, NewDispositionJournal(pool)); err != nil {
 		t.Fatalf("recover confirmed DLQ after broker restart: %v", err)
+	}
+	settled, err := consumer2.Info(ctx)
+	if err != nil || settled == nil || settled.AckFloor.Stream < replayMeta.Sequence.Stream || settled.NumAckPending != 0 {
+		t.Fatalf("source ACK did not settle the recovered delivery: %+v err=%v", settled, err)
 	}
 	info, err := dlq2.Info(ctx)
 	if err != nil || info.State.Msgs != 1 || recovery.attempts != 0 {
