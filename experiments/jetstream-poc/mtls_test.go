@@ -207,6 +207,10 @@ accounts {
 	t.Run("tenant B cannot access tenant A's subject", func(t *testing.T) {
 		assertTenantSubjectDenied(t, ncB, "tenant.a.events")
 	})
+	t.Run("AuthenticatedInboxDLQRecovery", func(t *testing.T) {
+		assertAuthenticatedInboxDLQRecovery(t, ctx, jsA, jsB, "a", 8981)
+		assertAuthenticatedInboxDLQRecovery(t, ctx, jsB, jsA, "b", 8982)
+	})
 }
 
 func assertTLSRequiredGreeting(t *testing.T, port int) {
