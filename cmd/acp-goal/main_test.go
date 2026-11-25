@@ -57,3 +57,22 @@ func TestPrepareCLIHelpIsSuccessful(t *testing.T) {
 		t.Fatalf("missing help output: %s", diagnostics.String())
 	}
 }
+
+func TestPrepareCLIAcceptsDocumentedExample(t *testing.T) {
+	var out, diagnostics bytes.Buffer
+	err := run([]string{"prepare", "--file", "../../docs/examples/issue-goal.example.json"},
+		strings.NewReader(""), &out, &diagnostics)
+	if err != nil {
+		t.Fatalf("documented example failed to prepare: %v", err)
+	}
+	var proposal struct {
+		Schema        string `json:"schema"`
+		RequestDigest string `json:"request_digest"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &proposal); err != nil {
+		t.Fatal(err)
+	}
+	if proposal.Schema != "acp.issue-goal-submission/v1" || proposal.RequestDigest == "" {
+		t.Fatalf("incomplete prepared proposal: %s", out.String())
+	}
+}
