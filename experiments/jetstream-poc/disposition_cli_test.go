@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -14,7 +16,7 @@ import (
 func TestDispositionInspectCLIRealEvidence(t *testing.T) {
 	_, pool := pocRepository(t)
 	js, _, _, cfg := pocNATS(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	record := dispositionRecord{
 		stream: cfg.SourceStream, consumer: cfg.SourceConsumer, sequence: 1,
@@ -48,6 +50,32 @@ func TestDispositionInspectCLIRealEvidence(t *testing.T) {
 	if strings.Contains(stdout.String(), string(record.evidence)) {
 		t.Fatal("CLI leaked raw evidence")
 	}
+	// Exercise the real command in a separate OS process against the same
+	// live evidence. Never put credentials in arguments or failure output.
+	binary := filepath.Join(t.TempDir(), "disposition-inspect")
+	build := exec.CommandContext(ctx, "go", "build", "-mod=readonly", "-race", "-o", binary, "./cmd/disposition-inspect")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build diagnostic executable: %v: %s", err, output)
+	}
+	cmd := exec.CommandContext(ctx, binary, args...)
+	for _, entry := range os.Environ() {
+		key, _, _ := strings.Cut(entry, "=")
+		if _, overridden := env[key]; !overridden {
+			cmd.Env = append(cmd.Env, entry)
+		}
+	}
+	for key, value := range env {
+		cmd.Env = append(cmd.Env, key+"="+value)
+	}
+	var binaryOut, binaryErr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &binaryOut, &binaryErr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("diagnostic executable failed: %v", err)
+	}
+	if binaryErr.Len() != 0 || !bytes.Equal(binaryOut.Bytes(), stdout.Bytes()) {
+		t.Fatal("executable output differs from verified read-only observation")
+	}
+	t.Log("JETSTREAM_DISPOSITION_CLI_LIVE_EXEC_PASS")
 	var started, published bool
 	if err := pool.QueryRow(ctx, "SELECT publish_started,published FROM poc_dlq_dispositions").Scan(&started, &published); err != nil || !started || published {
 		t.Fatalf("CLI changed journal state: %t/%t err=%v", started, published, err)
