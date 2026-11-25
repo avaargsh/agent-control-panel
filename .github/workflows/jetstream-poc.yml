@@ -79,6 +79,7 @@ jobs:
           set -euo pipefail
           go test -race -count=1 -v -run '^TestRealJetStreamMTLSAndTenantIsolation$' . | tee "$RUNNER_TEMP/jetstream-mtls.log"
           grep -F -- '--- PASS: TestRealJetStreamMTLSAndTenantIsolation' "$RUNNER_TEMP/jetstream-mtls.log"
+          grep -F -- '--- PASS: TestRealJetStreamMTLSAndTenantIsolation/AuthenticatedInboxDLQRecovery' "$RUNNER_TEMP/jetstream-mtls.log"
           if grep -F -- '--- SKIP: TestRealJetStreamMTLSAndTenantIsolation' "$RUNNER_TEMP/jetstream-mtls.log"; then
             echo 'Required real NATS mTLS test was skipped' >&2
             exit 1
@@ -103,6 +104,7 @@ jobs:
           printf 'VERIFIED_JETSTREAM_SOURCE_HEAD=%s\n' "$EXPECTED_SOURCE_SHA"
           go test -race -count=1 -v -run '^TestRealJetStreamMTLSAndTenantIsolation$' . | tee "$RUNNER_TEMP/jetstream-mtls-source.log"
           grep -F -- '--- PASS: TestRealJetStreamMTLSAndTenantIsolation' "$RUNNER_TEMP/jetstream-mtls-source.log"
+          grep -F -- '--- PASS: TestRealJetStreamMTLSAndTenantIsolation/AuthenticatedInboxDLQRecovery' "$RUNNER_TEMP/jetstream-mtls-source.log"
           if grep -F -- '--- SKIP: TestRealJetStreamMTLSAndTenantIsolation' "$RUNNER_TEMP/jetstream-mtls-source.log"; then
             echo 'Literal-source NATS mTLS test was skipped' >&2
             exit 1
