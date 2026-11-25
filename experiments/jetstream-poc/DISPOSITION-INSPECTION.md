@@ -49,6 +49,13 @@ test role and denied mutation attempts, run:
 
 ```sh
 go test -race -count=1 -v -run '^TestRealDispositionInspectorWithRestrictedRoleAndAmbiguousPublish
+```
+
+This fixture uses an administrator-created NOLOGIN role and SET ROLE, not
+an independently authenticated operator principal. It verifies that
+inspection works with SELECT-only grants and that the journal remains
+unconfirmed when retained evidence disappears. No production grants are
+installed. See #16 for outstanding governance and production recovery work.
  .
 ```
 
