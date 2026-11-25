@@ -54,6 +54,44 @@ class AuditTests(unittest.TestCase):
         rules.append({'type':'required_status_checks', 'parameters':{}})
         self.assertTrue(audit.evaluate(branch,rules,SHA,CONTEXTS))
 
+    def test_unresolved_review_threads_must_block_even_if_other_rules_match(self):
+        branch, rules = valid()
+        rules[0]['parameters'] = {'required_review_thread_resolution': False}
+        self.assertTrue(any('conversation' in e or 'review thread' in e
+                            for e in audit.evaluate(branch, rules, SHA, audit.DEFAULT_CONTEXTS)))
+        rules[0]['parameters'] = {}
+        self.assertTrue(audit.evaluate(branch, rules, SHA, audit.DEFAULT_CONTEXTS))
+        rules[0]['parameters'] = {'required_review_thread_resolution': True}
+        self.assertEqual(audit.evaluate(branch, rules, SHA, audit.DEFAULT_CONTEXTS), [])
+
+    def test_effective_rules_are_paginated_without_trusting_partial_first_page(self):
+        branch, valid_rules = valid()
+        calls = []
+        filler = [{'type': 'commit_message_pattern'} for _ in range(96)]
+        first_page = filler + valid_rules  # 100 items; the next page could conflict
+        def fake_fetch(repo, path, token):
+            calls.append(path)
+            if path.endswith('page=1'):
+                return first_page
+            if path.endswith('page=2'):
+                return [{'type': 'required_status_checks', 'parameters': {}}]
+            raise AssertionError('unexpected page request')
+        all_rules = audit.fetch_all_effective_rules('avaargsh/agent-control-panel', 'token', getter=fake_fetch)
+        self.assertEqual(len(all_rules), 101)
+        self.assertEqual(len(calls), 2)
+        self.assertTrue(audit.evaluate(branch, all_rules, SHA, audit.DEFAULT_CONTEXTS))
+
+    def test_rule_pagination_fails_closed_for_malformed_or_unbounded_pages(self):
+        for result in ({'rules': []}, 'not a list', None):
+            with self.subTest(result=result):
+                with self.assertRaises(ValueError):
+                    audit.fetch_all_effective_rules('avaargsh/agent-control-panel', 'token',
+                                                    getter=lambda *_: result)
+        with self.assertRaises(ValueError):
+            audit.fetch_all_effective_rules('avaargsh/agent-control-panel', 'token',
+                                            getter=lambda *_: [{'type': 'pull_request'}] * 100,
+                                            max_pages=2)
+
     def test_stale_or_untyped_facts_never_pass(self):
         branch,rules=valid()
         self.assertTrue(audit.evaluate(branch,rules,'b'*40,CONTEXTS))
