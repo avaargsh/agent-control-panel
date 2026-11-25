@@ -51,6 +51,8 @@ Run the Go test suite with `go test -race ./...`. PostgreSQL tests require `PGTE
 
 To try the Goal CLI with the bundled manifest, follow the [offline Issue Goal demo](docs/implementation/ISSUE-GOAL-PREPARE.md#try-the-offline-demo). The demo needs no database or GitHub credentials.
 
+For a disposable real PostgreSQL/JetStream recovery demonstration, see the [local integration demo](experiments/jetstream-poc/LOCAL-REPRO.md). It is not a deployable broker worker or production acceptance.
+
 ## Changes and release evidence
 
 Use the [PR evidence template](.github/PULL_REQUEST_TEMPLATE.md) to record the base and head commits, affected authority boundaries, verification, and any open gates. CI evidence applies to the tested commit, environment, and assertions. Changes that enable Runtime dispatch, protected effects, or provider mutations require evidence from the services that own those operations.
