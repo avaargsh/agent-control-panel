@@ -137,6 +137,41 @@ jobs:
           VALUES ('sandbox_ci_reader','sandboxctl-smoke');
           SQL
           export SANDBOX_JOURNAL_READ_DSN='postgres://sandbox_ci_reader:sandbox-ci-reader-only@127.0.0.1:5432/sandbox_journal_ci?sslmode=disable'
+          # The full module suite runs before this SELECT-only fixture exists.
+          # Run its real identity-binding probe here and require an actual PASS,
+          # not a skipped test or an empty -run match.
+          go test -p 1 -race -count=1 -v -run '^TestSandboxctlRealScopedReaderFixture          for unsafe_dsn in "$SANDBOX_JOURNAL_TEST_DSN" \
+            'postgres://sandbox_ci_writer:sandbox-ci-writer-only@127.0.0.1:5432/sandbox_journal_ci?sslmode=disable' \
+            'postgres://sandbox_ci_delegated:sandbox-ci-delegated@127.0.0.1:5432/sandbox_journal_ci?sslmode=disable'; do
+            if SANDBOX_JOURNAL_READ_DSN="$unsafe_dsn" go run ./cmd/sandboxctl inspect --tenant sandboxctl-smoke --lease-intent lease-smoke-1 --format json >"$RUNNER_TEMP/unsafe-reader.json" 2>"$RUNNER_TEMP/unsafe-reader.err"; then
+              echo 'sandboxctl accepted an overprivileged PostgreSQL account' >&2
+              exit 1
+            fi
+            test ! -s "$RUNNER_TEMP/unsafe-reader.json"
+            grep -q 'READ_SOURCE_UNAVAILABLE' "$RUNNER_TEMP/unsafe-reader.err"
+          done
+          go run ./cmd/sandboxctl inspect --tenant sandboxctl-smoke --lease-intent lease-smoke-1 --sandbox-uid sandbox-smoke-1 --command-id command-smoke-1 --format json > "$RUNNER_TEMP/sandboxctl-smoke.json"
+          go run ./cmd/sandboxctl inspect --tenant sandboxctl-smoke --lease-intent lease-smoke-1 --format text > "$RUNNER_TEMP/sandboxctl-smoke.txt"
+          python3 - "$RUNNER_TEMP/sandboxctl-smoke.json" "$RUNNER_TEMP/sandboxctl-smoke.txt" <<'PY'
+          import json
+          import pathlib
+          import sys
+          report = json.loads(pathlib.Path(sys.argv[1]).read_text())
+          assert report["source"] == "UNATTESTED_DB_SNAPSHOT"
+          assert report["lease"]["state"] == "WAITING_FOR_PERMIT"
+          assert report["command"]["state"] == "PERMIT_UNAVAILABLE"
+          assert report["next_action"] == "HOLD"
+          for flag in ("can_dispatch", "can_retry", "can_declare_success", "can_declare_released"):
+              assert report[flag] is False, flag
+          text = pathlib.Path(sys.argv[2]).read_text()
+          assert "Dispatch: DENIED" in text and "Release: UNVERIFIED" in text
+          PY
+ ./cmd/sandboxctl | tee "$RUNNER_TEMP/sandboxctl-reader-fixture.log"
+          grep -F -- '--- PASS: TestSandboxctlRealScopedReaderFixture (' "$RUNNER_TEMP/sandboxctl-reader-fixture.log"
+          if grep -F -- '--- SKIP: TestSandboxctlRealScopedReaderFixture' "$RUNNER_TEMP/sandboxctl-reader-fixture.log"; then
+            echo 'Required scoped reader identity fixture skipped' >&2
+            exit 1
+          fi
           for unsafe_dsn in "$SANDBOX_JOURNAL_TEST_DSN" \
             'postgres://sandbox_ci_writer:sandbox-ci-writer-only@127.0.0.1:5432/sandbox_journal_ci?sslmode=disable' \
             'postgres://sandbox_ci_delegated:sandbox-ci-delegated@127.0.0.1:5432/sandbox_journal_ci?sslmode=disable'; do
