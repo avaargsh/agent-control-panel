@@ -81,7 +81,7 @@ func RunDispositionInspectCLI(parent context.Context, args []string, getenv func
 	// This is a fresh connection with an explicit schema and server-side
 	// read-only transactions. No migration or implicit schema initialization.
 	pg.ConnConfig.RuntimeParams = map[string]string{
-		"search_path": schema + ",pg_catalog",
+		"search_path":                   schema + ",pg_catalog",
 		"default_transaction_read_only": "on",
 	}
 	pg.MaxConns = 1
