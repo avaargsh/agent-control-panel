@@ -19,21 +19,33 @@ The operations HTTP service exposes GET endpoints only. The table describes repo
 
 ## Local development
 
-Use the Go version declared by [`go.mod`](go.mod) or the patched version pinned in [CI](.github/workflows/go.yml).
+### Build and run the local operations service
+
+Prerequisites: Git, curl, and the Go version declared by [`go.mod`](go.mod) (prefer the patched version pinned in [CI](.github/workflows/go.yml)). These commands use a POSIX shell on Linux or macOS. The initial build may need network access to download Go modules. The local operations service does not need PostgreSQL, Runtime, Guard, or credentials.
 
 ```sh
-go run ./cmd/agent-control-panel
+git clone https://github.com/avaargsh/agent-control-panel.git
+cd agent-control-panel
+go version
+mkdir -p bin
+go build -o bin/agent-control-panel ./cmd/agent-control-panel
+./bin/agent-control-panel
 ```
 
-In another terminal:
+`LISTEN_ADDR` defaults to `127.0.0.1:8080`. The `control plane listening` log reports the actual bound address. If port 8080 is busy, run `LISTEN_ADDR=127.0.0.1:0 ./bin/agent-control-panel` instead; the OS assigns a free loopback port. Keep the service running in this terminal.
+
+In another terminal, set `ADDR` to the address printed by the service (replace the example below when using a dynamic port):
 
 ```sh
-curl --fail http://127.0.0.1:8080/livez
-curl --fail http://127.0.0.1:8080/readyz
-curl --fail http://127.0.0.1:8080/api/v1/meta
+ADDR=127.0.0.1:8080
+curl --fail --show-error --silent "http://$ADDR/livez"
+curl --fail --show-error --silent "http://$ADDR/readyz"
+curl --fail --show-error --silent "http://$ADDR/api/v1/meta"
 ```
 
-`LISTEN_ADDR` defaults to `127.0.0.1:8080`.
+Expected responses, respectively: `ok`, `ready`, and a JSON object with `service` equal to `agent-control-panel` and `api_version` equal to `v1`. Readiness confirms the local HTTP process is available, not database connectivity or end-to-end execution readiness. Stop the service with Ctrl-C in its terminal. To remove the local build, delete `bin/agent-control-panel` from the repository checkout.
+
+For source development, `go run ./cmd/agent-control-panel` remains an alternative. Keep the operations listener on loopback for this demo; the endpoints are not a production deployment interface.
 
 Run the Go test suite with `go test -race ./...`. PostgreSQL tests require `PGTEST_DSN` pointing to an isolated test database. The [Go and PostgreSQL workflow](.github/workflows/go.yml) shows the CI setup. The [RunIntent admission guide](docs/implementation/RUNINTENT-ADMISSION.md) documents the opt-in live identity-provider test.
 
