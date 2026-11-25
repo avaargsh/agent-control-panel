@@ -101,7 +101,8 @@ func (d *Delivery) DeadLetter(ctx context.Context, reason string) error {
 	if err != nil {
 		return fmt.Errorf("verify expected DLQ stream: %w", err)
 	}
-	if info.Config.Discard != jetstream.DiscardNew ||
+	if info.Config.Storage != jetstream.FileStorage ||
+		info.Config.Discard != jetstream.DiscardNew ||
 		!info.Config.DiscardNewPerSubject || info.Config.MaxMsgsPerSubject != 1 ||
 		info.Config.MaxAge != 0 || info.Config.Retention != jetstream.LimitsPolicy ||
 		len(info.Config.Subjects) != 1 || info.Config.Subjects[0] != d.cfg.DLQSubject+".*" {
