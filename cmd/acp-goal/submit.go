@@ -160,12 +160,12 @@ func validGoalLoopbackURL(raw, path string) error {
 	if err != nil || u.Scheme != "https" || u.User != nil || u.Opaque != "" ||
 		u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.RawFragment != "" ||
 		u.Path != path || u.RawPath != "" || u.String() != raw {
-		return errors.New("submit URL must be an exact direct HTTPS GoalSubmit endpoint")
+		return fmt.Errorf("Goal API URL must be an exact direct HTTPS %s endpoint", path)
 	}
 	ip := net.ParseIP(u.Hostname())
 	port, err := strconv.Atoi(u.Port())
 	if ip == nil || !ip.IsLoopback() || err != nil || port < 1 || port > 65535 {
-		return errors.New("submit URL must use a numeric loopback IP and explicit port")
+		return fmt.Errorf("Goal API URL for %s must use a numeric loopback IP and explicit port", path)
 	}
 	return nil
 }

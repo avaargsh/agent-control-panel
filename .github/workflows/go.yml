@@ -63,6 +63,43 @@ jobs:
         env:
           PGPASSWORD: agent-ci
         run: psql --host=127.0.0.1 --username=postgres --dbname=postgres --set=ON_ERROR_STOP=1 --file=migrations/0001_run_intents_outbox_inbox.sql
+      # A real physical standby lets the primary-fence regression exercise
+      # both hot-standby rejection and promotion to a different writable primary.
+      - name: Provision physical PostgreSQL standby for failover fencing
+        shell: bash
+        env:
+          PGTEST_STANDBY_DSN: postgres://postgres:agent-ci@127.0.0.1:5433/postgres?sslmode=disable
+        run: |
+          set -euo pipefail
+          primary_container="$(docker ps -q --filter publish=5432 | head -n1)"
+          test -n "$primary_container"
+          test "$(psql "$PGTEST_DSN" -Atqc 'SHOW wal_level')" = "replica"
+          test "$(psql "$PGTEST_DSN" -Atqc 'SHOW max_wal_senders')" -ge 1
+          psql "$PGTEST_DSN" -v ON_ERROR_STOP=1 -c "CREATE ROLE acp_repl WITH REPLICATION LOGIN PASSWORD 'acp-repl-ci'"
+          docker exec -u postgres "$primary_container" sh -c 'printf "%s\n" "host replication acp_repl 0.0.0.0/0 scram-sha-256" >> "$PGDATA/pg_hba.conf"; pg_ctl reload -D "$PGDATA"'
+          docker volume create acp-standby-data >/dev/null
+          docker run --rm --user root -v acp-standby-data:/var/lib/postgresql/data --entrypoint sh postgres:16-alpine -c 'chown -R postgres:postgres "$PGDATA"; chmod 700 "$PGDATA"'
+          docker run --rm --network host -v acp-standby-data:/var/lib/postgresql/data -e PGPASSWORD=acp-repl-ci --entrypoint pg_basebackup postgres:16-alpine -h 127.0.0.1 -p 5432 -U acp_repl -D /var/lib/postgresql/data -Fp -Xs -P
+          docker run --rm -v acp-standby-data:/var/lib/postgresql/data --entrypoint sh postgres:16-alpine -c "touch \"\$PGDATA/standby.signal\"; printf '%s\n' \"primary_conninfo = 'host=127.0.0.1 port=5432 user=acp_repl password=acp-repl-ci application_name=acp-standby'\" >> \"\$PGDATA/postgresql.auto.conf\""
+          docker run -d --name acp-standby --network host -v acp-standby-data:/var/lib/postgresql/data postgres:16-alpine -p 5433
+          for attempt in $(seq 1 60); do
+            if PGPASSWORD=agent-ci psql "$PGTEST_STANDBY_DSN" -Atqc 'SELECT 1' >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+          if ! PGPASSWORD=agent-ci psql "$PGTEST_STANDBY_DSN" -Atqc 'SELECT pg_is_in_recovery()' | grep -qx t; then
+            docker logs acp-standby
+            exit 1
+          fi
+          for attempt in $(seq 1 60); do
+            replicas="$(psql "$PGTEST_DSN" -Atqc "SELECT count(*) FROM pg_stat_replication WHERE usename = 'acp_repl'")"
+            if [ "$replicas" -ge 1 ]; then
+              break
+            fi
+            sleep 1
+          done
+          test "$replicas" -ge 1
       - name: Assert tenant-isolated aggregate claims and cursors
         env:
           PGPASSWORD: agent-ci
@@ -116,8 +153,8 @@ jobs:
         run: |
           set -euo pipefail
           test -n "$PGTEST_DSN"
-          go test -race -count=1 -v -run '^TestAuthorityCutoverPostgres(DrainPrimitive|GenerationCAS|StoreContract|Migration|LedgerACL)$' ./cmd/acp-authority-api | tee cutover-probes.log
-          for probe in TestAuthorityCutoverPostgresDrainPrimitive TestAuthorityCutoverPostgresGenerationCAS TestAuthorityCutoverPostgresStoreContract TestAuthorityCutoverPostgresMigration TestAuthorityCutoverPostgresLedgerACL; do
+          go test -race -count=1 -v -run '^TestAuthorityCutoverPostgres(DrainPrimitive|GenerationCAS|StoreContract|Migration|LedgerACL|BarrierCoordinatesIndependentReplicas)$' ./cmd/acp-authority-api | tee cutover-probes.log
+          for probe in TestAuthorityCutoverPostgresDrainPrimitive TestAuthorityCutoverPostgresGenerationCAS TestAuthorityCutoverPostgresStoreContract TestAuthorityCutoverPostgresMigration TestAuthorityCutoverPostgresLedgerACL TestAuthorityCutoverPostgresBarrierCoordinatesIndependentReplicas; do
             grep -F -- "--- PASS: $probe (" cutover-probes.log
             if grep -F -- "--- SKIP: $probe" cutover-probes.log; then
               echo "Required cutover probe skipped: $probe" >&2
@@ -139,6 +176,20 @@ jobs:
           fi
       - name: Race-enabled tests
         run: go test -race -count=1 ./...
+      - name: Require physical PostgreSQL standby and failover fencing
+        if: github.event_name != 'pull_request'
+        shell: bash
+        env:
+          PGTEST_STANDBY_DSN: postgres://postgres:agent-ci@127.0.0.1:5433/postgres?sslmode=disable
+          PGTEST_ALLOW_STANDBY_PROMOTION: "1"
+        run: |
+          set -euo pipefail
+          go test -race -count=1 -v -run '^TestPrimaryFenceRejectsStandbyAndPromotedPrimaryAfterFailover$' ./internal/authoritycutover | tee failover-fence.log
+          grep -F -- '--- PASS: TestPrimaryFenceRejectsStandbyAndPromotedPrimaryAfterFailover' failover-fence.log
+          if grep -F -- '--- SKIP: TestPrimaryFenceRejectsStandbyAndPromotedPrimaryAfterFailover' failover-fence.log; then
+            echo 'physical PostgreSQL failover fencing regression was skipped' >&2
+            exit 1
+          fi
       # The regular PR checkout above tests GitHub's synthetic merge commit.
       # Security approval additionally needs the literal immutable PR source:
       # do not pass synthetic-merge tests off as source HEAD evidence.
@@ -153,6 +204,8 @@ jobs:
         shell: bash
         env:
           EXPECTED_SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+          PGTEST_STANDBY_DSN: postgres://postgres:agent-ci@127.0.0.1:5433/postgres?sslmode=disable
+          PGTEST_ALLOW_STANDBY_PROMOTION: "1"
         run: |
           set -euo pipefail
           test "$(git rev-parse --verify HEAD)" = "$EXPECTED_SOURCE_SHA"
@@ -164,9 +217,15 @@ jobs:
             exit 1
           fi
           go test -race -count=1 ./cmd/acp-authority-api
+          go test -race -count=1 -v -run '^TestPrimaryFenceRejectsStandbyAndPromotedPrimaryAfterFailover$' ./internal/authoritycutover | tee failover-fence.log
+          grep -F -- '--- PASS: TestPrimaryFenceRejectsStandbyAndPromotedPrimaryAfterFailover' failover-fence.log
+          if grep -F -- '--- SKIP: TestPrimaryFenceRejectsStandbyAndPromotedPrimaryAfterFailover' failover-fence.log; then
+            echo 'literal source HEAD physical failover regression was skipped' >&2
+            exit 1
+          fi
           test -n "$PGTEST_DSN"
-          go test -race -count=1 -v -run '^TestAuthorityCutoverPostgres(DrainPrimitive|GenerationCAS|StoreContract|Migration|LedgerACL)$' ./cmd/acp-authority-api | tee cutover-probes.log
-          for probe in TestAuthorityCutoverPostgresDrainPrimitive TestAuthorityCutoverPostgresGenerationCAS TestAuthorityCutoverPostgresStoreContract TestAuthorityCutoverPostgresMigration TestAuthorityCutoverPostgresLedgerACL; do
+          go test -race -count=1 -v -run '^TestAuthorityCutoverPostgres(DrainPrimitive|GenerationCAS|StoreContract|Migration|LedgerACL|BarrierCoordinatesIndependentReplicas)$' ./cmd/acp-authority-api | tee cutover-probes.log
+          for probe in TestAuthorityCutoverPostgresDrainPrimitive TestAuthorityCutoverPostgresGenerationCAS TestAuthorityCutoverPostgresStoreContract TestAuthorityCutoverPostgresMigration TestAuthorityCutoverPostgresLedgerACL TestAuthorityCutoverPostgresBarrierCoordinatesIndependentReplicas; do
             grep -F -- "--- PASS: $probe (" cutover-probes.log
             if grep -F -- "--- SKIP: $probe" cutover-probes.log; then
               echo "Required cutover probe skipped: $probe" >&2
@@ -182,3 +241,9 @@ jobs:
             echo 'Guard cancellation regression skipped' >&2
             exit 1
           fi
+
+      - name: Remove temporary physical PostgreSQL standby
+        if: always()
+        run: |
+          docker rm -f acp-standby >/dev/null 2>&1 || true
+          docker volume rm -f acp-standby-data >/dev/null 2>&1 || true
