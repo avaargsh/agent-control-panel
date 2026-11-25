@@ -49,6 +49,14 @@ func run(args []string) error {
 	archivePath := flags.String("archive-seal", "", "optional independently signed historical capture-time assertion")
 	archivePublicPath := flags.String("archive-pub", "", "optional independently trusted archival issuer public key")
 	requireLinked := flags.Bool("require-linked", false, "opt in to complete source-signed upstream receipt digest graph (live only)")
+	// Help is not verification. Keep a nonzero result and never enter the
+	// evidence reader for a standalone help invocation.
+	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
+		var usage strings.Builder
+		flags.SetOutput(&usage)
+		flags.Usage()
+		return errors.New(strings.TrimSpace(usage.String()))
+	}
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 ||
 		*pkgPath == "" || *expectedPath == "" || *trustDir == "" {
 		return errors.New("--package, --expected and --trust-dir are mandatory")
