@@ -56,3 +56,55 @@ an independently authenticated operator principal. It verifies that
 inspection works with SELECT-only grants and that the journal remains
 unconfirmed when retained evidence disappears. No production grants are
 installed. See #16 for outstanding governance and production recovery work.
+
+## Local command (disposable fixtures only)
+
+From the nested module, build and run the read-only diagnostic command:
+
+```sh
+go build -o /tmp/acp-disposition-inspect ./cmd/disposition-inspect
+/tmp/acp-disposition-inspect -help
+```
+
+Use a separately prepared disposable PostgreSQL schema named
+`test_jetstream_<digits>` containing the POC journal, and a local NATS server
+containing the corresponding DLQ stream. Supply `PGTEST_DSN`,
+`NATS_POC_URL` and `ACP_POC_SCHEMA` in the environment. Do not put
+credentials in command-line flags or logs. The command deliberately
+requires numeric loopback endpoints and does not create schemas, streams,
+or records. PostgreSQL connections request server-side read-only transactions.
+Use a SELECT-only database role and appropriately restricted NATS identity
+where available; loopback and schema naming alone are not security boundaries.
+
+```sh
+/tmp/acp-disposition-inspect \
+  -source-stream SOURCE -source-consumer DURABLE \
+  -dlq-stream DLQ -dlq-subject poc.dlq -sequence 1
+```
+
+The values above are placeholders for the existing disposable fixture's
+exact stream, consumer, prefix and source sequence. Example diagnostic
+output (not settlement authorization):
+
+```json
+{"JournalState":"ATTEMPT_UNCONFIRMED","BrokerState":"MATCHING"}
+```
+
+Exit 0 means that the observation completed, not that it is safe to ACK
+or republish. Exit 1 means inspection/output failed; exit 2 means input
+validation failed. Errors are intentionally generic and do not include
+DSNs or evidence payloads. This command supports local NATS endpoints only,
+not the separate mTLS fixture or production brokers.
+
+The one-command demo creates and cleans up its own temporary fixtures,
+so those fixtures are no longer available to inspect after it exits.
+To validate the command against actual fixtures, run:
+
+```sh
+go test -race -count=1 -v -run '^TestDispositionInspectCLI' .
+```
+
+The live test requires the disposable PostgreSQL/NATS configuration described
+in the POC README. It also builds a race-enabled CLI executable and runs it
+as a separate OS process against the same retained evidence; require the
+named test PASS (not SKIP) and JETSTREAM_DISPOSITION_CLI_LIVE_EXEC_PASS.
