@@ -194,32 +194,50 @@ accounts {
 	if _, err := jsB.Publish(ctxB, "tenant.b.events", []byte("tenant-b")); err != nil {
 		t.Fatalf("tenant B could not publish to its own stream: %v", err)
 	}
-	if _, err := jsA.Stream(ctxA, "TENANT_B_EVENTS"); err == nil {
-		t.Fatal("tenant A discovered tenant B's JetStream stream")
+	if _, err := jsA.Stream(ctxA, "TENANT_B_EVENTS"); !errors.Is(err, jetstream.ErrStreamNotFound) {
+		t.Fatalf("tenant A lookup for tenant B's stream: want stream not found, got %v", err)
 	}
-	if _, err := jsB.Stream(ctxB, "TENANT_A_EVENTS"); err == nil {
-		t.Fatal("tenant B discovered tenant A's JetStream stream")
+	if _, err := jsB.Stream(ctxB, "TENANT_A_EVENTS"); !errors.Is(err, jetstream.ErrStreamNotFound) {
+		t.Fatalf("tenant B lookup for tenant A's stream: want stream not found, got %v", err)
 	}
-	if _, err := jsA.Publish(ctxA, "tenant.b.events", []byte("cross-tenant")); err == nil {
-		t.Fatal("tenant A published to tenant B's subject")
+	t.Run("tenant A cannot access tenant B's subject", func(t *testing.T) {
+		assertTenantSubjectDenied(t, ncA, "tenant.b.events")
+	})
+	t.Run("tenant B cannot access tenant A's subject", func(t *testing.T) {
+		assertTenantSubjectDenied(t, ncB, "tenant.a.events")
+	})
+}
+
+func assertTenantSubjectDenied(t *testing.T, nc *nats.Conn, subject string) {
+	t.Helper()
+
+	// Publish via Core NATS so an absent JetStream stream cannot satisfy the ACL assertion.
+	publishErrors := make(chan error, 1)
+	nc.SetErrorHandler(func(_ *nats.Conn, _ *nats.Subscription, err error) {
+		select {
+		case publishErrors <- err:
+		default:
+		}
+	})
+	if err := nc.Publish(subject, []byte("cross-tenant")); err != nil {
+		t.Fatalf("send publish request to %q: %v", subject, err)
 	}
-	if _, err := jsB.Publish(ctxB, "tenant.a.events", []byte("cross-tenant")); err == nil {
-		t.Fatal("tenant B published to tenant A's subject")
+	select {
+	case err := <-publishErrors:
+		if !errors.Is(err, nats.ErrPermissionViolation) || !strings.Contains(err.Error(), fmt.Sprintf("Permissions Violation for Publish to %q", subject)) {
+			t.Fatalf("publish to %q: want server permissions violation, got %v", subject, err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("publish to %q: broker did not report a permissions violation", subject)
 	}
 
-	// Core NATS subscribe ACLs are independently enforced, not inferred from
-	// JetStream stream lookup behavior.
-	if _, err := ncA.SubscribeSync("tenant.b.events"); err == nil {
-		flushErr := ncA.FlushTimeout(time.Second)
-		if flushErr == nil && ncA.LastError() == nil {
-			t.Fatal("tenant A subscribed to tenant B's subject")
-		}
+	sub, err := nc.SubscribeSync(subject)
+	if err != nil {
+		t.Fatalf("send subscribe request to %q: %v", subject, err)
 	}
-	if _, err := ncB.SubscribeSync("tenant.a.events"); err == nil {
-		flushErr := ncB.FlushTimeout(time.Second)
-		if flushErr == nil && ncB.LastError() == nil {
-			t.Fatal("tenant B subscribed to tenant A's subject")
-		}
+	defer sub.Unsubscribe()
+	if _, err := sub.NextMsg(2 * time.Second); !errors.Is(err, nats.ErrPermissionViolation) {
+		t.Fatalf("subscribe to %q: want subscription permissions violation, got %v", subject, err)
 	}
 }
 
@@ -228,6 +246,7 @@ func connectMTLS(t *testing.T, url, caPath, certPath, keyPath string) *nats.Conn
 	nc, err := nats.Connect(url,
 		nats.RootCAs(caPath),
 		nats.ClientCert(certPath, keyPath),
+		nats.PermissionErrOnSubscribe(true),
 		nats.Timeout(2*time.Second),
 		nats.Name("acp-jetstream-mtls-poc"))
 	if err != nil {
@@ -243,6 +262,7 @@ func waitForMTLSConnection(t *testing.T, ctx context.Context, url, caPath, certP
 		nc, err := nats.Connect(url,
 			nats.RootCAs(caPath),
 			nats.ClientCert(certPath, keyPath),
+			nats.PermissionErrOnSubscribe(true),
 			nats.Timeout(time.Second),
 			nats.Name("acp-jetstream-mtls-poc"))
 		if err == nil {

@@ -50,9 +50,10 @@ checksum-recorded PostgreSQL v1/v2 migrations.
   certificate subject to an allowlisted workload identity. It rejects
   plaintext, TLS clients without certificates and CA-trusted but unmapped
   client certificates. Two NATS accounts each create and publish to their
-  own JetStream stream; cross-account stream lookup and cross-tenant subject
-  publication/subscription are denied. Certificates and keys are generated
-  ephemerally for the test and are not checked into the repository.
+  own JetStream stream. A cross-account stream lookup must return stream
+  not found. A cross-tenant Core NATS publish and subscription must each
+  return a broker permissions violation for the attempted operation.
+  The test generates temporary certificates and keys.
 
 ## PostgreSQL journal integrity and restricted-role test
 
