@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -62,12 +63,43 @@ func TestRunReportsBoundLoopbackAddress(t *testing.T) {
 	}
 
 	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Get("http://" + event.Address + "/livez")
-	if err != nil {
-		t.Fatalf("reported address was not reachable: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("livez returned %d", resp.StatusCode)
+	for _, tc := range []struct {
+		path string
+		want string
+	}{
+		{"/livez", "ok\n"},
+		{"/readyz", "ready\n"},
+		{"/api/v1/meta", ""},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			resp, err := client.Get("http://" + event.Address + tc.path)
+			if err != nil {
+				t.Fatalf("reported address was not reachable: %v", err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+			}
+			if tc.path == "/api/v1/meta" {
+				var meta struct {
+					Service    string `json:"service"`
+					APIVersion string `json:"api_version"`
+				}
+				if err := json.NewDecoder(resp.Body).Decode(&meta); err != nil {
+					t.Fatalf("decode metadata: %v", err)
+				}
+				if meta.Service != "agent-control-panel" || meta.APIVersion != "v1" {
+					t.Fatalf("unexpected metadata: %+v", meta)
+				}
+				return
+			}
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				t.Fatalf("read response: %v", err)
+			}
+			if string(body) != tc.want {
+				t.Fatalf("body = %q, want %q", body, tc.want)
+			}
+		})
 	}
 }
