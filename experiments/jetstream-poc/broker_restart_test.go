@@ -123,7 +123,12 @@ func TestRealJetStreamBrokerRestartPreservesConfirmedDLQ(t *testing.T) {
 	journal := NewDispositionJournal(pool)
 	original := pocEvent(8975, 1)
 	publishEvent(t, ctx, js, cfg.SourceSubject, original)
-	if err := HandleMessage(ctx, repository, js, nextMessage(t, consumer), cfg, journal); err != nil {
+	originalMessage := nextMessage(t, consumer)
+	originalMeta, err := originalMessage.Metadata()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := HandleMessage(ctx, repository, js, originalMessage, cfg, journal); err != nil {
 		t.Fatal(err)
 	}
 	applied, err := repository.ApplyNextInboxEvent(ctx, cfg.ConsumerName, allowPOCProjection{})
@@ -175,8 +180,27 @@ func TestRealJetStreamBrokerRestartPreservesConfirmedDLQ(t *testing.T) {
 	if err != nil || after == nil || after.Subject != before.Subject || !bytes.Equal(after.Data, before.Data) {
 		t.Fatalf("confirmed DLQ evidence changed or disappeared after broker restart: %v", err)
 	}
+	// The broker can roll back a previously confirmed consumer ACK on an
+	// abrupt process restart. Reconcile only the known original event if
+	// redelivered; never skip or ACK an unexpected message.
+	recovery := &noRestartPublish{JetStream: js2}
 	replay := nextMessage(t, consumer2)
 	replayMeta, err := replay.Metadata()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replayMeta.Sequence.Stream == originalMeta.Sequence.Stream {
+		if replayMeta.Stream != originalMeta.Stream || replayMeta.Consumer != originalMeta.Consumer ||
+			replay.Subject() != originalMessage.Subject() || !bytes.Equal(replay.Data(), originalMessage.Data()) {
+			t.Fatal("original replay identity or bytes changed")
+		}
+		if err := HandleMessage(ctx, repository, recovery, replay, cfg, NewDispositionJournal(pool)); err != nil {
+			t.Fatalf("reconcile prior committed Inbox event: %v", err)
+		}
+		t.Log("reconciled original source delivery after broker ACK state rollback")
+		replay = nextMessage(t, consumer2)
+		replayMeta, err = replay.Metadata()
+	}
 	// An abrupt broker restart can roll back the delivery-attempt counter.
 	// Identify the replay by its actual source stream, consumer, sequence,
 	// subject and bytes, not by a counter that is not a durable identity.
@@ -187,7 +211,6 @@ func TestRealJetStreamBrokerRestartPreservesConfirmedDLQ(t *testing.T) {
 	}
 	t.Logf("broker restart replay: stream_sequence=%d deliveries_before=%d deliveries_after=%d",
 		replayMeta.Sequence.Stream, meta.NumDelivered, replayMeta.NumDelivered)
-	recovery := &noRestartPublish{JetStream: js2}
 	if err := HandleMessage(ctx, repository, recovery, replay, cfg, NewDispositionJournal(pool)); err != nil {
 		t.Fatalf("recover confirmed DLQ after broker restart: %v", err)
 	}
@@ -198,6 +221,20 @@ func TestRealJetStreamBrokerRestartPreservesConfirmedDLQ(t *testing.T) {
 	info, err := dlq2.Info(ctx)
 	if err != nil || info.State.Msgs != 1 || recovery.attempts != 0 {
 		t.Fatalf("duplicate DLQ after restart: info=%+v publish attempts=%d err=%v", info, recovery.attempts, err)
+	}
+	var inboxRows, cursorVersion int
+	var inboxState string
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM inbox_events").Scan(&inboxRows); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, "SELECT state FROM inbox_events WHERE consumer_name=$1 AND event_id=$2::uuid", cfg.ConsumerName, original.ID).Scan(&inboxState); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, "SELECT last_applied_version FROM inbox_cursors WHERE consumer_name=$1 AND tenant_id=$2 AND aggregate_id=$3", cfg.ConsumerName, original.TenantID, original.AggregateID).Scan(&cursorVersion); err != nil {
+		t.Fatal(err)
+	}
+	if inboxRows != 1 || inboxState != "APPLIED" || cursorVersion != 1 {
+		t.Fatalf("unexpected Inbox state after broker restart: rows=%d state=%s cursor=%d", inboxRows, inboxState, cursorVersion)
 	}
 	var dispositions, conflicts int
 	if err := pool.QueryRow(ctx, "SELECT count(*), bool_and(published) FROM poc_dlq_dispositions").Scan(&dispositions, &confirmed); err != nil {
