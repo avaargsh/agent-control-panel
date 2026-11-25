@@ -214,9 +214,48 @@ func TestRealJetStreamBrokerRestartPreservesConfirmedDLQ(t *testing.T) {
 	if err := HandleMessage(ctx, repository, recovery, replay, cfg, NewDispositionJournal(pool)); err != nil {
 		t.Fatalf("recover confirmed DLQ after broker restart: %v", err)
 	}
-	settled, err := consumer2.Info(ctx)
-	if err != nil || settled == nil || settled.AckFloor.Stream < replayMeta.Sequence.Stream || settled.NumAckPending != 0 {
-		t.Fatalf("source ACK did not settle the recovered delivery: %+v err=%v", settled, err)
+	// A lower sequence may remain pending even if the conflict is replayed
+	// first. Reconcile bounded known deliveries; never skip a pending gap.
+	for attempt := 0; ; attempt++ {
+		settled, err := consumer2.Info(ctx)
+		if err != nil || settled == nil {
+			t.Fatalf("read recovered consumer state: %+v err=%v", settled, err)
+		}
+		if settled.AckFloor.Stream >= meta.Sequence.Stream && settled.NumAckPending == 0 && settled.NumPending == 0 {
+			break
+		}
+		if attempt >= 4 {
+			t.Fatalf("source ACK did not settle recovered deliveries: %+v", settled)
+		}
+		if settled.NumAckPending == 0 && settled.NumPending == 0 {
+			select {
+			case <-ctx.Done():
+				t.Fatal(ctx.Err())
+			case <-time.After(100 * time.Millisecond):
+			}
+			continue
+		}
+		pending := nextMessage(t, consumer2)
+		pm, err := pending.Metadata()
+		if err != nil || pm == nil || pm.Stream != meta.Stream || pm.Consumer != meta.Consumer {
+			t.Fatalf("unexpected pending delivery identity: %+v err=%v", pm, err)
+		}
+		switch pm.Sequence.Stream {
+		case originalMeta.Sequence.Stream:
+			if pending.Subject() != originalMessage.Subject() || !bytes.Equal(pending.Data(), originalMessage.Data()) {
+				t.Fatal("pending original bytes changed")
+			}
+		case meta.Sequence.Stream:
+			if pending.Subject() != first.Subject() || !bytes.Equal(pending.Data(), first.Data()) {
+				t.Fatal("pending conflict bytes changed")
+			}
+		default:
+			t.Fatalf("unexpected pending stream sequence: %d", pm.Sequence.Stream)
+		}
+		if err := HandleMessage(ctx, repository, recovery, pending, cfg, NewDispositionJournal(pool)); err != nil {
+			t.Fatalf("reconcile pending delivery after broker restart: %v", err)
+		}
+		t.Logf("reconciled pending stream sequence=%d", pm.Sequence.Stream)
 	}
 	info, err := dlq2.Info(ctx)
 	if err != nil || info.State.Msgs != 1 || recovery.attempts != 0 {
