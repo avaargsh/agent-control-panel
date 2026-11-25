@@ -33,7 +33,7 @@ curl --fail http://127.0.0.1:8080/readyz
 curl --fail http://127.0.0.1:8080/api/v1/meta
 ```
 
-`LISTEN_ADDR` defaults to `127.0.0.1:8080`.
+`LISTEN_ADDR` defaults to `127.0.0.1:8080`. The `control plane listening` log reports the bound address. If port 8080 is in use, run `LISTEN_ADDR=127.0.0.1:0 go run ./cmd/agent-control-panel` and use the reported loopback port in the commands above.
 
 Run the Go test suite with `go test -race ./...`. PostgreSQL tests require `PGTEST_DSN` pointing to an isolated test database. The [Go and PostgreSQL workflow](.github/workflows/go.yml) shows the CI setup. The [RunIntent admission guide](docs/implementation/RUNINTENT-ADMISSION.md) documents the opt-in live identity-provider test.
 
