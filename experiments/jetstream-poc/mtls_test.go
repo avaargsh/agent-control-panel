@@ -1,12 +1,14 @@
 package jetstreampoc
 
 import (
+	"bufio"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -146,11 +148,10 @@ accounts {
 		unknown.Close()
 		t.Fatal("NATS accepted an unregistered client-certificate identity")
 	}
-	// The TLS listener must not silently accept a plaintext NATS connection.
-	if plaintext, err := nats.Connect(strings.Replace(url, "tls://", "nats://", 1), nats.Timeout(time.Second)); err == nil {
-		plaintext.Close()
-		t.Fatal("NATS accepted a plaintext connection on the mTLS listener")
-	}
+	// Read the actual server greeting without a NATS client: nats.Connect
+	// can negotiate TLS even for a nats:// URL. This establishes the
+	// advertised TLS requirement, not an independent plaintext rejection.
+	assertTLSRequiredGreeting(t, port)
 
 	jsA, err := jetstream.New(ncA)
 	if err != nil {
@@ -206,6 +207,35 @@ accounts {
 	t.Run("tenant B cannot access tenant A's subject", func(t *testing.T) {
 		assertTenantSubjectDenied(t, ncB, "tenant.a.events")
 	})
+}
+
+func assertTLSRequiredGreeting(t *testing.T, port int) {
+	t.Helper()
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), time.Second)
+	if err != nil {
+		t.Fatalf("connect to disposable NATS listener: %v", err)
+	}
+	defer conn.Close()
+	if err := conn.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	line, err := bufio.NewReaderSize(conn, 8192).ReadSlice('\n')
+	if err != nil {
+		t.Fatalf("read bounded NATS INFO greeting: %v", err)
+	}
+	payload, ok := strings.CutPrefix(string(line), "INFO ")
+	if !ok {
+		t.Fatal("expected NATS INFO greeting")
+	}
+	var info struct {
+		TLSRequired bool `json:"tls_required"`
+	}
+	if err := json.Unmarshal([]byte(payload), &info); err != nil {
+		t.Fatalf("decode NATS INFO greeting: %v", err)
+	}
+	if !info.TLSRequired {
+		t.Fatal("NATS listener did not advertise required TLS")
+	}
 }
 
 func assertTenantSubjectDenied(t *testing.T, nc *nats.Conn, subject string) {
