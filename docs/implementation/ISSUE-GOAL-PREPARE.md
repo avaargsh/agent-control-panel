@@ -2,20 +2,18 @@
 
 This is the **offline** user-facing input step toward ACP's GitHub Issue → PR Golden Path. It prepares a strictly validated, immutable input proposal; **prepare alone** does not submit a Goal, admit a RunIntent, start a Runtime Run, contact GitHub, enforce budgets, run a model, or grant any protected operation. An opt-in, loopback-only HTTPS admission host and an explicit `acp-goal submit` client are now available as **candidate features in stacked PR #86**. They only admit an ACP RunIntent; they do not dispatch or create a PR. See [the TLS host and client guide](ISSUE-GOAL-TLS-HOST.md).
 
-## Reproduce
+## Try the offline demo
 
-From the repository root, with the Go version pinned by `go.mod`:
+From the repository root, use the Go version declared in `go.mod` or the patched version pinned in CI. Build the CLI and prepare the bundled manifest without editing it.
 
 ```bash
-# Replace all example IDs, commit SHAs, digest and issue URL with real values.
-cp docs/examples/issue-goal.example.json /tmp/acp-issue-goal.json
-# Edit /tmp/acp-issue-goal.json before using it for a real goal.
-go run ./cmd/acp-goal prepare --file /tmp/acp-issue-goal.json > /tmp/acp-proposal.json
-cat /tmp/acp-proposal.json
-# Also supported: cat /tmp/acp-issue-goal.json | go run ./cmd/acp-goal prepare --file -
+demo_dir="$(mktemp -d)"
+go build -o "$demo_dir/acp-goal" ./cmd/acp-goal
+"$demo_dir/acp-goal" prepare --file docs/examples/issue-goal.example.json > "$demo_dir/proposal.json"
+cat "$demo_dir/proposal.json"
 ```
 
-The example uses **syntactically valid but deliberately fictitious** SHAs, rule digest, identifiers, and Issue. A successful local `prepare` is never evidence that those resources exist, are trusted, or have been accepted by ACP.
+The example uses synthetic SHAs, digests, identifiers, and an Issue URL. A successful `prepare` produces a local proposal from those inputs. For a real goal, copy the manifest and fill in your own IDs, baseline SHAs, and rule digest. Use the public Issue snapshot command below to obtain the Issue digest and save the edited manifest as `/tmp/acp-issue-goal.json` for the subsequent inspect example. The CLI accepts input from standard input with `prepare --file -`.
 
 The result has `schema=acp.issue-goal-submission/v1`, ACP admission selectors, a caller-chosen idempotency key, `request_digest`, and `execution_input_base64`. Decode the last field to recover **exact JSON bytes**; do not parse/re-serialize them before comparing the digest. The digest uses the existing `runintent.ExecutionInputDigest` versioned framing, scoped to tenant/project/agent/release/session/idempotency key. There is no client-authenticated identity or Permit in this result.
 
