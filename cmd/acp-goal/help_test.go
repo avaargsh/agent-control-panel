@@ -61,3 +61,25 @@ func TestGoalTopLevelHelpIncludesRequiredArguments(t *testing.T) {
 		t.Fatal("help must not emit a JSON result")
 	}
 }
+
+func TestGoalInvalidURLDiagnosticNamesExpectedEndpoint(t *testing.T) {
+	for _, tc := range []struct {
+		command string
+		path    string
+	}{
+		{"submit", "/api/v1/goals:submit"},
+		{"status", "/api/v1/goals:status"},
+	} {
+		t.Run(tc.command, func(t *testing.T) {
+			var out, diagnostics bytes.Buffer
+			err := run([]string{tc.command, "--file", "-", "--url", "https://127.0.0.1:443/wrong",
+				"--token-file", "unused", "--ca-file", "unused"}, strings.NewReader(""), &out, &diagnostics)
+			if err == nil || !strings.Contains(err.Error(), tc.path) {
+				t.Fatalf("expected diagnostic naming %s, got %v", tc.path, err)
+			}
+			if out.Len() != 0 {
+				t.Fatal("invalid endpoint must not emit a receipt")
+			}
+		})
+	}
+}
