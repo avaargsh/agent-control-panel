@@ -14,7 +14,7 @@ import urllib.request
 
 SHA = re.compile(r'^[a-f0-9]{40}$')
 REPO = re.compile(r'^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$')
-DEFAULT_CONTEXTS = ('verify', 'actual-broker', 'local-repro', 'contracts', 'evidence')
+DEFAULT_CONTEXTS = ('verify', 'contracts', 'evidence')
 MANDATORY_RULES = frozenset(('pull_request', 'non_fast_forward', 'deletion', 'required_status_checks'))
 
 

@@ -6,10 +6,13 @@ selected effective-rule prerequisites were observed at a pinned main SHA.
 
 **Repository administrator action required:** configure effective main
 protection that requires pull requests, disallows force push/deletion, and
-requires strict status checks. Verify the actual **job** names from passing
-GitHub Actions: `verify`, `actual-broker`, `local-repro`, `contracts`,
-`evidence` are the five observed on #168. Apply any other independent
-Sandbox/security requirements appropriate to the changed paths.
+requires strict status checks. Verify the actual **job** names, not workflow display names.
+For all main-targeted PRs, the existing unconditional jobs are `verify`,
+`contracts`, and `evidence`. The `actual-broker` and `local-repro` POC jobs
+use `pull_request.paths` filters; **do not set them as global required
+checks**, since unrelated PRs would be blocked by skipped workflows.
+Require POC/security checks only after providing an always-reporting wrapper
+check or otherwise enforcing appropriate path-aware requirements.
 
 The checker reads `GET /branches/main` and
 `GET /rules/branches/main` (effective server rules).

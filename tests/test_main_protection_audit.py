@@ -18,6 +18,11 @@ def valid():
 
 
 class AuditTests(unittest.TestCase):
+    def test_defaults_are_only_unconditional_pr_job_contexts(self):
+        self.assertEqual(audit.DEFAULT_CONTEXTS, ('verify', 'contracts', 'evidence'))
+        self.assertNotIn('actual-broker', audit.DEFAULT_CONTEXTS)
+        self.assertNotIn('local-repro', audit.DEFAULT_CONTEXTS)
+
     def test_positive_is_only_a_configuration_observation(self):
         branch, rules = valid()
         self.assertEqual(audit.evaluate(branch, rules, SHA, CONTEXTS), [])
