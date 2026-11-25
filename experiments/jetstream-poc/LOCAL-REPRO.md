@@ -36,8 +36,18 @@ includes these markers:
 --- PASS: TestRealJetStreamBrokerRestartPreservesConfirmedDLQ (...)
 --- PASS: TestRealJetStreamMTLSAndTenantIsolation/AuthenticatedInboxDLQRecovery (...)
 --- PASS: TestRealDispositionInspectorWithRestrictedRoleAndAmbiguousPublish (...)
+--- PASS: TestDispositionInspectCLIRealEvidence (...)
+--- PASS: TestDispositionInspectCLIRejectsUnsafeInputs (...)
+JETSTREAM_DISPOSITION_CLI_SMOKE_PASS
 JETSTREAM_LOCAL_REPRO_PASS
 ```
+
+The demo also builds the actual disposition-inspect executable in a private
+temporary directory, checks its help and invalid-argument exit status, and
+removes the binary and temporary logs. The live test exercises the CLI
+helper against actual PostgreSQL/NATS evidence. See the
+[inspection guide](DISPOSITION-INSPECTION.md) for using the command on
+separately prepared fixtures.
 
 A nonzero exit is a failed demonstration, including failure to clean up.
 If startup fails, the script prints bounded fixture logs. Check Docker daemon

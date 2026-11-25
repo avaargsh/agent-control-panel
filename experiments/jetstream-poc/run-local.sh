@@ -15,7 +15,8 @@ export GOTOOLCHAIN=local
 
 pg_id=
 nats_id=
-log="$(mktemp)"
+demo_dir="$(mktemp -d)"
+log="$demo_dir/test.log"
 cleanup() {
     local rc=$?
     trap - EXIT
@@ -25,7 +26,7 @@ cleanup() {
     fi
     [[ -z "$nats_id" ]] || docker rm -fv "$nats_id" >/dev/null || rc=1
     [[ -z "$pg_id" ]] || docker rm -fv "$pg_id" >/dev/null || rc=1
-    rm -f -- "$log"
+    rm -rf -- "$demo_dir" || rc=1
     exit "$rc"
 }
 trap cleanup EXIT
@@ -79,7 +80,18 @@ for test in TestJetStreamRealBrokerAckLossConflictAndDLQFailure \
     TestRealJetStreamRejectsVolatileDLQBeforeClaimAndACK \
     TestRealJetStreamMTLSAndTenantIsolation/AuthenticatedInboxDLQRecovery \
     TestRealDispositionInspectionIsReadOnlyAndDistinguishesEvidence \
-    TestRealDispositionInspectorWithRestrictedRoleAndAmbiguousPublish; do
+    TestRealDispositionInspectorWithRestrictedRoleAndAmbiguousPublish \
+    TestDispositionInspectCLIRealEvidence \
+    TestDispositionInspectCLIRejectsUnsafeInputs; do
     grep -Fq -- "--- PASS: $test (" "$log" || die "Required test did not pass: $test"
 done
+# Exercise the actual command wrapper, not just its Go helper.
+go build -mod=readonly -o "$demo_dir/disposition-inspect" ./cmd/disposition-inspect
+"$demo_dir/disposition-inspect" -help > "$demo_dir/help.log"
+grep -Fq 'Usage: disposition-inspect' "$demo_dir/help.log" || die "CLI help is missing."
+cli_status=0
+"$demo_dir/disposition-inspect" -sequence 0 > "$demo_dir/invalid.stdout" 2> "$demo_dir/invalid.stderr" || cli_status=$?
+[[ "$cli_status" == 2 && ! -s "$demo_dir/invalid.stdout" ]] || die "CLI must reject invalid input with exit 2 and no observation."
+grep -Fq 'invalid diagnostic arguments' "$demo_dir/invalid.stderr" || die "CLI validation diagnostic is missing."
+printf 'JETSTREAM_DISPOSITION_CLI_SMOKE_PASS\n'
 printf 'JETSTREAM_LOCAL_REPRO_PASS\n'
