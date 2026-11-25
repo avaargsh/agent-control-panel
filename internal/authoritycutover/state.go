@@ -1,5 +1,6 @@
-// Package authoritycutover models the ACP catalog cutover transitions only.
-// It is not an admission gate, DCL executor, or Guard authorization service.
+// Package authoritycutover models the ACP catalog cutover ledger and its
+// cooperative PostgreSQL admission barrier. It is not a DCL executor or Guard
+// authorization service.
 package authoritycutover
 
 import (

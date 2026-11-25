@@ -106,7 +106,7 @@ func (r *PublicIssueReader) baselineGET(ctx context.Context, endpoint string) ([
 	defer resp.Body.Close()
 	media, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
 	if resp.StatusCode != http.StatusOK {
-		return nil, newPublicSourceFailure(ErrBaselineSourceUnavailable, "baseline", "http_status", resp.StatusCode)
+		return nil, newPublicHTTPStatusFailure(ErrBaselineSourceUnavailable, "baseline", resp)
 	}
 	if err != nil || (media != "application/json" && media != "application/vnd.github+json") {
 		return nil, newPublicSourceFailure(ErrBaselineSourceUnavailable, "baseline", "invalid_media", resp.StatusCode)
