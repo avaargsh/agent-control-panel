@@ -33,15 +33,43 @@ Eight owner-signed before/after observations are required. Each contains the sam
 
 ## Binary and trust inputs
 
-The verifier executable is built from cmd/acp-postfault-verify. It only reads a bounded JSON bundle and externally supplied Ed25519 public keys; it has no runtime/tool/provider write capability.
+The verifier reads local evidence and makes a read-only AgentD request over
+mutual TLS. It does not write to Runtime, tools, or providers. Install Go as
+declared in `go.mod` and run from the repository root.
 
-Run (only after the trusted producers have created actual observations):
+Only run the check after trusted producers have created the actual observations.
+Set `POSTFAULT_DIR` to a secure directory holding those inputs and
+`AGENTD_EVIDENCE_ENDPOINT` and `AGENTD_SERVER_NAME` to the approved AgentD HTTPS
+origin and expected certificate DNS name, respectively:
 
-    go run ./cmd/acp-postfault-verify --bundle "$RUNNER_TEMP/acp-postfault/proof.json" --expected "$RUNNER_TEMP/acp-postfault/expected.json" --trust-dir "$RUNNER_TEMP/acp-postfault/trust"
+```sh
+go run ./cmd/acp-postfault-verify \
+  --bundle "${POSTFAULT_DIR:?}/proof.json" \
+  --expected "$POSTFAULT_DIR/expected.json" \
+  --head-acceptance "$POSTFAULT_DIR/head-acceptance.json" \
+  --trust-dir "$POSTFAULT_DIR/trust" \
+  --agentd-evidence-endpoint "${AGENTD_EVIDENCE_ENDPOINT:?}" \
+  --agentd-client-cert "$POSTFAULT_DIR/agentd-client.pem" \
+  --agentd-client-key "$POSTFAULT_DIR/agentd-client.key" \
+  --agentd-server-ca "$POSTFAULT_DIR/agentd-ca.pem" \
+  --agentd-server-name "${AGENTD_SERVER_NAME:?}"
+```
 
-The trust directory must contain four distinct, independently provisioned **hex-encoded Ed25519 public keys**, named runtime.pub, sandbox.pub, agentd.pub and guard.pub. These keys must NOT be taken from the user-supplied bundle, the ACP Goal Manifest or untrusted PR code.
+The trust directory contains independently provisioned hex Ed25519 public keys
+`runtime.pub`, `sandbox.pub`, `agentd.pub`, and `guard.pub`, plus a distinct
+`head-acceptor.pub`. Do not source any of these keys from the supplied bundle,
+Goal Manifest, or untrusted PR code. Keep the scoped mTLS client key file at mode
+0600; never add it to the repository or upload it as a review artifact.
 
-The separate expected.json file must be created by the trusted ACP/Runtime acceptance test and actual fault injector, **not** copied from the bundle. It uses schema acp.postfault-expected/v1 and contains subject (original tenant/run/session/workflow/guard_operation) plus fault_id and fault_at. All values must match the signed receipts and recorded injection time exactly; evidence for a different Run cannot pass.
+The separate `expected.json` uses `acp.postfault-expected/v2`. It binds the
+original Run, fault, Guard operation, AgentD reference and exact Inspect Head.
+Source it from trusted acceptance and the real fault injector, not the bundle
+or AgentD's response. `head-acceptance.json` signs the complete expected binding
+and must come from a separate Head acceptor. See [Head acceptance and AgentD
+mTLS](G05-AGENTD-MTLS-CLIENT.md#signed-head-acceptance-preflight-consumer-only-candidate)
+for the precise wire format and remaining publisher requirements. Missing
+inputs leave G01–G05 on HOLD; the command cannot mint the acceptance or
+authorize retry or release.
 
 The bundle has schema acp.postfault-bundle/v1, the original Subject and Fault, plus eight receipt objects with authority, phase, payload_b64 and signature_b64. The exact decoded observation JSON bytes are signed with Ed25519 using domain prefix acp.postfault-observation/v1 followed by a NUL byte. The strict schema acp.postfault-observation/v1 requires one owner-specific observation, original fault ID, matching Run, signed timestamp and owner phase.
 
