@@ -33,6 +33,7 @@ func run(ctx context.Context, addr string) error {
 	}
 	stopped := make(chan error, 1)
 	ready.Store(true)
+	slog.Info("control plane listening", "addr", ln.Addr().String())
 	go func() { stopped <- srv.Serve(ln) }()
 	select {
 	case err := <-stopped:
