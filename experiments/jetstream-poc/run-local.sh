@@ -72,7 +72,14 @@ if grep -Fq -- '--- SKIP:' "$log"; then
 fi
 for test in TestJetStreamRealBrokerAckLossConflictAndDLQFailure \
     TestRealJetStreamCrashAfterPGCommitBeforeBrokerACK \
-    TestRealJetStreamCrashAfterConfirmedDLQBeforeSourceACK; do
+    TestRealJetStreamCrashAfterConfirmedDLQBeforeSourceACK \
+    TestRealJetStreamCompetingDeliveriesSinglePublishThenRecovery \
+    TestDispositionJournalGrantsOnlyOnePublishClaim \
+    TestRealJetStreamBrokerRestartPreservesConfirmedDLQ \
+    TestRealJetStreamRejectsVolatileDLQBeforeClaimAndACK \
+    TestRealJetStreamMTLSAndTenantIsolation/AuthenticatedInboxDLQRecovery \
+    TestRealDispositionInspectionIsReadOnlyAndDistinguishesEvidence \
+    TestRealDispositionInspectorWithRestrictedRoleAndAmbiguousPublish; do
     grep -Fq -- "--- PASS: $test (" "$log" || die "Required test did not pass: $test"
 done
 printf 'JETSTREAM_LOCAL_REPRO_PASS\n'

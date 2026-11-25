@@ -32,6 +32,10 @@ includes these markers:
 --- PASS: TestJetStreamRealBrokerAckLossConflictAndDLQFailure (...)
 --- PASS: TestRealJetStreamCrashAfterPGCommitBeforeBrokerACK (...)
 --- PASS: TestRealJetStreamCrashAfterConfirmedDLQBeforeSourceACK (...)
+--- PASS: TestRealJetStreamCompetingDeliveriesSinglePublishThenRecovery (...)
+--- PASS: TestRealJetStreamBrokerRestartPreservesConfirmedDLQ (...)
+--- PASS: TestRealJetStreamMTLSAndTenantIsolation/AuthenticatedInboxDLQRecovery (...)
+--- PASS: TestRealDispositionInspectorWithRestrictedRoleAndAmbiguousPublish (...)
 JETSTREAM_LOCAL_REPRO_PASS
 ```
 
@@ -56,7 +60,7 @@ evidence verified in the test suite. The CI workflow
 runs this same entry point when the demo changes.
 
 A passing demo does not establish production broker authentication, tenant
-IAM, persistence across broker restart, physical disk durability, HA, or
+IAM, physical disk durability, HA, or
 an operationally approved UNKNOWN recovery procedure. See
 [issue #16](https://github.com/avaargsh/agent-control-panel/issues/16) for the
 remaining evidence gates. This demo does not start a production service,

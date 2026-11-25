@@ -12,6 +12,12 @@ checksum-recorded PostgreSQL v1/v2 migrations.
 
 ## Reproduce
 
+From the repository root, run `bash experiments/jetstream-poc/run-local.sh`.
+See [local reproduction](LOCAL-REPRO.md) for prerequisites and cleanup, and
+[read-only disposition inspection](DISPOSITION-INSPECTION.md) for UNKNOWN diagnosis.
+
+For manual disposable fixtures:
+
 1. Run PostgreSQL 16 with an account permitted to create disposable schemas.
 2. Run an **actual** NATS Server 2.15.2 with JetStream enabled. The POC pins
    the official multi-platform image manifest:
@@ -54,7 +60,13 @@ checksum-recorded PostgreSQL v1/v2 migrations.
   own JetStream stream. A cross-account stream lookup must return stream
   not found. A cross-tenant Core NATS publish and subscription must each
   return a broker permissions violation for the attempted operation.
-  The test generates temporary certificates and keys.
+  The test generates temporary certificates and keys. Both mapped accounts
+  also exercise actual Inbox/DLQ settlement and ACK-loss recovery.
+- Additional candidate tests exercise exclusive publish claims, competing
+  real deliveries, FileStorage rejection of volatile DLQ streams, isolated
+  broker SIGKILL/start with retained evidence and ACK rollback recovery,
+  and read-only disposition diagnosis with a SELECT-only test role.
+  Individual candidate evidence is not joint acceptance; consult exact-head CI.
 
 ## PostgreSQL journal integrity and restricted-role test
 
@@ -102,18 +114,17 @@ reverification are implemented.
   the indefinite UNKNOWN state is still an unimplemented governance gate.
 - Privileged broker deletion/purge, DLQ stream recreation, administrative
   journal/catalog tampering **after startup verification**, multi-worker
-  races, retention expiry and network partition are not independently accepted.
+  races across independent competing worker processes, retention expiry and
+  network partition are not independently accepted.
   The journal table, trigger migration and test role all live in disposable
   POC schemas. No production ACP migration, independently provisioned DB
   identity, grant-revocation/restore drill or hardened least-privilege contract
   exists yet.
 - The existing ACK/DLQ process-fault tests still use an unauthenticated
-  single-node NATS container. The separate mTLS test proves certificate
-  mapping and account/subject isolation only; it does not yet run the
-  production-shaped receiver, ACK/DLQ journal or cross-process crash path
-  over mTLS.
+  single-node NATS container. The separate mTLS test exercises Inbox/DLQ
+  recovery and account isolation but not cross-process crash recovery over mTLS.
 - No SPIFFE integration, certificate rotation/revocation, JetStream quorum/HA,
-  persistent-volume restart proof, approved DLQ confidentiality/replay
+  physical disk durability or power-loss proof, approved DLQ confidentiality/replay
   controls, bounded poison-message policy, redelivery budget, metrics,
   rate limits, process supervisor, or cross-tenant load test is accepted.
 - No authenticated ACP→Runtime `StartRun` path, initiating
@@ -121,7 +132,7 @@ reverification are implemented.
 - The POC image is pinned to an immutable multi-platform manifest digest, but
   that alone is not full supply-chain attestation or production image approval.
 
-**Merge verdict:** keep #17, #15 and #7 Draft. The real single-node broker
-CI upgrades a narrow subset of P0 #16 evidence; it cannot close the full issue
-or authorize production. Record exact-head workflow link and log artifacts in
-the PR before treating any specific revision as tested.
+**Merge boundary:** #16 remains open and #107 requires actual main branch
+protection and manual approval. Single-node POC evidence cannot authorize
+production. Record exact-head workflow links before treating any revision
+as tested.
