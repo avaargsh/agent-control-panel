@@ -147,7 +147,9 @@ func (j *DispositionJournal) ensure(ctx context.Context, record dispositionRecor
 	return published, publishStarted, nil
 }
 
-// markPublishAttempt is durable BEFORE issuing JetStream Publish.
+// markPublishAttempt atomically grants a single durable claim BEFORE issuing
+// JetStream Publish. A stale contender must fail closed and reobserve on a
+// later delivery; it must never issue another publish from its stale read.
 // If this step succeeds and PubAck/PG confirm is later lost, a missing
 // retained broker record means UNKNOWN and must NOT be auto-republished.
 func (j *DispositionJournal) markPublishAttempt(ctx context.Context, record dispositionRecord) error {
@@ -158,7 +160,7 @@ func (j *DispositionJournal) markPublishAttempt(ctx context.Context, record disp
 		UPDATE poc_dlq_dispositions SET publish_started=TRUE
 		WHERE source_stream=$1 AND source_consumer=$2 AND source_sequence=$3
 		  AND delivery_hash=$4 AND reason=$5 AND dlq_stream=$6
-		  AND dlq_subject=$7 AND evidence=$8 AND NOT published
+		  AND dlq_subject=$7 AND evidence=$8 AND NOT published AND NOT publish_started
 	`, record.stream, record.consumer, record.sequence, record.hash,
 		record.reason, record.dlq, record.subject, record.evidence)
 	if err != nil {
