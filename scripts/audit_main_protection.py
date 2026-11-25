@@ -36,6 +36,14 @@ def evaluate(branch, effective_rules, expected_main, expected_contexts=DEFAULT_C
     types = {rule['type'] for rule in effective_rules}
     for name in sorted(MANDATORY_RULES - types):
         errors.append('missing effective branch rule: ' + name)
+    # Rulesets encode unresolved PR conversation blocking inside the
+    # pull_request rule's parameters. A bare pull_request rule does not
+    # enforce this policy; fail closed rather than inferring it.
+    pr_rules = [rule for rule in effective_rules if rule['type'] == 'pull_request']
+    if not any(isinstance(rule.get('parameters'), dict) and
+               rule['parameters'].get('required_review_thread_resolution') is True
+               for rule in pr_rules):
+        errors.append('required review thread conversation resolution is not confirmed')
     checks = [rule for rule in effective_rules if rule['type'] == 'required_status_checks']
     if len(checks) != 1:
         errors.append('required_status_checks rule must be unambiguous')
@@ -71,6 +79,24 @@ def fetch(repo, path, token):
         return json.load(response)
 
 
+def fetch_all_effective_rules(repo, token, getter=None, max_pages=20):
+    """Fetch every effective branch rule or fail closed on incomplete pages."""
+    if getter is None:
+        getter = fetch
+    if type(max_pages) is not int or max_pages < 1:
+        raise ValueError('invalid effective rules page bound')
+    collected = []
+    for page in range(1, max_pages + 1):
+        entries = getter(repo, '/rules/branches/main?per_page=100&page=' + str(page), token)
+        if not isinstance(entries, list) or len(entries) > 100:
+            raise ValueError('malformed effective branch rules page')
+        collected.extend(entries)
+        if len(entries) < 100:
+            return collected
+    # The last full page may conceal additional restrictions. No partial PASS.
+    raise ValueError('effective rules pagination exceeded bound')
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description='Read-only main rules evidence; never merges')
     parser.add_argument('--repository', required=True)
@@ -85,7 +111,7 @@ def main(argv=None):
         return 2
     try:
         branch = fetch(args.repository, '/branches/main', token)
-        rules = fetch(args.repository, '/rules/branches/main?per_page=100', token)
+        rules = fetch_all_effective_rules(args.repository, token)
         errors = evaluate(branch, rules, args.expected_main)
     except (OSError, ValueError, KeyError, TypeError, urllib.error.HTTPError):
         print('MAIN_PROTECTION_AUDIT=BLOCKED: GitHub rules authority inaccessible or incomplete', file=sys.stderr)

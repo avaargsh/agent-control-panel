@@ -17,6 +17,10 @@ check or otherwise enforcing appropriate path-aware requirements.
 The checker reads `GET /branches/main` and
 `GET /rules/branches/main` (effective server rules).
 It fails closed on missing, inaccessible, inconsistent, or ambiguous responses.
+It requires the effective `pull_request` rule to enable
+`required_review_thread_resolution`, and reads **all pages** of effective
+rules with a bounded `per_page=100&page=N` pagination loop. A malformed
+page or an exhausted page bound is BLOCKED rather than a partial pass.
 
 Run with a separately authorized read-only token supplied through a
 secrets manager, pinned to the currently observed main SHA:

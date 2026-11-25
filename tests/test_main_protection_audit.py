@@ -12,7 +12,7 @@ CONTEXTS = ('verify', 'actual-broker', 'local-repro', 'contracts', 'evidence')
 
 def valid():
     return ({'name':'main', 'protected':True, 'commit':{'sha':SHA}}, [
-        {'type':'pull_request'}, {'type':'non_fast_forward'}, {'type':'deletion'},
+        {'type':'pull_request', 'parameters':{'required_review_thread_resolution':True}}, {'type':'non_fast_forward'}, {'type':'deletion'},
         {'type':'required_status_checks', 'parameters':{'strict_required_status_checks_policy':True, 'required_status_checks':[{'context':x} for x in CONTEXTS]}},
     ])
 
