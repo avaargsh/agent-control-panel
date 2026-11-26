@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,6 +18,37 @@ import (
 
 func TestSafetyReportCLI(t *testing.T) {
 	now := time.Date(2026, 11, 26, 8, 0, 0, 0, time.UTC)
+	checkSafetyReportCases(t, now, func(t *testing.T, args []string) ([]byte, error) {
+		var out bytes.Buffer
+		err := runSafetyReport(args, &out, now)
+		return out.Bytes(), err
+	})
+}
+
+func TestSafetyReportBinary(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "acp-evidence-verify")
+	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
+		t.Fatalf("build actual command: %v\n%s", err, out)
+	}
+	now := time.Now().UTC().Add(-time.Minute)
+	checkSafetyReportCases(t, now, func(t *testing.T, args []string) ([]byte, error) {
+		cmd := exec.Command(bin, append([]string{"safety-report"}, args...)...)
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		out, err := cmd.Output()
+		if err != nil {
+			if exit, ok := err.(*exec.ExitError); !ok || exit.ExitCode() != 1 || !strings.Contains(stderr.String(), "SAFETY REPORT BLOCKED:") {
+				t.Fatalf("unexpected process failure: %v, %s", err, stderr.String())
+			}
+		} else if stderr.Len() != 0 {
+			t.Fatalf("unexpected success stderr: %s", stderr.String())
+		}
+		return out, err
+	})
+}
+
+func checkSafetyReportCases(t *testing.T, now time.Time, invoke func(*testing.T, []string) ([]byte, error)) {
+	t.Helper()
 	hash := func(raw []byte) string { return fmt.Sprintf("sha256:%x", sha256.Sum256(raw)) }
 	encode := func(v any) []byte {
 		t.Helper()
@@ -42,7 +75,10 @@ func TestSafetyReportCLI(t *testing.T) {
 		{"pass", ep.EvaluationPass, nil, ep.EvaluationPass},
 		{"fail", ep.EvaluationFail, nil, ep.EvaluationFail},
 		{"hold", ep.EvaluationPass, func(_ *safetyReportTrust, s *safetyReportSubmission) { s.Behavioral.Raw = nil }, ep.EvaluationHold},
-		{"expired", ep.EvaluationPass, func(a *safetyReportTrust, _ *safetyReportSubmission) { a.Behavioral.Window.ExpiresAt = now }, ep.EvaluationHold},
+		{"expired", ep.EvaluationPass, func(a *safetyReportTrust, _ *safetyReportSubmission) {
+			a.Behavioral.Window.NotBefore = now.Add(-time.Hour)
+			a.Behavioral.Window.ExpiresAt = now.Add(-time.Second)
+		}, ep.EvaluationHold},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			a, ar := fixture("infra", ep.EvaluationPass)
@@ -60,13 +96,12 @@ func TestSafetyReportCLI(t *testing.T) {
 			if err := os.WriteFile(sp, encode(submission), 0600); err != nil {
 				t.Fatal(err)
 			}
-			var out bytes.Buffer
-			err := runSafetyReport([]string{"--trust", tp, "--submission", sp}, &out, now)
+			out, err := invoke(t, []string{"--trust", tp, "--submission", sp})
 			if (err == nil) != (tc.want == ep.EvaluationPass) {
 				t.Fatalf("unexpected error %v", err)
 			}
 			var summary ep.SafetyDimensionSummary
-			if err := json.Unmarshal(out.Bytes(), &summary); err != nil || summary.Overall != tc.want {
+			if err := json.Unmarshal(out, &summary); err != nil || summary.Overall != tc.want {
 				t.Fatalf("summary %+v, error %v", summary, err)
 			}
 		})
@@ -77,5 +112,17 @@ func TestSafetyReportMissingInputs(t *testing.T) {
 	var out bytes.Buffer
 	if err := runSafetyReport(nil, &out, time.Now()); err == nil || out.Len() != 0 {
 		t.Fatal("missing trust inputs must block")
+	}
+}
+
+func TestSafetyReportHelpIsNotVerification(t *testing.T) {
+	for _, arg := range []string{"--help", "-h"} {
+		t.Run(arg, func(t *testing.T) {
+			var out bytes.Buffer
+			err := runSafetyReport([]string{arg}, &out, time.Now())
+			if err == nil || out.Len() != 0 || !strings.Contains(err.Error(), "Usage of acp-evidence-verify safety-report") || !strings.Contains(err.Error(), "-trust") || !strings.Contains(err.Error(), "-submission") {
+				t.Fatalf("help must describe inputs without verification success: %v", err)
+			}
+		})
 	}
 }
