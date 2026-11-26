@@ -35,3 +35,27 @@ go test -race -count=1 ./internal/evidencepackage ./cmd/acp-evidence-verify
 ```
 
 The binary test builds the actual command and uses temporary synthetic files and test-only signing keys to exercise PASS, FAIL, missing evidence and expired review windows. It checks process exit status, JSON output and stderr behavior. These fixtures are not production evidence; they do not establish verifier independence, real-world observation freshness, revocation, durable replay prevention, sandbox effectiveness or Agent behavioral safety. No output of this CLI replaces an owner-side execution or release gate.
+
+## Audit correlation summary
+
+Add `--audit-summary` to emit the ordinary three verdict fields plus the schema
+`acp.safety-review-summary/v1`, `ReviewedAt` (UTC), `TrustDigest` and
+`SubmissionDigest` (SHA-256 of the exact canonical input file bytes).
+Without this flag, the original three-field output remains unchanged.
+
+Keep the original input files and the summary in an operator-controlled
+archive outside Agent-writable directories. The summary is unsigned
+correlation metadata, not an immutable archive, independently attested
+timestamp, receipt of source observation, or proof of historical acceptance.
+It contains no original evidence bytes. No historical time override is
+provided: a later invocation always applies the current UTC review window.
+
+A nonpassing parsed report still exits 1, including when audit output is
+present. Invalid inputs may emit no summary. An independent archival issuer
+and durable storage with provenance controls are separate prerequisites for
+authenticated historical replay.
+
+```sh
+./bin/acp-evidence-verify safety-report --trust independent-trust.json --submission signed-submission.json --audit-summary
+go test -race -count=1 -v -run '^TestSafetyReportAuditSummary$' ./cmd/acp-evidence-verify
+```
