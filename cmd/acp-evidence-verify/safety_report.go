@@ -46,6 +46,12 @@ func runSafetyReport(args []string, out io.Writer, now time.Time) error {
 	flags.SetOutput(io.Discard)
 	trustPath := flags.String("trust", "", "independently obtained policy and verifier trust configuration")
 	submissionPath := flags.String("submission", "", "submitted signed reports and evidence")
+	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
+		var usage bytes.Buffer
+		flags.SetOutput(&usage)
+		flags.Usage()
+		return errors.New(usage.String())
+	}
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || *trustPath == "" || *submissionPath == "" {
 		return errors.New("safety-report requires --trust and --submission; trust must be independently obtained")
 	}
