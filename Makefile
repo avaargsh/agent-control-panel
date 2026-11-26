@@ -48,9 +48,9 @@ require-go:
 		exit 1; \
 	fi; \
 	raw=$$(go env GOVERSION 2>/dev/null || true); \
-	have=$$(printf '%s\n' "$$raw" | sed -n 's/^go\([0-9][0-9]*\(\.[0-9][0-9]*\)*\).*/\1/p' | head -n 1); \
+	have=$$(printf '%s\n' "$$raw" | sed -n 's/^go\([0-9][0-9]*\(\.[0-9][0-9]*\)*\)$$/\1/p' | head -n 1); \
 	if [ -z "$$have" ]; then \
-		printf '%s\n' "error: could not parse the local Go version from 'go env GOVERSION' (got: $${raw:-empty}). This Makefile sets GOTOOLCHAIN=local and does not download a toolchain." >&2; \
+		printf '%s\n' "error: a stable local Go release is required; unexpected 'go env GOVERSION' (got: $${raw:-empty}). This Makefile sets GOTOOLCHAIN=local and does not download a toolchain." >&2; \
 		exit 1; \
 	fi; \
 	version_at_least() { \
