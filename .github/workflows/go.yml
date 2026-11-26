@@ -59,6 +59,9 @@ jobs:
           go mod verify
           go mod tidy
           git diff --exit-code -- go.mod go.sum
+      # Exercise the root Makefile. This does not replace the checks below.
+      - name: Makefile lint and build
+        run: make lint build
       - name: Apply PostgreSQL schema
         env:
           PGPASSWORD: agent-ci
