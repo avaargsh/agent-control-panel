@@ -126,3 +126,30 @@ func TestSafetyReportHelpIsNotVerification(t *testing.T) {
 		})
 	}
 }
+
+func TestSafetyReportAuditSummary(t *testing.T) {
+	now := time.Date(2026, 11, 26, 8, 0, 0, 0, time.UTC)
+	checkSafetyReportCases(t, now, func(t *testing.T, args []string) ([]byte, error) {
+		var out bytes.Buffer
+		err := runSafetyReport(append(args, "--audit-summary"), &out, now)
+		var audit struct {
+			Schema           string
+			ReviewedAt       time.Time
+			TrustDigest      string
+			SubmissionDigest string
+		}
+		if decodeErr := json.Unmarshal(out.Bytes(), &audit); decodeErr != nil {
+			t.Fatalf("missing structured audit summary: %v", decodeErr)
+		}
+		if audit.Schema != "acp.safety-review-summary/v1" || !audit.ReviewedAt.Equal(now) {
+			t.Fatalf("incorrect audit schema or review time: %+v", audit)
+		}
+		for _, pair := range []struct{ path, digest string }{{args[1], audit.TrustDigest}, {args[3], audit.SubmissionDigest}} {
+			raw, readErr := os.ReadFile(pair.path)
+			if readErr != nil || pair.digest != fmt.Sprintf("sha256:%x", sha256.Sum256(raw)) {
+				t.Fatalf("audit digest must bind original file bytes: %v", readErr)
+			}
+		}
+		return out.Bytes(), err
+	})
+}
