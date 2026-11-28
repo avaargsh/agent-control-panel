@@ -1,0 +1,70 @@
+name: ${ACP_DEV_PROJECT_NAME:?use deploy/dev/compose.sh}
+
+services:
+  db:
+    image: postgres:16.16-bookworm@sha256:1cc14a4b410cff12cedfc872f94682860aa9ce4482723df399f738f9d5caa0e9
+    environment:
+      POSTGRES_USER: acp_dev
+      POSTGRES_DB: acp_dev
+      POSTGRES_PASSWORD_FILE: /run/secrets/dev_postgres
+    secrets:
+      - dev_postgres
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "acp_dev", "-d", "acp_dev"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    networks: [storage]
+
+  migrate:
+    build:
+      context: ../..
+      dockerfile: deploy/dev/Dockerfile
+      target: migrate
+    environment:
+      ACP_DEV_PG_ADDRESS: db:5432
+      ACP_DEV_PG_PASSWORD_FILE: /run/secrets/dev_postgres
+    secrets:
+      - dev_postgres
+    networks: [storage]
+    depends_on:
+      db:
+        condition: service_healthy
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: "no"
+
+  ops:
+    build:
+      context: ../..
+      dockerfile: deploy/dev/Dockerfile
+      target: ops
+    environment:
+      LISTEN_ADDR: 0.0.0.0:8080
+    ports:
+      - "127.0.0.1:${ACP_DEV_HTTP_PORT:-18080}:8080"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: ["CMD", "/acp-devctl", "probe"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+networks:
+  storage:
+    internal: true
+
+volumes:
+  postgres:
+
+secrets:
+  dev_postgres:
+    file: ./.secrets/postgres-password

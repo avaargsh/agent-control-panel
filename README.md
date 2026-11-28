@@ -59,6 +59,7 @@ Use the [PR evidence template](.github/PULL_REQUEST_TEMPLATE.md) to record the b
 
 ## Documentation
 
+- [Local Compose development stack](deploy/dev/README.md)
 - [Domain ownership](docs/architecture/DOMAIN-OWNERSHIP.md)
 - [Architecture baseline](docs/architecture/BASELINE.md)
 - [P0 Golden Path design](docs/roadmap/P0-GOLDEN-PATH.md)
