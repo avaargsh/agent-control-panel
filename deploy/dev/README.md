@@ -33,9 +33,11 @@ keeping the volume: the stored project name selects that volume, and deleting
 the password file does not rotate an initialized database password.
 
 The database role is the isolated development bootstrap owner, not a production
-service role. Image tags pin toolchain and database versions; image digests and
-cross-service Runtime/Temporal versions require separate validation before
-release. The HTTP readiness check covers the Operations process only. The path-filtered
+service role. The [Go builder](https://hub.docker.com/layers/library/golang/1-bookworm/)
+and [PostgreSQL image](https://hub.docker.com/layers/library/postgres/16.16-bookworm/images/sha256-d755a91aff87574a57060f86ecc0d55f83ccb51ceec6ec6f904c1210d018d998)
+use immutable multi-platform image indexes. Update each digest together with
+its tag and version assertion, then rerun the smoke. Runtime/Temporal are not
+part of this slice. The HTTP readiness check covers the Operations process only. The path-filtered
 [development Compose workflow](../../.github/workflows/acp-dev-compose.yml)
 runs the documented command on a real Docker runner and verifies persistence
 after down/up plus checkout-scoped cleanup. It is not a production check.

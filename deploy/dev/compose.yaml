@@ -2,7 +2,7 @@ name: ${ACP_DEV_PROJECT_NAME:?use deploy/dev/compose.sh}
 
 services:
   db:
-    image: postgres:16.16-bookworm
+    image: postgres:16.16-bookworm@sha256:1cc14a4b410cff12cedfc872f94682860aa9ce4482723df399f738f9d5caa0e9
     environment:
       POSTGRES_USER: acp_dev
       POSTGRES_DB: acp_dev
