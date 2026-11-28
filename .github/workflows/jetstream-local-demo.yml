@@ -26,6 +26,8 @@ jobs:
         with:
           go-version: '1.27.4'
           cache: false
+      - name: Assert patched Go toolchain
+        run: test "$(go env GOVERSION)" = "go1.27.4"
       - name: Check user guide regression cases and shell examples
         run: |
           python3 -m unittest discover -s scripts -p test_check_jetstream_docs.py -v
