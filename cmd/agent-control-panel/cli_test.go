@@ -90,6 +90,8 @@ func TestInvalidFlagsPrintUsageOnStderr(t *testing.T) {
 	}{
 		{name: "unknown", args: []string{"-not-a-flag"}, want: "flag provided but not defined: -not-a-flag"},
 		{name: "bad boolean", args: []string{"-version=nope"}, want: "invalid boolean value"},
+		{name: "disabled version", args: []string{"-version=false"}, want: "omit all arguments to start the listener"},
+		{name: "terminator only", args: []string{"--"}, want: "omit all arguments to start the listener"},
 		{name: "positional", args: []string{"extra"}, want: "unexpected argument: extra"},
 		{name: "version with positional", args: []string{"-version", "extra"}, want: "unexpected argument: extra"},
 	}
@@ -141,7 +143,7 @@ func TestResolveBuild(t *testing.T) {
 		{
 			name: "vcs settings and devel version",
 			info: vcs, ok: true,
-			wantVer: "devel", wantRev: "deadbeef", wantDate: "2026-01-02T03:04:05Z", wantMod: "true",
+			wantVer: "devel", wantRev: "deadbeef", wantDate: "unknown", wantMod: "true",
 		},
 		{
 			name: "module pseudo-version is not the printed version",
@@ -158,7 +160,7 @@ func TestResolveBuild(t *testing.T) {
 			name:   "partial link override keeps other vcs values",
 			commit: "abc",
 			info:   vcs, ok: true,
-			wantVer: "devel", wantRev: "abc", wantDate: "2026-01-02T03:04:05Z", wantMod: "true",
+			wantVer: "devel", wantRev: "abc", wantDate: "unknown", wantMod: "true",
 		},
 		{
 			name: "info ignored when unavailable",

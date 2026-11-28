@@ -32,7 +32,7 @@ go build -o bin/agent-control-panel ./cmd/agent-control-panel
 ./bin/agent-control-panel
 ```
 
-`./bin/agent-control-panel -version` prints the version, commit, and build date, then exits without listening or reading the environment. `-h` and `-help` print usage and exit the same way. Empty link-time values fall back to `vcs.revision`, `vcs.time`, and `vcs.modified` from the build; missing values print as `devel` or `unknown`.
+`./bin/agent-control-panel -version` prints the version, commit, and build date, then exits without listening or reading the environment. `-h` and `-help` print usage and exit the same way. If not injected, the version is `devel`; the commit and modified state use `vcs.revision` and `vcs.modified` when available. The build date must be injected; a commit timestamp is not a build date. Unavailable metadata prints as `unknown`. To start the listener, omit all arguments.
 
 ```sh
 ./bin/agent-control-panel -version

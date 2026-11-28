@@ -24,9 +24,9 @@ import (
 //
 //	go build -ldflags "-X main.version= -X main.commit= -X main.buildDate= -X main.modified="
 //
-// Empty version prints as devel. Empty commit, build date, and modified fall
-// back to runtime/debug.ReadBuildInfo settings vcs.revision, vcs.time, and
-// vcs.modified, or print as unknown.
+// Empty version prints as devel. Empty commit and modified fall back to
+// vcs.revision and vcs.modified, or print as unknown. The build date is
+// reported only when injected: the VCS timestamp is not the build time.
 var (
 	version   string
 	commit    string
@@ -112,6 +112,12 @@ func execute(args []string, stdout, stderr io.Writer) (exitCode int, serve bool)
 		}
 		return 0, false
 	}
+	if len(args) != 0 {
+		fmt.Fprintln(stderr, "omit all arguments to start the listener")
+		flags.SetOutput(stderr)
+		flags.Usage()
+		return 2, false
+	}
 	return 0, true
 }
 
@@ -140,10 +146,6 @@ func resolveBuild(linkVersion, linkCommit, linkDate, linkModified string, info *
 			case "vcs.revision":
 				if rev == "" {
 					rev = setting.Value
-				}
-			case "vcs.time":
-				if built == "" {
-					built = setting.Value
 				}
 			case "vcs.modified":
 				if mod == "" {
