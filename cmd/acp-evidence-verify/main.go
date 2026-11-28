@@ -121,6 +121,13 @@ func run(args []string) error {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "safety-report" {
+		if err := runSafetyReport(os.Args[2:], os.Stdout, time.Now().UTC()); err != nil {
+			fmt.Fprintln(os.Stderr, "SAFETY REPORT BLOCKED:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if err := run(os.Args[1:]); err != nil {
 		// Deliberately omit raw receipt payloads, tenant IDs and credentials.
 		fmt.Fprintln(os.Stderr, "EVIDENCE PACKAGE BLOCKED:", err)
