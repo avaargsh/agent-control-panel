@@ -27,7 +27,24 @@ import (
 // The pinned workflow builds the real agent-runtime API executable. This
 // is not evidence of Temporal execution or initiating-principal AuthZ.
 func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.T) {
+	testCrossServiceLostACK(t, false)
+}
+
+// TestDisposableIssueGoalLostACK opts into real public Issue reads and a
+// disposable issuer/catalog, but runs only Runtime admission/reconciliation.
+func TestDisposableIssueGoalLostACK(t *testing.T) {
+	if os.Getenv("ACP_DISPOSABLE_ISSUE_RECOVERY") != "1" {
+		t.Skip("requires separate disposable ACP and Runtime databases and an isolated live issuer")
+	}
+	testCrossServiceLostACK(t, true)
+}
+
+func testCrossServiceLostACK(t *testing.T, issueGoal bool) {
+	t.Helper()
 	if os.Getenv("ACP_CROSS_SERVICE") != "1" {
+		if issueGoal {
+			t.Fatal("Issue recovery also requires ACP_CROSS_SERVICE=1")
+		}
 		t.Skip("only the two-service mTLS/PostgreSQL job enables this test")
 	}
 	acpDSN, runtimeDSN, binary := os.Getenv("ACP_DATABASE_URL"), os.Getenv("ACP_RUNTIME_DATABASE_URL"), os.Getenv("ACP_RUNTIME_API_BIN")
@@ -35,7 +52,16 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 		t.Fatal("two independent databases and pinned Runtime executable are required")
 	}
 	golden := os.Getenv("ACP_GOLDEN_PATH") == "1"
+	if issueGoal {
+		if golden {
+			t.Fatal("public Issue recovery must not enable workflow execution")
+		}
+		requireDisposableIssueRecovery(t, acpDSN, runtimeDSN)
+	}
 	timeout := 90 * time.Second
+	if issueGoal && os.Getenv("ACP_DISPOSABLE_ISSUE_TEMPORAL_TEST_BIN") != "" {
+		timeout = 3 * time.Minute
+	}
 	if golden {
 		timeout = 8 * time.Minute
 		if os.Getenv("ACP_RUNTIME_TEMPORAL_TEST_BIN") == "" {
@@ -44,6 +70,10 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
+	if issueGoal {
+		requireEmptyIssueRecoveryDatabase(t, ctx, acpDSN, "acp72_disposable")
+		requireEmptyIssueRecoveryDatabase(t, ctx, runtimeDSN, "runtime72_disposable")
+	}
 	pool, err := pgxpool.New(ctx, acpDSN)
 	if err != nil {
 		t.Fatal(err)
@@ -113,7 +143,9 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if golden {
+	if issueGoal {
+		intent, input = admitDisposableGitHubIssue(t, ctx, pool, repo, intent)
+	} else if golden {
 		intent = admitGoldenPathWithLiveIssuer(t, ctx, pool, repo, intent, input)
 	} else {
 		created, inserted, err := repo.CreateWithInput(ctx, intent, event(1, 1, "agent.run-intent.created"), input)
@@ -508,6 +540,30 @@ func TestCrossServiceLostACKRecoversOneRuntimeRunAfterProcessRestart(t *testing.
 	stored, err := repo.Get(ctx, intent.TenantID, intent.ID)
 	if err != nil || stored.Status != runintent.Accepted || stored.RunID != runID {
 		t.Fatalf("ACP persisted receipt: %+v %v", stored, err)
+	}
+
+	if issueGoal {
+		var counts [3]int
+		err := runtimePool.QueryRow(ctx, `SELECT (SELECT count(*) FROM runs), (SELECT count(*) FROM runtime_outbox WHERE event_type='RUN_START_REQUESTED'), (SELECT count(*) FROM runtime_run_principal_snapshots)`).Scan(&counts[0], &counts[1], &counts[2])
+		if err != nil || counts != [3]int{1, 1, 1} {
+			t.Fatalf("disposable Runtime database has unexpected runs/start-requests/principal snapshots: %v (%v)", counts, err)
+		}
+		if binary := os.Getenv("ACP_DISPOSABLE_ISSUE_TEMPORAL_TEST_BIN"); binary != "" {
+			driver := exec.CommandContext(ctx, binary, "-test.v", "-test.run=^TestExternalIssueAdmissionTemporalRecovery$")
+			driver.Env = append(goldenPathChildEnvironment(),
+				"RUNTIME_EXTERNAL_ISSUE_TEST=1", "RUNTIME_ISSUE_DATABASE_URL="+runtimeDSN,
+				"RUNTIME_ISSUE_TENANT="+intent.TenantID, "RUNTIME_ISSUE_INTENT="+intent.ID,
+				"RUNTIME_ISSUE_DIGEST="+intent.RequestDigest, "RUNTIME_ISSUE_RUN="+runID,
+				"RUNTIME_ISSUE_TEMPORAL_CLI="+os.Getenv("ACP_DISPOSABLE_ISSUE_TEMPORAL_CLI"))
+			output, err := driver.CombinedOutput()
+			if err != nil || !bytes.Contains(output, []byte("--- PASS: TestExternalIssueAdmissionTemporalRecovery")) {
+				t.Fatalf("external Issue Temporal probe failed: %v\n%s", err, output)
+			}
+			t.Logf("same-Run identity-only Temporal probe:\n%s", output)
+			return
+		}
+		t.Logf("Issue-derived RunIntent %s recovered as the only Runtime Run %s; one start request, no workflow or tool ran", intent.ID, runID)
+		return
 	}
 
 	// Exercise the same ACP Run in the actual pinned Runtime Temporal
