@@ -141,3 +141,21 @@ one Run, one start request and one matching principal snapshot. The public
 repository is read-only in this test. It does not consume the start request,
 execute tools, start Temporal, grant a permit, or prove a production release.
 Discard both databases and the issuer realm after the run.
+
+To additionally verify the same Run with the identity-only development
+workflow, build the Runtime test driver from a checkout containing
+`TestExternalIssueAdmissionTemporalRecovery`:
+
+```sh
+go test -race -c -o /absolute/path/runtime-issue-temporal ./internal/store/postgres
+```
+
+Also set `ACP_DISPOSABLE_ISSUE_TEMPORAL_TEST_BIN` to that driver and
+`ACP_DISPOSABLE_ISSUE_TEMPORAL_CLI` to a verified local Temporal CLI 1.10.0,
+then rerun the previous ACP command with fresh databases. The nested test
+consumes the original start request, loses its Temporal acknowledgment,
+restarts the dev server with its existing history, then kills the Worker
+after its Attempt/Turn transaction commits. It requires the next Worker
+to reuse the same execution, Attempt and Turn. It registers only the
+identity probe, never the business workflow; the business Run remains
+QUEUED with no Decision checkpoint and no model or tool authorization.

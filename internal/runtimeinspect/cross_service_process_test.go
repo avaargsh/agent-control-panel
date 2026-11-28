@@ -59,6 +59,9 @@ func testCrossServiceLostACK(t *testing.T, issueGoal bool) {
 		requireDisposableIssueRecovery(t, acpDSN, runtimeDSN)
 	}
 	timeout := 90 * time.Second
+	if issueGoal && os.Getenv("ACP_DISPOSABLE_ISSUE_TEMPORAL_TEST_BIN") != "" {
+		timeout = 3 * time.Minute
+	}
 	if golden {
 		timeout = 8 * time.Minute
 		if os.Getenv("ACP_RUNTIME_TEMPORAL_TEST_BIN") == "" {
@@ -544,6 +547,20 @@ func testCrossServiceLostACK(t *testing.T, issueGoal bool) {
 		err := runtimePool.QueryRow(ctx, `SELECT (SELECT count(*) FROM runs), (SELECT count(*) FROM runtime_outbox WHERE event_type='RUN_START_REQUESTED'), (SELECT count(*) FROM runtime_run_principal_snapshots)`).Scan(&counts[0], &counts[1], &counts[2])
 		if err != nil || counts != [3]int{1, 1, 1} {
 			t.Fatalf("disposable Runtime database has unexpected runs/start-requests/principal snapshots: %v (%v)", counts, err)
+		}
+		if binary := os.Getenv("ACP_DISPOSABLE_ISSUE_TEMPORAL_TEST_BIN"); binary != "" {
+			driver := exec.CommandContext(ctx, binary, "-test.v", "-test.run=^TestExternalIssueAdmissionTemporalRecovery$")
+			driver.Env = append(goldenPathChildEnvironment(),
+				"RUNTIME_EXTERNAL_ISSUE_TEST=1", "RUNTIME_ISSUE_DATABASE_URL="+runtimeDSN,
+				"RUNTIME_ISSUE_TENANT="+intent.TenantID, "RUNTIME_ISSUE_INTENT="+intent.ID,
+				"RUNTIME_ISSUE_DIGEST="+intent.RequestDigest, "RUNTIME_ISSUE_RUN="+runID,
+				"RUNTIME_ISSUE_TEMPORAL_CLI="+os.Getenv("ACP_DISPOSABLE_ISSUE_TEMPORAL_CLI"))
+			output, err := driver.CombinedOutput()
+			if err != nil || !bytes.Contains(output, []byte("--- PASS: TestExternalIssueAdmissionTemporalRecovery")) {
+				t.Fatalf("external Issue Temporal probe failed: %v\n%s", err, output)
+			}
+			t.Logf("same-Run identity-only Temporal probe:\n%s", output)
+			return
 		}
 		t.Logf("Issue-derived RunIntent %s recovered as the only Runtime Run %s; one start request, no workflow or tool ran", intent.ID, runID)
 		return
