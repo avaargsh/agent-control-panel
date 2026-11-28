@@ -35,4 +35,7 @@ the password file does not rotate an initialized database password.
 The database role is the isolated development bootstrap owner, not a production
 service role. Image tags pin toolchain and database versions; image digests and
 cross-service Runtime/Temporal versions require separate validation before
-release. The HTTP readiness check covers the Operations process only.
+release. The HTTP readiness check covers the Operations process only. The path-filtered
+[development Compose workflow](../../.github/workflows/acp-dev-compose.yml)
+runs the documented command on a real Docker runner and verifies persistence
+after down/up plus checkout-scoped cleanup. It is not a production check.
