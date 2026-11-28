@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/avaargsh/agent-control-panel/internal/authoritycutover"
 	"github.com/avaargsh/agent-control-panel/internal/authorityhttp"
 	runpg "github.com/avaargsh/agent-control-panel/internal/runintent/postgres"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -26,6 +27,7 @@ type config struct {
 	dsn, cert, key, ca, peer, tenant, address string
 	releaseDirectory, publicationKey          string
 	guardPeer, guardAddress                   string
+	cutoverDSN, cutoverLogin                  string
 }
 
 func readConfig(getenv func(string) string) (config, error) {
@@ -37,12 +39,17 @@ func readConfig(getenv func(string) string) (config, error) {
 		releaseDirectory: getenv("ACP_AUTHORITY_RELEASE_DIRECTORY"), publicationKey: getenv("ACP_AUTHORITY_PUBLICATION_KEY"),
 		guardPeer:    getenv("ACP_AUTHORITY_GUARD_PEER_SPIFFE_ID"),
 		guardAddress: getenv("ACP_AUTHORITY_GUARD_LISTEN_ADDR"),
+		cutoverDSN:   getenv("ACP_AUTHORITY_CUTOVER_OBSERVER_DATABASE_URL"),
+		cutoverLogin: getenv("ACP_AUTHORITY_CUTOVER_OBSERVER_LOGIN"),
 	}
 	if c.dsn == "" || c.cert == "" || c.key == "" || c.ca == "" || c.peer == "" || c.tenant == "" {
 		return config{}, errors.New("database, mTLS trust and tenant configuration required")
 	}
 	if (c.releaseDirectory == "") != (c.publicationKey == "") {
 		return config{}, errors.New("publication requires both release artifacts and signing key")
+	}
+	if (c.cutoverDSN == "") != (c.cutoverLogin == "") {
+		return config{}, errors.New("cutover barrier requires an independent observer database URL and LOGIN")
 	}
 	if c.address == "" {
 		c.address = "127.0.0.1:8444"
@@ -68,12 +75,14 @@ func serve(ctx context.Context, c config) error {
 	if !cas.AppendCertsFromPEM(pem) {
 		return errors.New("invalid authority client CA")
 	}
+	primaryFence := authoritycutover.NewPrimaryFence()
 	cfg, err := pgxpool.ParseConfig(c.dsn)
 	if err != nil {
 		return errors.New("invalid authority database configuration")
 	}
 	// Defense in depth; production must also enforce DB role restrictions.
 	cfg.ConnConfig.RuntimeParams["default_transaction_read_only"] = "on"
+	cfg.BeforeAcquire = primaryFence.BeforeAcquire
 	cfg.MaxConns = 8
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
@@ -90,6 +99,48 @@ func serve(ctx context.Context, c config) error {
 	// both Guard-only catalog observation endpoints.
 	if err := verifyAuthorityDatabaseRole(ctx, pool); err != nil {
 		return err
+	}
+	var cutoverPool *pgxpool.Pool
+	var requestGate authoritycutover.RequestGate
+	if c.cutoverDSN != "" {
+		cutoverConfig, err := pgxpool.ParseConfig(c.cutoverDSN)
+		if err != nil {
+			return errors.New("invalid authority cutover observer database configuration")
+		}
+		cutoverConfig.ConnConfig.RuntimeParams["default_transaction_read_only"] = "on"
+		cutoverConfig.BeforeAcquire = primaryFence.BeforeAcquire
+		cutoverConfig.MaxConns = 8
+		cutoverPool, err = pgxpool.NewWithConfig(ctx, cutoverConfig)
+		if err != nil {
+			return errors.New("authority cutover observer database unavailable")
+		}
+		defer cutoverPool.Close()
+		pingCtx, stop := context.WithTimeout(ctx, 5*time.Second)
+		err = cutoverPool.Ping(pingCtx)
+		stop()
+		if err != nil {
+			return errors.New("authority cutover observer database unavailable")
+		}
+		// Full append-only history verification is a startup/coordinator
+		// operation. Per-request admission uses the bounded indexed head.
+		if _, err := authoritycutover.NewPostgresStore(cutoverPool).ObserveVerified(
+			ctx, c.cutoverLogin, authoritycutover.ObserverRole,
+		); err != nil {
+			return errors.New("authority cutover observer LOGIN or durable ledger failed startup verification")
+		}
+		if err := primaryFence.Initialize(ctx, pool, cutoverPool); err != nil {
+			return errors.New("authority and cutover observer pools must remain pinned to the same writable PostgreSQL primary")
+		}
+		fenceConn, err := cutoverPool.Acquire(ctx)
+		if err != nil {
+			return errors.New("authority cutover DDL fence unavailable")
+		}
+		fenceErr := authoritycutover.VerifyDDLBarrier(ctx, fenceConn.Conn())
+		fenceConn.Release()
+		if fenceErr != nil {
+			return errors.New("authority cutover DDL fence unavailable")
+		}
+		requestGate = authoritycutover.NewPostgresBarrier(cutoverPool, c.cutoverLogin, authoritycutover.ObserverRole)
 	}
 	readGuard := func(requestCtx context.Context) error {
 		return verifyAuthorityDatabaseRole(requestCtx, pool)
@@ -115,16 +166,36 @@ func serve(ctx context.Context, c config) error {
 			return err
 		}
 		defer publisher.Close()
-		handler, err = authorityhttp.NewGuardedPublicationHandler(repo, publisher, c.peer, c.tenant, readGuard)
+		if requestGate != nil {
+			handler, err = authorityhttp.NewBarrierGuardedPublicationHandler(repo, publisher, c.peer, c.tenant, readGuard, requestGate)
+		} else {
+			handler, err = authorityhttp.NewGuardedPublicationHandler(repo, publisher, c.peer, c.tenant, readGuard)
+		}
 		if err != nil {
 			return err
 		}
 		if c.guardPeer != "" {
-			readOnlyGuard, err := authorityhttp.NewGuardCapabilityHandler(repo, publisher, c.guardPeer, c.tenant)
-			if err != nil {
-				return err
+			var readOnlyGuard, protectedGuard http.Handler
+			if requestGate != nil {
+				// Both Guard-only endpoints use the same admission/DDL fence
+				// as Run Authority and Decision Publication. The role checks
+				// run after admission and bracket each catalog read.
+				readOnlyGuard, err = authorityhttp.NewBarrierGuardCapabilityHandler(
+					repo, publisher, c.guardPeer, c.tenant, readGuard, requestGate,
+				)
+				if err != nil {
+					return err
+				}
+				protectedGuard, err = authorityhttp.NewBarrierGuardProtectedWorkspaceHandler(
+					repo, publisher, c.guardPeer, c.tenant, readGuard, requestGate,
+				)
+			} else {
+				readOnlyGuard, err = authorityhttp.NewGuardCapabilityHandler(repo, publisher, c.guardPeer, c.tenant)
+				if err != nil {
+					return err
+				}
+				protectedGuard, err = authorityhttp.NewGuardProtectedWorkspaceHandler(repo, publisher, c.guardPeer, c.tenant)
 			}
-			protectedGuard, err := authorityhttp.NewGuardProtectedWorkspaceHandler(repo, publisher, c.guardPeer, c.tenant)
 			if err != nil {
 				return err
 			}
@@ -134,10 +205,18 @@ func serve(ctx context.Context, c config) error {
 			mux := http.NewServeMux()
 			mux.Handle(authorityhttp.GuardCapabilityPath, readOnlyGuard)
 			mux.Handle(authorityhttp.GuardProtectedWorkspacePath, protectedGuard)
-			guardHandler = requireAuthorityReadRole(mux, readGuard)
+			if requestGate != nil {
+				guardHandler = mux
+			} else {
+				guardHandler = requireAuthorityReadRole(mux, readGuard)
+			}
 		}
 	} else {
-		handler, err = authorityhttp.NewGuardedHandler(repo, c.peer, c.tenant, readGuard)
+		if requestGate != nil {
+			handler, err = authorityhttp.NewBarrierGuardedHandler(repo, c.peer, c.tenant, readGuard, requestGate)
+		} else {
+			handler, err = authorityhttp.NewGuardedHandler(repo, c.peer, c.tenant, readGuard)
+		}
 		if err != nil {
 			return err
 		}

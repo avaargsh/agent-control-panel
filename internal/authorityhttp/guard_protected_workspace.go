@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/avaargsh/agent-control-panel/internal/authoritycutover"
 	runpg "github.com/avaargsh/agent-control-panel/internal/runintent/postgres"
 )
 
@@ -47,6 +48,31 @@ func (p *Publisher) ObserveProtectedWorkspace(
 // No untrusted caller can select an Intent ID, role, config digest or tenant.
 func NewGuardProtectedWorkspaceHandler(
 	reader GuardCapabilityReader, publisher *Publisher, guardPeer, tenant string,
+) (http.Handler, error) {
+	return newGuardProtectedWorkspaceHandler(reader, publisher, guardPeer, tenant, nil, nil)
+}
+
+// NewBarrierGuardProtectedWorkspaceHandler adds a fresh authority-role check
+// and the shared PostgreSQL admission/DDL lease around the Guard-only read.
+func NewBarrierGuardProtectedWorkspaceHandler(
+	reader GuardCapabilityReader,
+	publisher *Publisher,
+	guardPeer, tenant string,
+	readGuard func(context.Context) error,
+	gate authoritycutover.RequestGate,
+) (http.Handler, error) {
+	if readGuard == nil || gate == nil {
+		return nil, ErrPublicationUnavailable
+	}
+	return newGuardProtectedWorkspaceHandler(reader, publisher, guardPeer, tenant, readGuard, gate)
+}
+
+func newGuardProtectedWorkspaceHandler(
+	reader GuardCapabilityReader,
+	publisher *Publisher,
+	guardPeer, tenant string,
+	readGuard func(context.Context) error,
+	gate authoritycutover.RequestGate,
 ) (http.Handler, error) {
 	if nilReaderInterface(reader) || publisher == nil || publisher.root == nil ||
 		!validIdentity(guardPeer) || !validTenant(tenant) {
@@ -87,9 +113,18 @@ func NewGuardProtectedWorkspaceHandler(
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
 		defer cancel()
+		finish, admitted := acquireGuardAdmission(w, ctx, gate, fail, "AUTHORITY_UNAVAILABLE")
+		if !admitted {
+			return
+		}
+		if finish != nil {
+			defer finish()
+		}
+		if !checkGuardAuthorityRole(ctx, readGuard, fail, "AUTHORITY_UNAVAILABLE") {
+			return
+		}
 		current, input, err := reader.GetGuardRunAuthority(ctx, tenant, q.RunID)
-		if ctx.Err() != nil {
-			fail(http.StatusServiceUnavailable, "AUTHORITY_UNAVAILABLE")
+		if !checkGuardAuthorityRole(ctx, readGuard, fail, "AUTHORITY_UNAVAILABLE") {
 			return
 		}
 		if errors.Is(err, runpg.ErrCatalogDenied) {
