@@ -1,6 +1,6 @@
 # M0 GoalSubmit opt-in TLS host (candidate, no Runtime dispatch)
 
-**Status:** candidate feature on stacked PR #86. This command starts a real TLS listener but only accepts a PostgreSQL-authoritative ACP **RunIntent**, not a Runtime Run, Agent execution, GitHub pull request, Guard Permit or approved release. It is not enabled in the default read-only ACP binary. Do not call this production ready without independent review and live provider acceptance.
+**Status:** non-production, opt-in feature present in main following [PR #86](https://github.com/avaargsh/agent-control-panel/pull/86). This command starts a real TLS listener but only accepts a PostgreSQL-authoritative ACP **RunIntent**, not a Runtime Run, Agent execution, GitHub pull request, Guard Permit or approved release. It is not enabled in the default read-only ACP binary. Do not call this production ready without independent review and live provider acceptance.
 
 ## Authority wiring
 
@@ -51,6 +51,7 @@ export ACP_GOAL_MAX_SANDBOX_SECONDS=300
 
 # Default: require GitHub branch protection. Only for disposable demos,
 # explicitly opt out when the chosen public branch has no protection:
+# export ACP_GOAL_ENV=development
 # export ACP_GOAL_ALLOW_UNPROTECTED_TEST_BRANCH=true
 
 go run ./cmd/acp-goal-api
@@ -88,7 +89,7 @@ go run ./cmd/acp-goal submit \
   --ca-file /run/acp/ca/goal-server-ca.pem
 ```
 
-On `201` and `200`, the CLI checks the server's schema and request digest against the exact immutable prepared input, checks the RunIntent receipt fields and status/created consistency, and prints only the verified acceptance JSON. It will not call a GitHub write API or execute Runtime work. On any TLS, HTTP, or invalid-receipt error, no acceptance JSON is emitted. A network timeout has an **unknown outcome**; check the authoritative ACP database before replaying the same idempotency key.
+On `201` and `200`, the CLI checks the server's schema and request digest against the exact immutable prepared input, checks the RunIntent receipt fields and status/created consistency, and prints only the verified acceptance JSON. It will not call a GitHub write API or execute Runtime work. On any TLS, HTTP, or invalid-receipt error, no acceptance JSON is emitted. A network timeout has an **unknown outcome**; reconcile the original Prepared JSON using the authenticated read-only status procedure below and authoritative ACP/Runtime records before considering any replay.
 
 ### Crash-safe local attempt hold record (opt-in)
 
@@ -106,7 +107,7 @@ go run ./cmd/acp-goal submit \
 
 The `acp.goal-submit-hold/v1` JSON includes only the tenant/project/agent/release/session selectors, original `idempotency_key`, `request_digest`, and conservative `UNKNOWN/HOLD` disposition. It **never** contains a bearer, raw execution input, server response, or Runtime identity. The parent directory must already be private (0700); the newly created file is 0600 and cannot overwrite earlier attempt evidence. A new attempt needs a distinct operator-approved filename; do not generate a new filename simply to bypass an existing HOLD. Keep selectors private and follow ordinary retention controls.
 
-A marker is **not** evidence that the server committed or rejected a RunIntent, and `UNKNOWN/HOLD` remains conservative even when the CLI separately printed a valid acceptance receipt. On transport ambiguity, stop and reconcile the original tuple with ACP's authenticated PostgreSQL authority and Runtime's separate authoritative records; an absent database row at one instant is **not** a final absence certificate. Never blindly POST again or infer execution success from this file. The current Goal HTTP host has no read-only lookup endpoint; this option does not create one or bypass branch protection.
+A marker is **not** evidence that the server committed or rejected a RunIntent, and `UNKNOWN/HOLD` remains conservative even when the CLI separately printed a valid acceptance receipt. On transport ambiguity, stop and reconcile the original tuple with ACP's authenticated PostgreSQL authority and Runtime's separate authoritative records; an absent database row at one instant is **not** a final absence certificate. Never blindly POST again or infer execution success from this file. The host now offers the authenticated read-only Goal status endpoint described below. A HOLD file does not replace that lookup or bypass branch protection.
 
 The CLI deliberately only permits a direct numeric loopback endpoint and a bounded TLS server response. It cannot currently connect through remote ingress or a proxy; production host deployment and genuine OAuth/GitHub/DB joint validation remain separate acceptance gates.
 
@@ -161,7 +162,7 @@ operator-owned marker path to `status`:
 ```sh
 go run ./cmd/acp-goal status \
   --file /tmp/acp-proposal.json \
-  --hold-record /run/acp/hold/attempt-001.json \
+  --hold-record /run/acp/goal-hold/attempt-001.json \
   --url https://127.0.0.1:9443/api/v1/goals:status \
   --token-file /run/acp/secrets/goal-bearer \
   --ca-file /run/acp/ca/goal-server-ca.pem

@@ -1,6 +1,6 @@
 # Issue Goal input preparation (M0 candidate, non-dispatch)
 
-This is the **offline** user-facing input step toward ACP's GitHub Issue → PR Golden Path. It prepares a strictly validated, immutable input proposal; **prepare alone** does not submit a Goal, admit a RunIntent, start a Runtime Run, contact GitHub, enforce budgets, run a model, or grant any protected operation. An opt-in, loopback-only HTTPS admission host and an explicit `acp-goal submit` client are now available as **candidate features in stacked PR #86**. They only admit an ACP RunIntent; they do not dispatch or create a PR. See [the TLS host and client guide](ISSUE-GOAL-TLS-HOST.md).
+This is the **offline** user-facing input step toward ACP's GitHub Issue → PR Golden Path. It prepares a strictly validated, immutable input proposal; **prepare alone** does not submit a Goal, admit a RunIntent, start a Runtime Run, contact GitHub, enforce budgets, run a model, or grant any protected operation. An opt-in, loopback-only HTTPS admission host and an explicit `acp-goal submit` client are present in main following [PR #86](https://github.com/avaargsh/agent-control-panel/pull/86). They only admit an ACP RunIntent; they do not dispatch or create a PR. The read-only `acp-goal status` command can reconcile the original admission after an ambiguous ACK; it is not a Runtime status or permission to retry. These remain non-production features. See [the TLS host and client guide](ISSUE-GOAL-TLS-HOST.md).
 
 ## Try the offline demo
 
@@ -11,7 +11,11 @@ demo_dir="$(mktemp -d)"
 go build -o "$demo_dir/acp-goal" ./cmd/acp-goal
 "$demo_dir/acp-goal" prepare --file docs/examples/issue-goal.example.json > "$demo_dir/proposal.json"
 cat "$demo_dir/proposal.json"
+"$demo_dir/acp-goal" prepare --file - < docs/examples/issue-goal.example.json > "$demo_dir/proposal-stdin.json"
+cmp "$demo_dir/proposal.json" "$demo_dir/proposal-stdin.json"
 ```
+
+A successful `cmp` prints nothing: file and stdin inputs produce identical proposal bytes. The demo requires no database or credentials; module downloads may require network access during the build. Remove the temporary directory when finished with `rm -r -- "$demo_dir"`.
 
 The example uses synthetic SHAs, digests, identifiers, and an Issue URL. A successful `prepare` produces a local proposal from those inputs. For a real goal, copy the manifest and fill in your own IDs, baseline SHAs, and rule digest. Use the public Issue snapshot command below to obtain the Issue digest and save the edited manifest as `/tmp/acp-issue-goal.json` for the subsequent inspect example. The CLI accepts input from standard input with `prepare --file -`.
 
