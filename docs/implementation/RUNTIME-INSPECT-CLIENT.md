@@ -113,3 +113,31 @@ write route or production listener in this PR.
   golden-path acceptance.
 - Do not merge before parent #7 and upstream contract G01–G05
   acceptance. Evidence stays scoped to the exact PR head and CI run.
+
+### Disposable public Issue round-trip
+
+For a developer-operated integration check, use fresh loopback PostgreSQL
+databases named `acp72_disposable` and `runtime72_disposable`, and an isolated,
+TLS-enabled test realm (`/realms/acp-ci`) with the disposable issuer clients
+defined in [the issuer fixture](../../scripts/test-real-oidc-admission.sh).
+Set `ACP_DATABASE_URL` and `ACP_RUNTIME_DATABASE_URL` to the respective
+`postgres://` DSNs with `sslmode=disable`. Set the `ACP_REAL_IDP_ISSUER`,
+`ACP_REAL_IDP_CA`, `ACP_REAL_IDP_SECRET` and `ACP_REAL_RUNNER_SECRET` fixture
+values. Build `./cmd/acp-api` from the verified Runtime commit
+`037888dddc6de90de3a9a18dead86efbe8fbf0fb` and set `ACP_RUNTIME_API_BIN` to
+that executable. Do not set `ACP_GOLDEN_PATH` or use long-lived infrastructure.
+
+```sh
+ACP_CROSS_SERVICE=1 ACP_REAL_IDP=1 ACP_DISPOSABLE_ISSUE_RECOVERY=1 \
+  go test -race -count=1 -v -run '^TestDisposableIssueGoalLostACK$' ./internal/runtimeinspect
+```
+
+The test reads public `avaargsh/tmp#1` and its pinned main commit, submits
+through the ACP HTTPS handler, and verifies same-request replay and denial
+after disposable membership revocation. It then drops a successful Runtime
+acceptance response, kills and restarts the Runtime API, and recovers the
+same Run after killing an ACP reconciler. The resulting database contains
+one Run, one start request and one matching principal snapshot. The public
+repository is read-only in this test. It does not consume the start request,
+execute tools, start Temporal, grant a permit, or prove a production release.
+Discard both databases and the issuer realm after the run.

@@ -26,6 +26,51 @@ import (
 // is allowed on the primary Golden Path.
 func admitGoldenPathWithLiveIssuer(t *testing.T, ctx context.Context, pool *pgxpool.Pool, repo *runpg.Repository, target runintent.Intent, input []byte) runintent.Intent {
 	t.Helper()
+	auth, token := provisionLiveIssuerCatalog(t, ctx, pool, target)
+	policy, err := admission.NewCatalogPolicy(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := admission.New(repo, admission.NewBearerResolver(auth, policy, token))
+	request := admission.Request{
+		Target: admission.Target{
+			TenantID: target.TenantID, ProjectID: target.ProjectID, AgentID: target.AgentID,
+			ReleaseID: target.ReleaseID, SessionID: target.SessionID,
+		},
+		IdempotencyKey: target.IdempotencyKey,
+	}
+	first, created, err := service.AdmitWithInput(ctx, request, input)
+	if err != nil || !created || first.Status != runintent.Pending || first.PrincipalID != target.PrincipalID ||
+		first.PrincipalSnapshot.SubjectID != target.PrincipalSnapshot.SubjectID ||
+		first.PrincipalSnapshot.ActorID != first.PrincipalSnapshot.SubjectID ||
+		first.PrincipalSnapshot.PolicyRevision != target.PrincipalSnapshot.PolicyRevision {
+		t.Fatalf("live OAuth/catalog atomic admission failed: %v", err)
+	}
+	got, err := repo.GetExecutionInput(ctx, first.TenantID, first.ID)
+	if err != nil || !bytes.Equal(got, input) {
+		t.Fatalf("admitted execution input differs: %v", err)
+	}
+	replay, created, err := service.AdmitWithInput(ctx, request, input)
+	if err != nil || created || replay.ID != first.ID {
+		t.Fatalf("live admission replay changed identity: %v", err)
+	}
+	// Verify denial on a live token after role revocation, restore only the
+	// disposable catalog so the following admitted run test stays authorized.
+	if _, err := pool.Exec(ctx, "UPDATE admission_memberships SET role='VIEWER' WHERE tenant_id=$1", first.TenantID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := service.AdmitWithInput(ctx, request, input); !errors.Is(err, admission.ErrPolicyDenied) {
+		t.Fatalf("live issuer plus revoked role admitted replay: %v", err)
+	}
+	if _, err := pool.Exec(ctx, "UPDATE admission_memberships SET role='RUNNER' WHERE tenant_id=$1", first.TenantID); err != nil {
+		t.Fatal(err)
+	}
+	return first
+}
+
+// provisionLiveIssuerCatalog binds the fixture only to an introspected identity.
+func provisionLiveIssuerCatalog(t *testing.T, ctx context.Context, pool *pgxpool.Pool, target runintent.Intent) (*admission.Introspector, string) {
+	t.Helper()
 	if os.Getenv("ACP_REAL_IDP") != "1" {
 		t.Fatal("Golden Path must use the actual isolated OIDC issuer")
 	}
@@ -101,43 +146,5 @@ func admitGoldenPathWithLiveIssuer(t *testing.T, ctx context.Context, pool *pgxp
 			t.Fatal(err)
 		}
 	}
-	policy, err := admission.NewCatalogPolicy(repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	service := admission.New(repo, admission.NewBearerResolver(auth, policy, issued.Token))
-	request := admission.Request{
-		Target: admission.Target{
-			TenantID: target.TenantID, ProjectID: target.ProjectID, AgentID: target.AgentID,
-			ReleaseID: target.ReleaseID, SessionID: target.SessionID,
-		},
-		IdempotencyKey: target.IdempotencyKey,
-	}
-	first, created, err := service.AdmitWithInput(ctx, request, input)
-	if err != nil || !created || first.Status != runintent.Pending || first.PrincipalID != target.PrincipalID ||
-		first.PrincipalSnapshot.SubjectID != target.PrincipalSnapshot.SubjectID ||
-		first.PrincipalSnapshot.ActorID != first.PrincipalSnapshot.SubjectID ||
-		first.PrincipalSnapshot.PolicyRevision != target.PrincipalSnapshot.PolicyRevision {
-		t.Fatalf("live OAuth/catalog atomic admission failed: %v", err)
-	}
-	got, err := repo.GetExecutionInput(ctx, first.TenantID, first.ID)
-	if err != nil || !bytes.Equal(got, input) {
-		t.Fatalf("admitted execution input differs: %v", err)
-	}
-	replay, created, err := service.AdmitWithInput(ctx, request, input)
-	if err != nil || created || replay.ID != first.ID {
-		t.Fatalf("live admission replay changed identity: %v", err)
-	}
-	// Verify denial on a live token after role revocation, restore only the
-	// disposable catalog so the following admitted run test stays authorized.
-	if _, err := pool.Exec(ctx, "UPDATE admission_memberships SET role='VIEWER' WHERE tenant_id=$1", first.TenantID); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := service.AdmitWithInput(ctx, request, input); !errors.Is(err, admission.ErrPolicyDenied) {
-		t.Fatalf("live issuer plus revoked role admitted replay: %v", err)
-	}
-	if _, err := pool.Exec(ctx, "UPDATE admission_memberships SET role='RUNNER' WHERE tenant_id=$1", first.TenantID); err != nil {
-		t.Fatal(err)
-	}
-	return first
+	return auth, issued.Token
 }
