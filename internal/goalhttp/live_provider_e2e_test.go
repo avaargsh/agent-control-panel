@@ -74,8 +74,7 @@ func TestRealGoalHTTPKeycloakGitHubPostgres(t *testing.T) {
 	if err != nil {
 		var failure *issuegoal.PublicSourceFailure
 		if errors.As(err, &failure) {
-			t.Fatalf("live public GitHub Issue observation failed: operation=%s reason=%s http_status=%d",
-				failure.Operation, failure.Reason, failure.HTTPStatus)
+			t.Fatalf("live public GitHub Issue observation failed: %s", failure.Diagnostic())
 		}
 		t.Fatalf("live public GitHub Issue unavailable: %v", err)
 	}
