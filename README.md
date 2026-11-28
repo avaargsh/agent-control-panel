@@ -32,6 +32,13 @@ go build -o bin/agent-control-panel ./cmd/agent-control-panel
 ./bin/agent-control-panel
 ```
 
+`./bin/agent-control-panel -version` prints the version, commit, and build date, then exits without listening or reading the environment. `-h` and `-help` print usage and exit the same way. If not injected, the version is `devel`; the commit and modified state use `vcs.revision` and `vcs.modified` when available. The build date must be injected; a commit timestamp is not a build date. Unavailable metadata prints as `unknown`. To start the listener, omit all arguments.
+
+```sh
+./bin/agent-control-panel -version
+go build -ldflags "-X main.version=v0.1.0 -X main.commit=abc123 -X main.buildDate=2026-11-28T00:00:00Z -X main.modified=false" -o bin/agent-control-panel ./cmd/agent-control-panel
+```
+
 `LISTEN_ADDR` defaults to `127.0.0.1:8080`. The `control plane listening` log reports the actual bound address. If port 8080 is busy, run `LISTEN_ADDR=127.0.0.1:0 ./bin/agent-control-panel` instead; the OS assigns a free loopback port. Keep the service running in this terminal.
 
 In another terminal, set `ADDR` to the address printed by the service (replace the example below when using a dynamic port):
