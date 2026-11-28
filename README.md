@@ -23,6 +23,23 @@ The operations HTTP service exposes GET endpoints only. The table describes repo
 
 Prerequisites: Git, curl, and the Go version declared by [`go.mod`](go.mod) (prefer the patched version pinned in [CI](.github/workflows/go.yml)). These commands use a POSIX shell on Linux or macOS. The initial build may need network access to download Go modules. The local operations service does not need PostgreSQL, Runtime, Guard, or credentials.
 
+With GNU Make installed, a checkout can also use the root Makefile. `make` with no target runs `make help` and lists the targets. Those targets set `GOTOOLCHAIN=local` and use only the Go toolchain already installed on `PATH`. If `go` is missing, or older than the version in `go.mod`, the target stops with an error and does not download a toolchain.
+
+```sh
+make help
+make lint
+make test
+make build
+make run
+make clean
+```
+
+`make lint` requires `gofmt -l .` to be empty, then runs `go vet ./...` and `go mod verify`. `make build` compiles each main package under `./cmd` into `bin/<name>`: `agent-control-panel`, `acp-authority-api`, `acp-goal-api`, `acp-goal`, `acp-evidence-verify`, and `acp-postfault-verify`. `make run` builds and runs only `bin/agent-control-panel`, honoring `LISTEN_ADDR` the same way as the binary below. `make clean` deletes `bin/` only and does not clear the Go build cache.
+
+`make lint`, `make test`, `make build`, and `make run` do not start PostgreSQL or JetStream. `make test` runs `go test -race -count=1 ./...`. PostgreSQL tests skip when `PGTEST_DSN` is unset, so a passing `make test` is not the full [Go and PostgreSQL workflow](.github/workflows/go.yml). These helpers are for a local checkout. They are not a production deployment, and they do not show database connectivity or end-to-end execution readiness.
+
+The commands below build and run the operations service without `make`.
+
 ```sh
 git clone https://github.com/avaargsh/agent-control-panel.git
 cd agent-control-panel
@@ -43,11 +60,11 @@ curl --fail --show-error --silent "http://$ADDR/readyz"
 curl --fail --show-error --silent "http://$ADDR/api/v1/meta"
 ```
 
-Expected responses, respectively: `ok`, `ready`, and a JSON object with `service` equal to `agent-control-panel` and `api_version` equal to `v1`. Readiness confirms the local HTTP process is available, not database connectivity or end-to-end execution readiness. Stop the service with Ctrl-C in its terminal. To remove the local build, delete `bin/agent-control-panel` from the repository checkout.
+Expected responses, respectively: `ok`, `ready`, and a JSON object with `service` equal to `agent-control-panel` and `api_version` equal to `v1`. Readiness confirms the local HTTP process is available, not database connectivity or end-to-end execution readiness. Stop the service with Ctrl-C in its terminal. To remove the local build, delete `bin/agent-control-panel` from the repository checkout, or run `make clean` to delete `bin/` only.
 
 For source development, `go run ./cmd/agent-control-panel` remains an alternative. Keep the operations listener on loopback for this demo; the endpoints are not a production deployment interface.
 
-Run the Go test suite with `go test -race ./...`. PostgreSQL tests require `PGTEST_DSN` pointing to an isolated test database. The [Go and PostgreSQL workflow](.github/workflows/go.yml) shows the CI setup. The [RunIntent admission guide](docs/implementation/RUNINTENT-ADMISSION.md) documents the opt-in live identity-provider test.
+Run the Go test suite with `go test -race ./...`, or with `make test` (`go test -race -count=1 ./...`). PostgreSQL tests require `PGTEST_DSN` pointing to an isolated test database and skip when `PGTEST_DSN` is unset. Neither command starts PostgreSQL or JetStream. The [Go and PostgreSQL workflow](.github/workflows/go.yml) shows the CI setup. The [RunIntent admission guide](docs/implementation/RUNINTENT-ADMISSION.md) documents the opt-in live identity-provider test.
 
 To try the Goal CLI with the bundled manifest, follow the [offline Issue Goal demo](docs/implementation/ISSUE-GOAL-PREPARE.md#try-the-offline-demo). The demo needs no database or GitHub credentials.
 
