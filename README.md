@@ -23,7 +23,7 @@ The operations HTTP service exposes GET endpoints only. The table describes repo
 
 Prerequisites: Git, curl, and the Go version declared by [`go.mod`](go.mod) (prefer the patched version pinned in [CI](.github/workflows/go.yml)). These commands use a POSIX shell on Linux or macOS. The initial build may need network access to download Go modules. The local operations service does not need PostgreSQL, Runtime, Guard, or credentials.
 
-A checkout can also use the root Makefile. `make` with no target runs `make help` and lists the targets. Those targets set `GOTOOLCHAIN=local` and use only the Go toolchain already installed on `PATH`. If `go` is missing, or older than the version in `go.mod`, the target stops with an error and does not download a toolchain.
+With GNU Make installed, a checkout can also use the root Makefile. `make` with no target runs `make help` and lists the targets. Those targets set `GOTOOLCHAIN=local` and use only the Go toolchain already installed on `PATH`. If `go` is missing, or older than the version in `go.mod`, the target stops with an error and does not download a toolchain.
 
 ```sh
 make help
@@ -34,7 +34,7 @@ make run
 make clean
 ```
 
-`make lint` requires `gofmt -l .` to be empty, then runs `go vet ./...` and `go mod verify`. `make build` compiles each main package under `./cmd` into `bin/<name>`: `agent-control-panel`, `acp-authority-api`, `acp-goal-api`, `acp-goal`, `acp-evidence-verify`, and `acp-postfault-verify`. `make run` builds that set and runs `bin/agent-control-panel`, honoring `LISTEN_ADDR` the same way as the binary below. `make clean` deletes `bin/` only and does not clear the Go build cache.
+`make lint` requires `gofmt -l .` to be empty, then runs `go vet ./...` and `go mod verify`. `make build` compiles each main package under `./cmd` into `bin/<name>`: `agent-control-panel`, `acp-authority-api`, `acp-goal-api`, `acp-goal`, `acp-evidence-verify`, and `acp-postfault-verify`. `make run` builds and runs only `bin/agent-control-panel`, honoring `LISTEN_ADDR` the same way as the binary below. `make clean` deletes `bin/` only and does not clear the Go build cache.
 
 `make lint`, `make test`, `make build`, and `make run` do not start PostgreSQL or JetStream. `make test` runs `go test -race -count=1 ./...`. PostgreSQL tests skip when `PGTEST_DSN` is unset, so a passing `make test` is not the full [Go and PostgreSQL workflow](.github/workflows/go.yml). These helpers are for a local checkout. They are not a production deployment, and they do not show database connectivity or end-to-end execution readiness.
 

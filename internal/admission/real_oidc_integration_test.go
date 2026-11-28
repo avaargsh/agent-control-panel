@@ -178,11 +178,49 @@ func TestRealOIDCServiceAccountCatalogAdmission(t *testing.T) {
 	if _, _, err := New(repo, NewBearerResolver(auth, policy, noScope)).AdmitWithInput(ctx, request, raw); !errors.Is(err, ErrPolicyDenied) {
 		t.Fatalf("token without required scope bypassed policy: %v", err)
 	}
-	if _, err := pool.Exec(ctx, "UPDATE admission_memberships SET role='VIEWER'"); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := service.AdmitWithInput(ctx, request, raw); !errors.Is(err, ErrPolicyDenied) {
-		t.Fatalf("role revocation bypassed by live bearer replay: %v", err)
+	// The issuer can still authenticate a service account after ACP-local
+	// access has been revoked. Check both a prior idempotency key and a
+	// new request, then restore only the changed catalog fact. A fresh
+	// short-lived token per case avoids mistaking expiration for revocation.
+	for _, tc := range []struct {
+		name, revoke, restore string
+	}{
+		{"principal-disabled",
+			"UPDATE admission_principals SET enabled=false WHERE tenant_id='tenant-a' AND principal_id='catalog-principal'",
+			"UPDATE admission_principals SET enabled=true WHERE tenant_id='tenant-a' AND principal_id='catalog-principal'"},
+		{"membership-disabled",
+			"UPDATE admission_memberships SET enabled=false WHERE tenant_id='tenant-a' AND project_id='project-a' AND principal_id='catalog-principal' AND client_id='acp-ci-runner'",
+			"UPDATE admission_memberships SET enabled=true WHERE tenant_id='tenant-a' AND project_id='project-a' AND principal_id='catalog-principal' AND client_id='acp-ci-runner'"},
+		{"role-revoked",
+			"UPDATE admission_memberships SET role='VIEWER' WHERE tenant_id='tenant-a' AND project_id='project-a' AND principal_id='catalog-principal' AND client_id='acp-ci-runner'",
+			"UPDATE admission_memberships SET role='RUNNER' WHERE tenant_id='tenant-a' AND project_id='project-a' AND principal_id='catalog-principal' AND client_id='acp-ci-runner'"},
+	} {
+		liveToken := mint(RunIntentCreateScope)
+		liveService := New(repo, NewBearerResolver(auth, policy, liveToken))
+		before, created, err := liveService.AdmitWithInput(ctx, request, raw)
+		if err != nil || created || before.ID != admitted.ID {
+			t.Fatalf("%s: expected authorized replay before revocation: created=%v err=%v", tc.name, created, err)
+		}
+		if tag, err := pool.Exec(ctx, tc.revoke); err != nil || tag.RowsAffected() != 1 {
+			t.Fatalf("%s: expected exactly one catalog fact revoked: %v", tc.name, err)
+		}
+		if _, err := auth.Authenticate(ctx, liveToken); err != nil {
+			t.Fatalf("%s: token must remain independently authenticated after catalog revocation: %v", tc.name, err)
+		}
+		fresh := request
+		fresh.IdempotencyKey = "live-revoked-" + tc.name
+		for _, denied := range []Request{request, fresh} {
+			if _, created, err := liveService.AdmitWithInput(ctx, denied, raw); !errors.Is(err, ErrPolicyDenied) || created {
+				t.Fatalf("%s: revoked identity admitted: created=%v err=%v", tc.name, created, err)
+			}
+		}
+		if tag, err := pool.Exec(ctx, tc.restore); err != nil || tag.RowsAffected() != 1 {
+			t.Fatalf("%s: expected exactly one catalog fact restored: %v", tc.name, err)
+		}
+		after, created, err := liveService.AdmitWithInput(ctx, request, raw)
+		if err != nil || created || after.ID != admitted.ID {
+			t.Fatalf("%s: expected same authorized replay after restoration: created=%v err=%v", tc.name, created, err)
+		}
 	}
 	// Expiration is tested against the actual IdP, not a fabricated claim.
 	wait := time.Until(id.ExpiresAt) + 2*time.Second

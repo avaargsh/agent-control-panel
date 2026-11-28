@@ -14,7 +14,7 @@
 #   agent-control-panel, acp-authority-api, acp-goal-api, acp-goal,
 #   acp-evidence-verify, acp-postfault-verify.
 
-.PHONY: help lint test build run clean require-go
+.PHONY: help lint test build build-operations run clean require-go
 
 # Recipes, and any Go command they invoke, stay on the installed toolchain.
 override export GOTOOLCHAIN := local
@@ -30,7 +30,7 @@ help:
 	@echo "  make lint   - gofmt -l . must be empty, go vet ./..., and go mod verify (no database, no JetStream)"
 	@echo "  make test   - go test -race -count=1 ./... (PostgreSQL tests skip without PGTEST_DSN; does not start PostgreSQL or JetStream)"
 	@echo "  make build  - compile agent-control-panel, acp-authority-api, acp-goal-api, acp-goal, acp-evidence-verify, and acp-postfault-verify into $(BIN_DIR)/"
-	@echo "  make run    - build and run $(BIN_DIR)/agent-control-panel (honors LISTEN_ADDR)"
+	@echo "  make run    - build and run only $(BIN_DIR)/agent-control-panel (honors LISTEN_ADDR)"
 	@echo "  make clean  - delete $(BIN_DIR)/ only; does not clear the Go build cache"
 
 require-go:
@@ -83,16 +83,18 @@ lint: require-go
 test: require-go
 	go test -race -count=1 ./...
 
-build: require-go
+build-operations: require-go
 	mkdir -p $(BIN_DIR)
 	go build -o $(BIN_DIR)/agent-control-panel ./cmd/agent-control-panel
+
+build: build-operations
 	go build -o $(BIN_DIR)/acp-authority-api ./cmd/acp-authority-api
 	go build -o $(BIN_DIR)/acp-goal-api ./cmd/acp-goal-api
 	go build -o $(BIN_DIR)/acp-goal ./cmd/acp-goal
 	go build -o $(BIN_DIR)/acp-evidence-verify ./cmd/acp-evidence-verify
 	go build -o $(BIN_DIR)/acp-postfault-verify ./cmd/acp-postfault-verify
 
-run: build
+run: build-operations
 	./$(BIN_DIR)/agent-control-panel
 
 clean:
