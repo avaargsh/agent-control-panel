@@ -20,7 +20,9 @@ It fails closed on missing, inaccessible, inconsistent, or ambiguous responses.
 It requires the effective `pull_request` rule to enable
 `required_review_thread_resolution`, and reads **all pages** of effective
 rules with a bounded `per_page=100&page=N` pagination loop. A malformed
-page or an exhausted page bound is BLOCKED rather than a partial pass.
+page or an exhausted page bound is BLOCKED rather than a partial pass. Before
+reporting an observation, the audit reads main again and requires the same
+pinned SHA and protected flag. These reads are not an atomic rules snapshot.
 
 Run with a separately authorized read-only token supplied through a
 secrets manager, pinned to the currently observed main SHA:

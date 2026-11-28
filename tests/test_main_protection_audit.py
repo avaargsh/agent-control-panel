@@ -1,6 +1,9 @@
+from contextlib import redirect_stderr, redirect_stdout
 import importlib.util
+import io
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location('audit', Path(__file__).resolve().parents[1] / 'scripts' / 'audit_main_protection.py')
 audit = importlib.util.module_from_spec(spec)
@@ -91,6 +94,25 @@ class AuditTests(unittest.TestCase):
             audit.fetch_all_effective_rules('avaargsh/agent-control-panel', 'token',
                                             getter=lambda *_: [{'type': 'pull_request'}] * 100,
                                             max_pages=2)
+
+    def test_main_is_rechecked_after_reading_effective_rules(self):
+        branch, rules = valid()
+        for final_branch in (branch, {**branch, 'commit': {'sha': 'b' * 40}},
+                             {**branch, 'protected': False}, {}):
+            with self.subTest(final_branch=final_branch):
+                stdout, stderr = io.StringIO(), io.StringIO()
+                with patch.dict('os.environ', {'ACP_GOVERNANCE_READ_TOKEN': 'test-token'}), \
+                        patch.object(audit, 'fetch', side_effect=[branch, rules, final_branch]) as fetch, \
+                        redirect_stdout(stdout), redirect_stderr(stderr):
+                    code = audit.main(['--repository', 'avaargsh/agent-control-panel',
+                                       '--expected-main', SHA])
+                self.assertEqual(code, 0 if final_branch == branch else 1)
+                self.assertEqual([call.args[1] for call in fetch.call_args_list],
+                                 ['/branches/main', '/rules/branches/main?per_page=100&page=1',
+                                  '/branches/main'])
+                if final_branch != branch:
+                    self.assertEqual(stdout.getvalue(), '')
+                    self.assertIn('MAIN_PROTECTION_AUDIT=BLOCKED', stderr.getvalue())
 
     def test_stale_or_untyped_facts_never_pass(self):
         branch,rules=valid()

@@ -113,6 +113,11 @@ def main(argv=None):
         branch = fetch(args.repository, '/branches/main', token)
         rules = fetch_all_effective_rules(args.repository, token)
         errors = evaluate(branch, rules, args.expected_main)
+        if not errors:
+            # Rule pagination and branch reads are not atomic. Do not label a
+            # visibly changed branch as verified at the originally pinned SHA.
+            current_branch = fetch(args.repository, '/branches/main', token)
+            errors = evaluate(current_branch, rules, args.expected_main)
     except (OSError, ValueError, KeyError, TypeError, urllib.error.HTTPError):
         print('MAIN_PROTECTION_AUDIT=BLOCKED: GitHub rules authority inaccessible or incomplete', file=sys.stderr)
         return 2
